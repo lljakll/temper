@@ -1,0 +1,8 @@
+build/
+.vscode/
+.clangd/
+*.swp
+*~
+/data/*
+/tests/fixtures/*.bean
+!tests/fixtures/.gitkeep

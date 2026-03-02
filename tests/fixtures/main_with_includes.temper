@@ -1,0 +1,27 @@
+2026-02-01 open Assets:Crypto:Bitcoin
+
+include "simple_expenses.temper"
+include "simple_deposits.temper"
+
+2026-02-20 price BTC  42000.00 USD  ; Commodity price directive
+
+2026-02-20 * "Crypto Purchase"  // Test Comment
+  txnhash: "crypto123abc"
+  ; Bought BTC
+  tag: investment
+  Assets:Checking:USAA:Green     -1000.00 USD
+  Assets:Crypto:Bitcoin          0.02381 BTC {42000.00 USD}  ; With cost basis
+
+2026-02-25 ! "Crypto Sale"  
+  txnhash: "crypto456def"
+  Assets:Crypto:Bitcoin          -0.01 BTC {42000.00 USD}
+  Assets:Checking:USAA:Green     450.00 USD  ; Profit
+  Income:Pay                     -30.00 USD  ; Fees
+
+/* Commenting out the entire transaction with a multi line comment
+  2026-02-25 ! "Crypto Sale"  
+  txnhash: "crypto456def"
+  Assets:Crypto:Bitcoin          -0.01 BTC {42000.00 USD}
+  Assets:Checking:USAA:Green     450.00 USD  ; Profit
+  Income:Pay                     -30.00 USD  ; Fees
+*/

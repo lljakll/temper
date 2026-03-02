@@ -1,0 +1,19 @@
+2026-01-12 open Income:Pay
+
+2026-01-12 * "Interest Paid"
+  txnhash: "13582a22cfae"
+  ; Small interest deposit
+  tag: bank
+  Assets:Checking:USAA:Green     0.05 USD
+  Income:Pay                     -0.05 USD
+
+2026-01-14 ! "Defense Finance and Accounting Service"
+  txnhash: "ebc6180a8979"
+  Assets:Checking:USAA:Green     1846.09 USD
+  Income:Pay                     -1846.09 USD
+
+2026-01-26 ? "USAA Transfer"
+  txnhash: "beffd7b8c68d"
+  metadata-key: "transfer-note"
+  Assets:Checking:USAA:Green     300.00 USD
+  Income:Pay                     -300.00 USD

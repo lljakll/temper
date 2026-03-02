@@ -1,0 +1,23 @@
+2026-02-01 open Assets:Checking:USAA:Green
+2026-02-01 open Expenses:Imbalance
+2026-02-01 open Income:Pay
+
+2026-02-17 * "BP Gas"
+  txnhash: "8f2c883b5ee6"
+  ; Comment: Fuel purchase
+  tag: travel
+  Assets:Checking:USAA:Green     -8.10 USD
+  Expenses:Imbalance             8.10 USD
+
+2026-02-17 ! "Dairy Queen"
+  txnhash: "32228ef6d0b1"
+  metadata-key: "some-value"
+  Assets:Checking:USAA:Green     -5.45 USD
+  Expenses:Imbalance             5.45 USD
+
+2026-02-17 ? "Red Owl Coffee Comp"
+  txnhash: "23698ee8ae90"
+  Assets:Checking:USAA:Green     -5.21 USD
+  Expenses:Imbalance             5.21 USD
+
+2026-02-28 close Expenses:Imbalance  ; End of month

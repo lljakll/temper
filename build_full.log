@@ -1,0 +1,133 @@
+Script started on 2026-02-27 15:46:27-05:00 [COMMAND="cmake --preset=linux-debug && cmake --build --preset=debug -j32 && ctest --preset=debug -V" TERM="xterm-256color" TTY="/dev/pts/1" COLUMNS="155" LINES="28"]
+Preset CMake variables:
+
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic -g"
+
+-- The CXX compiler identification is GNU 15.2.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+[0mCMake Deprecation Warning at build/debug/_deps/pybind11-src/CMakeLists.txt:13 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+[0m
+-- pybind11 v2.13.6 
+-- Found PythonInterp: /usr/bin/python3 (found suitable version "3.13.7", minimum required is "3.7")
+-- Found PythonLibs: /usr/lib/x86_64-linux-gnu/libpython3.13.so
+-- Performing Test HAS_FLTO
+-- Performing Test HAS_FLTO - Success
+-- The C compiler identification is GNU 15.2.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+[0mCMake Deprecation Warning at build/debug/_deps/date-src/CMakeLists.txt:18 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+[0m
+[0m# date: USE_SYSTEM_TZ_DB OFF[0m
+[0m# date: MANUAL_TZ_DB OFF[0m
+[0m# date: USE_TZ_DB_IN_DOT OFF[0m
+[0m# date: BUILD_SHARED_LIBS OFF[0m
+[0m# date: ENABLE_DATE_TESTING OFF[0m
+[0m# date: DISABLE_STRING_VIEW OFF[0m
+-- Configuring done (3.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/jak/git_repos/temper/build/debug
+[0/50] Scanning /home/jak/git_repos/temper/src/core/journal.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/account.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/parser/parser.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/model/transaction.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/model/posting.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/model/commodity.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/reports/balance.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/reports/register.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/reports/print.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/reports/stats.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/utils/decimal.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/utils/date.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/core/utils/hash.cpp for CXX dependencies[K[0/50] Building CXX object _deps/gtest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o[K[0/50] Scanning /home/jak/git_repos/temper/src/cli/main.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/src/bindings/module.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/tests/test_journal.cpp for CXX dependencies[K[0/50] Scanning /home/jak/git_repos/temper/tests/test_parser.cpp for CXX dependencies[K[0/50] Building CXX object _deps/gtest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o[K[0/50] Building CXX object _deps/gtest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o[K[0/50] Building CXX object _deps/gtest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o[K[1/50] Scanning /home/jak/git_repos/temper/src/core/account.cpp for CXX dependencies[K[2/50] Scanning /home/jak/git_repos/temper/src/core/model/transaction.cpp for CXX dependencies[K[3/50] Scanning /home/jak/git_repos/temper/src/core/reports/stats.cpp for CXX dependencies[K[4/50] Scanning /home/jak/git_repos/temper/src/core/reports/print.cpp for CXX dependencies[K[5/50] Scanning /home/jak/git_repos/temper/src/core/model/commodity.cpp for CXX dependencies[K[6/50] Scanning /home/jak/git_repos/temper/src/core/model/posting.cpp for CXX dependencies[K[7/50] Scanning /home/jak/git_repos/temper/src/core/utils/hash.cpp for CXX dependencies[K[8/50] Scanning /home/jak/git_repos/temper/src/core/journal.cpp for CXX dependencies[K[9/50] Scanning /home/jak/git_repos/temper/src/core/utils/decimal.cpp for CXX dependencies[K[10/50] Scanning /home/jak/git_repos/temper/src/core/reports/balance.cpp for CXX dependencies[K[11/50] Scanning /home/jak/git_repos/temper/src/core/reports/register.cpp for CXX dependencies[K[12/50] Scanning /home/jak/git_repos/temper/tests/test_journal.cpp for CXX dependencies[K[13/50] Scanning /home/jak/git_repos/temper/tests/test_parser.cpp for CXX dependencies[K[13/50] Generating CXX dyndep file tests/CMakeFiles/temper_tests.dir/CXX.dd[K[14/50] Scanning /home/jak/git_repos/temper/src/core/parser/parser.cpp for CXX dependencies[K[15/50] Generating CXX dyndep file tests/CMakeFiles/temper_tests.dir/CXX.dd[K[15/50] Building CXX object tests/CMakeFiles/temper_tests.dir/test_journal.cpp.o[K[15/50] Building CXX object tests/CMakeFiles/temper_tests.dir/test_parser.cpp.o[K[16/50] Scanning /home/jak/git_repos/temper/src/core/utils/date.cpp for CXX dependencies[K[16/50] Generating CXX dyndep file src/core/CMakeFiles/temper-core.dir/CXX.dd[K[17/50] Scanning /home/jak/git_repos/temper/src/cli/main.cpp for CXX dependencies[K[17/50] Generating CXX dyndep file src/cli/CMakeFiles/temper.dir/CXX.dd[K[18/50] Generating CXX dyndep file src/core/CMakeFiles/temper-core.dir/CXX.dd[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/journal.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/account.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/parser/parser.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/model/transaction.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/model/posting.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/model/commodity.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/balance.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/register.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/print.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/stats.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/utils/decimal.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/utils/date.cpp.o[K[18/50] Building CXX object src/core/CMakeFiles/temper-core.dir/utils/hash.cpp.o[K[19/50] Generating CXX dyndep file src/cli/CMakeFiles/temper.dir/CXX.dd[K[19/50] Building CXX object src/cli/CMakeFiles/temper.dir/main.cpp.o[K[20/50] Scanning /home/jak/git_repos/temper/src/bindings/module.cpp for CXX dependencies[K[20/50] Generating CXX dyndep file src/bindings/CMakeFiles/temper_python.dir/CXX.dd[K[21/50] Generating CXX dyndep file src/bindings/CMakeFiles/temper_python.dir/CXX.dd[K[21/50] Building CXX object src/bindings/CMakeFiles/temper_python.dir/module.cpp.o[K[22/50] Building CXX object src/core/CMakeFiles/temper-core.dir/model/commodity.cpp.o[K[23/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/print.cpp.o[K[24/50] Building CXX object src/core/CMakeFiles/temper-core.dir/model/posting.cpp.o[K[25/50] Building CXX object src/core/CMakeFiles/temper-core.dir/utils/decimal.cpp.o[K[26/50] Building CXX object src/core/CMakeFiles/temper-core.dir/account.cpp.o[K[27/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/balance.cpp.o[K[28/50] Building CXX object src/core/CMakeFiles/temper-core.dir/utils/hash.cpp.o[K[29/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/register.cpp.o[K[30/50] Building CXX object src/core/CMakeFiles/temper-core.dir/reports/stats.cpp.o[K[31/50] Building CXX object src/core/CMakeFiles/temper-core.dir/model/transaction.cpp.o[K[32/50] Building CXX object src/core/CMakeFiles/temper-core.dir/journal.cpp.o[K[33/50] Building CXX object src/core/CMakeFiles/temper-core.dir/utils/date.cpp.o[K
+In file included from /home/jak/git_repos/temper/src/core/utils/date.cpp:2:
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:966:33: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+  966 | CONSTCD11 date::day  operator "" _d(unsigned long long d) NOEXCEPT;
+      |                                 ^~
+      |                                 --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:966:33: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+  966 | CONSTCD11 date::day  operator "" _d(unsigned long long d) NOEXCEPT;
+      |                                 ^~
+      |                                 --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:967:33: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+  967 | CONSTCD11 date::year operator "" _y(unsigned long long y) NOEXCEPT;
+      |                                 ^~
+      |                                 --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:967:33: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+  967 | CONSTCD11 date::year operator "" _y(unsigned long long y) NOEXCEPT;
+      |                                 ^~
+      |                                 --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:1975:12: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+ 1975 | operator "" _d(unsigned long long d) NOEXCEPT
+      |            ^~
+      |            --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:1975:12: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+ 1975 | operator "" _d(unsigned long long d) NOEXCEPT
+      |            ^~
+      |            --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:1983:12: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+ 1983 | operator "" _y(unsigned long long y) NOEXCEPT
+      |            ^~
+      |            --
+/home/jak/git_repos/temper/build/debug/_deps/date-src/include/date/date.h:1983:12: warning: space between quotes and suffix is deprecated in C++23 [-Wdeprecated-literal-operator]
+ 1983 | operator "" _y(unsigned long long y) NOEXCEPT
+      |            ^~
+      |            --
+[34/50] Building CXX object _deps/gtest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o[K[35/50] Building CXX object tests/CMakeFiles/temper_tests.dir/test_parser.cpp.o[K[36/50] Building CXX object _deps/gtest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o[K[37/50] Building CXX object tests/CMakeFiles/temper_tests.dir/test_journal.cpp.o[K[38/50] Building CXX object src/core/CMakeFiles/temper-core.dir/parser/parser.cpp.o[K
+/home/jak/git_repos/temper/src/core/parser/parser.cpp: In function ‘void temper::parse_bean_file(const std::string&, Journal&)’:
+/home/jak/git_repos/temper/src/core/parser/parser.cpp:15:12: warning: statement has no effect [-Wunused-value]
+   15 |     journal; // TODO: actual add_transaction calls
+      |            ^
+[38/50] Linking CXX static library src/core/libtemper-core.a[K[39/50] Linking CXX static library src/core/libtemper-core.a[K[40/50] Building CXX object src/cli/CMakeFiles/temper.dir/main.cpp.o[K[40/50] Linking CXX executable src/cli/temper[K[41/50] Linking CXX executable src/cli/temper[K[42/50] Building CXX object _deps/gtest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o[K[43/50] Building CXX object src/bindings/CMakeFiles/temper_python.dir/module.cpp.o[K[43/50] Linking CXX shared module src/bindings/temper_python.cpython-313-x86_64-linux-gnu.so[K[44/50] Linking CXX shared module src/bindings/temper_python.cpython-313-x86_64-linux-gnu.so[K[45/50] Building CXX object _deps/gtest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o[K[45/50] Linking CXX static library lib/libgtest.a[K[46/50] Linking CXX static library lib/libgtest.a[K[46/50] Linking CXX static library lib/libgmock.a[K[46/50] Linking CXX static library lib/libgtest_main.a[K[47/50] Linking CXX static library lib/libgtest_main.a[K[47/50] Linking CXX executable tests/temper_tests[K[48/50] Linking CXX static library lib/libgmock.a[K[48/50] Linking CXX static library lib/libgmock_main.a[K[49/50] Linking CXX static library lib/libgmock_main.a[K[50/50] Linking CXX executable tests/temper_tests[K
+UpdateCTestConfiguration  from :/home/jak/git_repos/temper/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/home/jak/git_repos/temper/build/debug/DartConfiguration.tcl
+Test project /home/jak/git_repos/temper/build/debug
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: temper_tests
+
+1: Test command: /home/jak/git_repos/temper/build/debug/tests/temper_tests
+1: Working Directory: /home/jak/git_repos/temper/build/debug/tests
+1: Test timeout computed to be: 10000000
+1: Running main() from /home/jak/git_repos/temper/build/debug/_deps/gtest-src/googletest/src/gtest_main.cc
+1: [==========] Running 2 tests from 2 test suites.
+1: [----------] Global test environment set-up.
+1: [----------] 1 test from Journal
+1: [ RUN      ] Journal.BasicLoad
+1: [2026-02-27 15:46:35.430] [info] TODO: parse .bean file ../../../tests/fixtures/simple_expenses.temper and add to journal
+1: [       OK ] Journal.BasicLoad (0 ms)
+1: [----------] 1 test from Journal (0 ms total)
+1: 
+1: [----------] 1 test from Parser
+1: [ RUN      ] Parser.RealFile
+1: [2026-02-27 15:46:35.430] [info] TODO: parse .bean file ../../../tests/fixtures/main_with_includes.temper and add to journal
+1: [       OK ] Parser.RealFile (0 ms)
+1: [----------] 1 test from Parser (0 ms total)
+1: 
+1: [----------] Global test environment tear-down
+1: [==========] 2 tests from 2 test suites ran. (0 ms total)
+1: [  PASSED  ] 2 tests.
+1/1 Test #1: temper_tests .....................   Passed    0.00 sec
+
+[0;32m100% tests passed[0;0m, 0 tests failed[0;0m out of 1
+
+Total Test time (real) =   0.00 sec
+
+Script done on 2026-02-27 15:46:35-05:00 [COMMAND_EXIT_CODE="0"]
