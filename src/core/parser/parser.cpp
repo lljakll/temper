@@ -8,6 +8,17 @@
 
 namespace temper {
 
+// Helper function to trim comments from a line
+std::string trim_comment(const std::string& str) {
+    size_t comment_pos = str.find_first_of(";/");
+    if (comment_pos != std::string::npos) {
+        if (str.substr(comment_pos, 2) == "//" || str.substr(comment_pos, 2) == "/*" || str[comment_pos] == ';') {
+            return str.substr(0, comment_pos);
+        }
+    }
+    return str;
+}
+
 void parse_bean_file(const std::string& path, Journal& journal) {
     std::ifstream file(path);
     if (!file) {
@@ -109,30 +120,35 @@ void parse_bean_file(const std::string& path, Journal& journal) {
 
         spdlog::debug("Token after date parse: '{}'", token); // NEW debug
 
-        // Now check for directive or transaction
+        // In the loop, for open:
         if (token == "open") {
             std::string account;
             std::getline(line_iss, account);
             account = account.substr(account.find_first_not_of(" \t"));
-            // TODO: add to journal with date if is_dated
+            account = trim_comment(account); // NEW: trim comment
+            account = account.substr(0, account.find_last_not_of(" \t") + 1); // Trim trailing space
+            journal.add_open(account, txn_date);
             spdlog::debug("Opened account: {}", account);
             continue;
         } else if (token == "close") {
             std::string account;
             std::getline(line_iss, account);
             account = account.substr(account.find_first_not_of(" \t"));
-            // TODO: add to journal
+            account = trim_comment(account); // NEW
+            account = account.substr(0, account.find_last_not_of(" \t") + 1);
+            journal.add_close(account, txn_date);
             spdlog::debug("Closed account: {}", account);
             continue;
         } else if (token == "price") {
-            std::string commodity;
+            std::string commodity, currency;
             Decimal price;
-            std::string currency;
-            line_iss >> commodity >> price.value >> currency; // Stub
-            // TODO: add to price db with date
+            line_iss >> commodity >> price.value >> currency;
+            // Trim any comment from currency if needed (rare, but)
+            currency = trim_comment(currency);
+            journal.add_price(commodity, price, currency, txn_date);
             spdlog::debug("Price for {}: {} {}", commodity, price.value, currency);
             continue;
-        } 
+        }
 
         // Transaction
         Transaction txn;

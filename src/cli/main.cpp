@@ -2,15 +2,33 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <cstring> // for strcmp
+
+#ifndef CMAKE_SOURCE_DIR
+#define CMAKE_SOURCE_DIR "."
+#endif
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        fmt::print("temper v0.1.0 - Usage: temper balance -f file.bean\n");
-        return 0;
+    std::string cmd = "balance"; // Default command
+    std::string file = std::string(CMAKE_SOURCE_DIR) + "/tests/fixtures/main_with_includes.temper"; // Default to your main test file
+
+    // Simple arg parsing
+    bool debug_mode = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
+            file = argv[++i];
+        } else if (std::strcmp(argv[i], "--debug") == 0) {
+            debug_mode = true;
+        } else {
+            cmd = argv[i];
+        }
     }
 
-    std::string cmd = argv[1];
-    std::string file = "data/examples/expenses.bean"; // TODO: parse args
+    if (debug_mode) {
+        spdlog::set_level(spdlog::level::debug);
+    } else {
+        spdlog::set_level(spdlog::level::info);
+    }
 
     temper::Journal j;
     j.load_file(file);

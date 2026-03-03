@@ -1,6 +1,6 @@
-2026-02-01 open Assets:Checking:USAA:Green
-2026-02-01 open Expenses:Imbalance
-2026-02-01 open Income:Pay
+2026-02-01 open Assets:Checking:USAA:Green // Main Bank Account
+2026-02-01 open Expenses:Imbalance ; Dump Account
+2026-02-01 open Income:Pay /* income account */
 
 2026-02-17 * "BP Gas"
   txnhash: "8f2c883b5ee6"
