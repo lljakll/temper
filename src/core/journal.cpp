@@ -45,22 +45,25 @@ void Journal::add_price(const std::string& commodity, const Decimal& price, cons
 void Journal::build_account_tree() {
     spdlog::debug("Building tree with {} transactions", transactions_.size());
     for (const auto& txn : transactions_) {
-        spdlog::debug("Processing txn: {}", txn.description);
+        spdlog::debug("Processing txn: {} with {} postings", txn.description, txn.postings.size());
         for (const auto& post : txn.postings) {
-            spdlog::debug("Posting: {} {} {}", post.account, post.amount.value, post.commodity.name);
+            spdlog::debug("Posting: account='{}' amount={} commodity='{}'", post.account, post.amount.value, post.commodity.name);
             Account* current = root_account_.get();
             std::istringstream acct_iss(post.account);
             std::string part;
             while (std::getline(acct_iss, part, ':')) {
+                spdlog::debug("Adding part: {}", part);
                 bool found = false;
                 for (auto& child : current->children) {
                     if (child->name == part) {
                         current = child.get();
                         found = true;
+                        spdlog::debug("Found existing child: {}", part);
                         break;
                     }
                 }
                 if (!found) {
+                    spdlog::debug("Creating new child: {}", part);
                     auto new_child = std::make_shared<Account>();
                     new_child->name = part;
                     new_child->parent = current;
@@ -68,6 +71,7 @@ void Journal::build_account_tree() {
                     current = new_child.get();
                 }
             }
+            spdlog::debug("Adding balance to {}: {} {}", current->name, post.amount.value, post.commodity.name);
             current->add_balance(post.commodity, post.amount);
         }
     }

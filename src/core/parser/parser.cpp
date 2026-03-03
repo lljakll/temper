@@ -176,44 +176,50 @@ void parse_bean_file(const std::string& path, Journal& journal) {
         std::getline(line_iss, rest_desc);
         txn.description += rest_desc;
 
-        // Parse indented lines for postings/metadata
-        int indent_level = 2; // Assume 2 spaces
-        while (std::getline(file, line)) {
-            line_num++;
-            size_t start = line.find_first_not_of(" \t");
-            if (start == std::string::npos || start < indent_level) {
-                file.seekg(-(line.length() + 1), std::ios::cur);
-                line_num--;
-                break;
-            }
-            line = line.substr(start);
-
-            if (line.rfind("txnhash:", 0) == 0) {
-                txn.txnhash = line.substr(9);
-            } else if (line.rfind("tag:", 0) == 0) {
-                txn.tags.push_back(line.substr(5));
-            } else if (line[0] == ';') {
-                // Comment
-            } else if (line.find(':') != std::string::npos && line[0] != ' ') {
-                // Metadata key:value
-                size_t colon = line.find(':');
-                std::string key = line.substr(0, colon);
-                std::string val = line.substr(colon + 1);
-                txn.metadata[key] = val;
-            } else {
-                // Posting
-                Posting post;
-                std::istringstream post_iss(line);
-                post_iss >> post.account >> post.amount.value >> post.commodity.name;
-                // Stub for cost { }
-                std::string cost_str;
-                if (post_iss >> cost_str && cost_str[0] == '{') {
-                    // TODO: parse cost
-                    spdlog::debug("Found cost for posting: {}", cost_str);
-                }
-                txn.postings.push_back(post);
-            }
+    // Parse indented lines for postings/metadata
+    size_t indent_level = 2; // Assume 2 spaces
+    while (std::getline(file, line)) {
+        line_num++;
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || start < indent_level) {
+            file.seekg(-(line.length() + 1), std::ios::cur);
+            line_num--;
+            break;
         }
+        line = line.substr(start);
+        line = trim_comment(line); // Trim inline comments
+        if (line.empty()) continue;
+
+        spdlog::debug("Indented line: '{}'", line); // NEW debug to see what's processed
+
+        if (line.rfind("txnhash:", 0) == 0) {
+            txn.txnhash = line.substr(9);
+        } else if (line.rfind("tag:", 0) == 0) {
+            txn.tags.push_back(line.substr(5));
+        } else if (line[0] == ';') {
+            // Comment
+        } else if (line.find(':') != std::string::npos && line[0] != ' ') {
+            // Metadata key:value
+            size_t colon = line.find(':');
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            txn.metadata[key] = val;
+        } else {
+            // Posting
+            Posting post;
+            std::string amount_str, cost_str;
+            spdlog::debug("Trying to parse posting line: {}", line);
+            line_iss >> post.account >> amount_str >> post.commodity.name;
+            post.amount.value = std::stod(amount_str); // Handle negative
+            // Stub for cost { }
+            if (line_iss >> cost_str && cost_str[0] == '{') {
+                // TODO: parse cost
+                spdlog::debug("Found cost for posting: {}", cost_str);
+            }
+            txn.postings.push_back(post);
+            spdlog::debug("Added posting: {} {} {}", post.account, post.amount.value, post.commodity.name);
+        }
+    }
 
         journal.add_transaction(txn);
         spdlog::debug("Parsed transaction: {}", txn.description);
