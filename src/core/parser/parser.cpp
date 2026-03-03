@@ -4,7 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem> // for path handling
-#include <date/date.h> // NEW: for date parsing
+#include <date/date.h> // for date parsing
 
 namespace temper {
 
@@ -27,7 +27,7 @@ void parse_bean_file(const std::string& path, Journal& journal) {
     }
 
     spdlog::info("Parsing .temper file: {}", path);
-    spdlog::set_level(spdlog::level::debug); // Enable debug for testing (move or remove later)
+    // Removed: spdlog::set_level(spdlog::level::debug); // No more hardcoded debug
 
     std::string line;
     int line_num = 0;
@@ -58,7 +58,7 @@ void parse_bean_file(const std::string& path, Journal& journal) {
         }
 
         // Skip single-line comments: ';' or '//'
-        if (line[0] == ';' || line.rfind("//", 0) == 0) {
+        if (line[0] == ';' || (line.size() >= 2 && line.substr(0, 2) == "//")) {
             continue;
         }
 
@@ -118,9 +118,9 @@ void parse_bean_file(const std::string& path, Journal& journal) {
             token = first_token;
         }
 
-        spdlog::debug("Token after date parse: '{}'", token); // NEW debug
+        spdlog::debug("Token after date parse: '{}'", token); // NEW debug with quotes
 
-        // In the loop, for open:
+        // Now check for directive or transaction
         if (token == "open") {
             std::string account;
             std::getline(line_iss, account);
@@ -140,15 +140,15 @@ void parse_bean_file(const std::string& path, Journal& journal) {
             spdlog::debug("Closed account: {}", account);
             continue;
         } else if (token == "price") {
-            std::string commodity, currency;
+            std::string commodity;
             Decimal price;
-            line_iss >> commodity >> price.value >> currency;
-            // Trim any comment from currency if needed (rare, but)
-            currency = trim_comment(currency);
+            std::string currency;
+            line_iss >> commodity >> price.value >> currency; // Stub
+            currency = trim_comment(currency); // NEW
             journal.add_price(commodity, price, currency, txn_date);
             spdlog::debug("Price for {}: {} {}", commodity, price.value, currency);
             continue;
-        }
+        } 
 
         // Transaction
         Transaction txn;
@@ -205,6 +205,12 @@ void parse_bean_file(const std::string& path, Journal& journal) {
                 Posting post;
                 std::istringstream post_iss(line);
                 post_iss >> post.account >> post.amount.value >> post.commodity.name;
+                // Stub for cost { }
+                std::string cost_str;
+                if (post_iss >> cost_str && cost_str[0] == '{') {
+                    // TODO: parse cost
+                    spdlog::debug("Found cost for posting: {}", cost_str);
+                }
                 txn.postings.push_back(post);
             }
         }

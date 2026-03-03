@@ -43,8 +43,11 @@ void Journal::add_price(const std::string& commodity, const Decimal& price, cons
 }
 
 void Journal::build_account_tree() {
+    spdlog::debug("Building tree with {} transactions", transactions_.size());
     for (const auto& txn : transactions_) {
+        spdlog::debug("Processing txn: {}", txn.description);
         for (const auto& post : txn.postings) {
+            spdlog::debug("Posting: {} {} {}", post.account, post.amount.value, post.commodity.name);
             Account* current = root_account_.get();
             std::istringstream acct_iss(post.account);
             std::string part;
@@ -90,13 +93,18 @@ std::string Journal::stats() const {
 std::string Journal::print_balances(const Account& acct, int depth) const {
     std::string output;
     std::string indent(depth * 2, ' ');
-    for (const auto& bal : acct.balances) {
-        output += fmt::format("{}{}: {} {}\n", indent, acct.name, bal.second.value, bal.first.name);
+    if (!acct.balances.empty()) {
+        for (const auto& bal : acct.balances) {
+            output += fmt::format("{}{}: {:.2f} {}\n", indent, acct.name, bal.second.value, bal.first.name);
+        }
+    } else {
+        output += fmt::format("{}{}\n", indent, acct.name);
     }
     for (const auto& child : acct.children) {
         output += print_balances(*child, depth + 1);
     }
     return output;
 }
+
 
 } // namespace temper

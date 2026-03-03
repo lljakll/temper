@@ -9,10 +9,11 @@
 #endif
 
 int main(int argc, char** argv) {
-    std::string cmd = "balance"; // Default command
-    std::string file = std::string(CMAKE_SOURCE_DIR) + "/tests/fixtures/main_with_includes.temper"; // Default to your main test file
+    spdlog::set_level(spdlog::level::info); // Default to INFO
 
-    // Simple arg parsing
+    std::string cmd = "balance"; // Default command
+    std::string file = std::string(CMAKE_SOURCE_DIR) + "/tests/fixtures/main_with_includes.temper";
+
     bool debug_mode = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
@@ -26,8 +27,7 @@ int main(int argc, char** argv) {
 
     if (debug_mode) {
         spdlog::set_level(spdlog::level::debug);
-    } else {
-        spdlog::set_level(spdlog::level::info);
+        spdlog::debug("Debug mode enabled");
     }
 
     temper::Journal j;
