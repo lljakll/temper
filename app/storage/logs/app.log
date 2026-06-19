@@ -240,3 +240,7 @@ Stack trace:
 #0 Command line code(13): mysqli->close()
 #1 {main}
   thrown in Command line code on line 13
+[19-Jun-2026 10:14:47 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60
+[19-Jun-2026 10:15:01 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60
+[19-Jun-2026 10:34:13 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60
+[19-Jun-2026 10:42:04 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60

@@ -232,15 +232,68 @@
         }
     }
 
-    // Transaction list (with computed totals)
-    $tx_result = $db->query("
+    // Filters and pagination
+    $date_from = $_GET['date_from'] ?? '';
+    $date_to = $_GET['date_to'] ?? '';
+    $search = trim($_GET['search'] ?? '');
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $per_page = 25;
+
+    $conditions = [];
+    $bind_params = [];
+    $bind_types = '';
+    if ($date_from) {
+        $conditions[] = "td.transaction_date >= ?";
+        $bind_params[] = $date_from;
+        $bind_types .= 's';
+    }
+    if ($date_to) {
+        $conditions[] = "td.transaction_date <= ?";
+        $bind_params[] = $date_to;
+        $bind_types .= 's';
+    }
+    if ($search !== '') {
+        $like = '%' . $search . '%';
+        $conditions[] = "(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.memo LIKE ? OR CAST(COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS CHAR) LIKE ?)";
+        $bind_params = array_merge($bind_params, [$like, $like, $like, $like, $like]);
+        $bind_types .= str_repeat('s', 5);
+    }
+    $where_clause = $conditions ? ' WHERE ' . implode(' AND ', $conditions) : '';
+
+    // Total for pagination
+    $count_stmt = $db->prepare("SELECT COUNT(*) AS total FROM transaction_details td" . $where_clause);
+    if ($bind_types) {
+        $count_stmt->bind_param($bind_types, ...$bind_params);
+    }
+    $count_stmt->execute();
+    $total = (int)($count_stmt->get_result()->fetch_assoc()['total'] ?? 0);
+    $count_stmt->close();
+
+    $total_pages = max(1, (int)ceil($total / $per_page));
+    $page = min($page, $total_pages);
+    $offset = ($page - 1) * $per_page;
+
+    // List query with pagination
+    $list_params = $bind_params;
+    $list_types = $bind_types;
+    $list_params[] = $per_page;
+    $list_params[] = $offset;
+    $list_types .= 'ii';
+
+    $tx_stmt = $db->prepare("
         SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.memo, td.status, td.cleared_date,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
                COALESCE((SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS num_lines
         FROM transaction_details td
+        $where_clause
         ORDER BY td.transaction_date DESC, td.id DESC
-        LIMIT 100
+        LIMIT ? OFFSET ?
     ");
+    if ($list_types) {
+        $tx_stmt->bind_param($list_types, ...$list_params);
+    }
+    $tx_stmt->execute();
+    $tx_result = $tx_stmt->get_result();
 ?>
 <div class="container-fluid mt-2">
     <h2 class="mb-3">Ledger</h2>
@@ -268,135 +321,174 @@
         </button>
     </div>
 
-    <!-- Shared Add/Edit Form (hidden until action) -->
-    <div id="txFormSection" class="card mb-4 d-none">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong id="formTitle">Add Transaction</strong>
-            <button type="button" id="cancelFormBtn" class="btn btn-sm btn-outline-secondary">Cancel</button>
-        </div>
-        <div class="card-body">
-            <form id="txForm" method="post">
-                <input type="hidden" name="tx_id" id="tx_id">
-                <input type="hidden" name="lines_json" id="lines_json">
-
-                <div class="row g-3">
-                    <div class="col-md-2">
-                        <label class="form-label">Date *</label>
-                        <input type="date" class="form-control" name="transaction_date" id="transaction_date" required>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Pay To</label>
-                        <input type="text" class="form-control" name="pay_to" id="pay_to" placeholder="Vendor or person">
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Reference #</label>
-                        <input type="text" class="form-control" name="reference_number" id="reference_number" placeholder="Ref #">
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label">Check Number</label>
-                        <input type="text" class="form-control" name="check_number" id="check_number">
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Description</label>
-                        <input type="text" class="form-control" name="description" id="description" placeholder="Short description">
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label">Memo</label>
-                        <input type="text" class="form-control" name="memo" id="memo" placeholder="Additional notes">
-                    </div>
+    <!-- Constrained viewport area: list fixed at 35%, form takes remainder and scrolls internally if long -->
+    <div class="d-flex flex-column" style="height: calc(100vh - 170px); min-height: 300px;">
+        <!-- Filters -->
+        <div class="mb-2 flex-shrink-0">
+            <div class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label small mb-1">Date From</label>
+                    <input type="date" id="filterDateFrom" class="form-control form-control-sm" value="<?= htmlspecialchars($date_from) ?>">
                 </div>
-
-                <div class="mt-3">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h6 class="mb-0">Lines <small class="text-muted">(min 2 required)</small></h6>
-                        <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary">+ Add Line</button>
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-sm table-bordered align-middle mb-2">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Account *</th>
-                                    <th>Fund</th>
-                                    <th>Natural</th>
-                                    <th>Functional</th>
-                                    <th class="text-end" style="width:110px">Amount</th>
-                                    <th style="width:70px">Type</th>
-                                    <th style="width:30px"></th>
-                                </tr>
-                            </thead>
-                            <tbody id="linesBody"></tbody>
-                        </table>
-                    </div>
-
-                    <div class="d-flex gap-4 align-items-center small">
-                        <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">0.00</span></div>
-                        <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">0.00</span></div>
-                        <div><strong>Diff:</strong> <span id="diff" class="fw-bold">0.00</span></div>
-                        <div id="balanceStatus" class="text-muted"></div>
-                    </div>
+                <div class="col-auto">
+                    <label class="form-label small mb-1">Date To</label>
+                    <input type="date" id="filterDateTo" class="form-control form-control-sm" value="<?= htmlspecialchars($date_to) ?>">
                 </div>
-
-                <div class="mt-3">
-                    <button type="submit" id="saveBtn" class="btn btn-primary" disabled>Save Transaction</button>
-                    <button type="button" id="resetLinesBtn" class="btn btn-outline-secondary ms-2">Reset to 2 Lines</button>
-                    <button type="button" id="cancelFormBtn2" class="btn btn-outline-secondary ms-2">Cancel</button>
+                <div class="col-md-4 col-sm-12">
+                    <label class="form-label small mb-1">Search (Pay To / Ref # / Check # / Memo / Amount)</label>
+                    <input type="search" id="filterSearch" class="form-control form-control-sm" value="<?= htmlspecialchars($search) ?>" placeholder="Search transactions...">
                 </div>
-            </form>
+                <div class="col-auto">
+                    <button type="button" id="applyFilterBtn" class="btn btn-sm btn-primary">Apply</button>
+                    <button type="button" id="clearFilterBtn" class="btn btn-sm btn-outline-secondary">Clear</button>
+                </div>
+                <div class="col-auto ms-auto text-muted small align-self-center">
+                    <?= (int)$total ?> total
+                </div>
+            </div>
         </div>
-    </div>
 
-    <!-- Transactions List -->
-    <div class="card">
-        <div class="card-header py-2">
-            <strong>Transactions</strong>
-            <small class="text-muted ms-2">(select one or more with checkboxes)</small>
-        </div>
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-sm table-hover mb-0 align-middle">
-                    <thead class="table-dark">
-                        <tr>
-                            <th style="width:28px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
-                            <th>Date</th>
-                            <th>Pay To</th>
-                            <th>Ref #</th>
-                            <th>Check #</th>
-                            <th>Memo</th>
-                            <th class="text-end">Amount</th>
-                            <th>Status</th>
-                            <th class="text-center">Lines</th>
-                        </tr>
-                    </thead>
-                    <tbody id="txTableBody">
-                        <?php if ($tx_result && $tx_result->num_rows > 0): ?>
-                            <?php while ($r = $tx_result->fetch_assoc()): ?>
-                                <?php
-                                    $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
-                                    $statusBadge = 'bg-secondary';
-                                    $statusText = 'Pending';
-                                    if ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
-                                    elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
-                                ?>
-                                <tr data-id="<?= (int)$r['id'] ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>">
-                                    <td><input type="checkbox" class="form-check-input tx-cb" value="<?= (int)$r['id'] ?>"></td>
-                                    <td><?= htmlspecialchars($r['transaction_date']) ?></td>
-                                    <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
-                                    <td><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
-                                    <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
-                                    <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
-                                    <td class="text-end fw-semibold">$<?= number_format((float)$r['total_amount'], 2) ?></td>
-                                    <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
-                                    <td class="text-center"><?= (int)$r['num_lines'] ?></td>
-                                </tr>
-                            <?php endwhile; ?>
-                        <?php else: ?>
+        <!-- Transactions List (fixed 35% height of page, internally scrollable) -->
+        <div class="card mb-2 flex-shrink-0" style="height: 35vh;">
+            <div class="card-header py-2">
+                <strong>Transactions</strong>
+                <small class="text-muted ms-2">(click row to view; checkbox or Ctrl/Shift+click for multi)</small>
+            </div>
+            <div class="card-body p-0 d-flex flex-column" style="height: calc(100% - 2.25rem);">
+                <div style="flex: 1 1 auto; overflow: auto; min-height: 0;">
+                    <table class="table table-sm table-hover mb-0 align-middle">
+                        <thead class="table-dark" style="position: sticky; top: 0; z-index: 10;">
                             <tr>
-                                <td colspan="9" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
+                                <th style="width:28px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
+                                <th>Date</th>
+                                <th>Pay To</th>
+                                <th>Ref #</th>
+                                <th>Check #</th>
+                                <th>Memo</th>
+                                <th class="text-end">Amount</th>
+                                <th>Status</th>
+                                <th class="text-center">Lines</th>
                             </tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody id="txTableBody">
+                            <?php if ($tx_result && $tx_result->num_rows > 0): ?>
+                                <?php while ($r = $tx_result->fetch_assoc()): ?>
+                                    <?php
+                                        $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
+                                        $statusBadge = 'bg-secondary';
+                                        $statusText = 'Pending';
+                                        if ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
+                                        elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
+                                    ?>
+                                    <tr data-id="<?= (int)$r['id'] ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>">
+                                        <td><input type="checkbox" class="form-check-input tx-cb" value="<?= (int)$r['id'] ?>"></td>
+                                        <td><?= htmlspecialchars($r['transaction_date']) ?></td>
+                                        <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
+                                        <td><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
+                                        <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
+                                        <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
+                                        <td class="text-end fw-semibold">$<?= number_format((float)$r['total_amount'], 2) ?></td>
+                                        <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
+                                        <td class="text-center"><?= (int)$r['num_lines'] ?></td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="9" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="paginationBar" class="d-flex justify-content-between align-items-center px-2 py-1 small bg-light border-top flex-shrink-0"
+                     data-current-page="<?= (int)$page ?>" data-total-pages="<?= (int)$total_pages ?>">
+                    <div>Page <?= (int)$page ?> of <?= (int)$total_pages ?></div>
+                    <div>
+                        <button type="button" id="prevPageBtn" class="btn btn-sm btn-outline-secondary" <?= $page <= 1 ? 'disabled' : '' ?>>Prev</button>
+                        <button type="button" id="nextPageBtn" class="btn btn-sm btn-outline-secondary" <?= $page >= $total_pages ? 'disabled' : '' ?>>Next</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transaction Details Form (fills remaining space; body scrolls internally if content is long) -->
+        <div id="txFormSection" class="card flex-grow-1 d-flex flex-column" style="min-height: 0;">
+            <div class="card-header d-flex justify-content-between align-items-center flex-shrink-0">
+                <div>
+                    <strong id="formTitle">Transaction Details</strong>
+                    <span id="formModeBadge" class="badge bg-light text-dark ms-1"></span>
+                </div>
+                <button type="button" id="cancelFormBtn" class="btn btn-sm btn-outline-secondary">Cancel</button>
+            </div>
+            <div class="card-body flex-grow-1 overflow-auto" style="min-height: 0;">
+                <form id="txForm" method="post">
+                    <input type="hidden" name="tx_id" id="tx_id">
+                    <input type="hidden" name="lines_json" id="lines_json">
+
+                    <div class="row g-3">
+                        <div class="col-md-2">
+                            <label class="form-label">Date *</label>
+                            <input type="date" class="form-control" name="transaction_date" id="transaction_date" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Pay To</label>
+                            <input type="text" class="form-control" name="pay_to" id="pay_to" placeholder="Vendor or person">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Reference #</label>
+                            <input type="text" class="form-control" name="reference_number" id="reference_number" placeholder="Ref #">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Check Number</label>
+                            <input type="text" class="form-control" name="check_number" id="check_number">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Description</label>
+                            <input type="text" class="form-control" name="description" id="description" placeholder="Short description">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Memo</label>
+                            <input type="text" class="form-control" name="memo" id="memo" placeholder="Additional notes">
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Lines <small class="text-muted">(min 2 required)</small></h6>
+                            <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary">+ Add Line</button>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle mb-2">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Account *</th>
+                                        <th>Fund</th>
+                                        <th>Natural</th>
+                                        <th>Functional</th>
+                                        <th class="text-end" style="width:110px">Amount</th>
+                                        <th style="width:70px">Type</th>
+                                        <th style="width:30px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="linesBody"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="d-flex gap-4 align-items-center small">
+                            <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">0.00</span></div>
+                            <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">0.00</span></div>
+                            <div><strong>Diff:</strong> <span id="diff" class="fw-bold">0.00</span></div>
+                            <div id="balanceStatus" class="text-muted"></div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <button type="submit" id="saveBtn" class="btn btn-primary" disabled>Save Transaction</button>
+                        <button type="button" id="resetLinesBtn" class="btn btn-outline-secondary ms-2">Reset to 2 Lines</button>
+                        <button type="button" id="cancelFormBtn2" class="btn btn-outline-secondary ms-2">Cancel</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
@@ -429,6 +521,25 @@
     const natOpts = `<?= $nopt ?>`;
     const funcOpts = `<?= $fuopt ?>`;
 
+    function buildQueryString(preservePage = true) {
+        const p = new URLSearchParams();
+        const df = document.getElementById('filterDateFrom');
+        if (df && df.value) p.set('date_from', df.value);
+        const dt = document.getElementById('filterDateTo');
+        if (dt && dt.value) p.set('date_to', dt.value);
+        const sr = document.getElementById('filterSearch');
+        if (sr && sr.value.trim()) p.set('search', sr.value.trim());
+        if (preservePage) {
+            const bar = document.getElementById('paginationBar');
+            if (bar) {
+                const pg = parseInt(bar.dataset.currentPage || '1', 10);
+                if (pg > 1) p.set('page', pg);
+            }
+        }
+        const s = p.toString();
+        return s ? '?' + s : '';
+    }
+
     function recalcTotals() {
         let deb = 0, cred = 0;
         linesBody.querySelectorAll('tr').forEach(row => {
@@ -456,6 +567,8 @@
     }
 
     function attachLineListeners(row) {
+        if (row.dataset.attached === '1') return;
+        row.dataset.attached = '1';
         const accSel = row.querySelector('.line-account');
         const amtIn = row.querySelector('.line-amount');
         const typeBadge = row.querySelector('.line-type');
@@ -470,7 +583,7 @@
             recalcTotals();
         }
 
-        accSel.addEventListener('change', updateType);
+        if (accSel) accSel.addEventListener('change', updateType);
         if (amtIn) amtIn.addEventListener('input', recalcTotals);
         if (remBtn) remBtn.addEventListener('click', () => {
             row.remove();
@@ -481,16 +594,18 @@
         updateType();
     }
 
-    function createLineRow(prefill = null) {
+    function createLineRow(prefill = null, readonly = false) {
+        const ro = readonly ? ' disabled' : '';
+        const remStyle = readonly ? ' style="display:none"' : '';
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td><select class="form-select form-select-sm line-account" required>${accountOpts}</select></td>
-            <td><select class="form-select form-select-sm line-fund">${fundOpts}</select></td>
-            <td><select class="form-select form-select-sm line-nat">${natOpts}</select></td>
-            <td><select class="form-select form-select-sm line-func">${funcOpts}</select></td>
-            <td><input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount text-end" required></td>
+            <td><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
+            <td><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
+            <td><select class="form-select form-select-sm line-nat"${ro}>${natOpts}</select></td>
+            <td><select class="form-select form-select-sm line-func"${ro}>${funcOpts}</select></td>
+            <td><input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount text-end" required${ro}></td>
             <td><span class="badge line-type bg-secondary">—</span></td>
-            <td><button type="button" class="btn btn-sm btn-outline-danger remove-line">×</button></td>
+            <td><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
         `;
         if (prefill) {
             const acc = row.querySelector('.line-account');
@@ -504,6 +619,9 @@
             const amt = row.querySelector('.line-amount');
             if (prefill.amount !== undefined) amt.value = prefill.amount;
         }
+        if (readonly) {
+            row.querySelectorAll('select, input').forEach(el => el.classList.add('bg-light'));
+        }
         return row;
     }
 
@@ -514,22 +632,76 @@
         recalcTotals();
     }
 
-    function showFormForAdd() {
-        formSection.classList.remove('d-none');
-        formTitle.textContent = 'Add New Transaction';
-        txIdField.value = '';
-        form.reset();
-        document.getElementById('transaction_date').value = new Date().toISOString().slice(0, 10);
-        linesBody.innerHTML = '';
-        addLine();
-        addLine();
-        recalcTotals();
+    function setMainFieldsReadOnly(readonly) {
+        ['transaction_date', 'pay_to', 'reference_number', 'check_number', 'description', 'memo'].forEach(fid => {
+            const el = document.getElementById(fid);
+            if (!el) return;
+            el.readOnly = readonly;
+            if (readonly) el.classList.add('bg-light');
+            else el.classList.remove('bg-light');
+        });
     }
 
-    function populateFormForEdit(data) {
-        formSection.classList.remove('d-none');
-        formTitle.textContent = 'Edit Transaction #' + data.id;
+    function updateModeBadge(mode) {
+        const b = document.getElementById('formModeBadge');
+        if (!b) return;
+        b.className = 'badge ms-1';
+        if (mode === 'view') {
+            b.textContent = 'View';
+            b.classList.add('bg-secondary');
+        } else if (mode === 'edit') {
+            b.textContent = 'Edit';
+            b.classList.add('bg-warning', 'text-dark');
+        } else if (mode === 'add') {
+            b.textContent = 'New';
+            b.classList.add('bg-primary');
+        } else {
+            b.textContent = '—';
+            b.classList.add('bg-light', 'text-muted');
+        }
+    }
+
+    function showBlankForm() {
+        txIdField.value = '';
+        currentViewData = null;
+        form.reset();
+        linesBody.innerHTML = '';
+        setMainFieldsReadOnly(true);
+        formTitle.textContent = 'Transaction Details';
+        updateModeBadge('blank');
+        if (addLineBtn) addLineBtn.style.display = 'none';
+        if (resetLinesBtn) resetLinesBtn.style.display = 'none';
+        if (saveBtn) saveBtn.style.display = 'none';
+    }
+
+    function populateView(data) {
+        txIdField.value = data.id || '';
+        currentViewData = data;
+        document.getElementById('transaction_date').value = data.transaction_date || '';
+        document.getElementById('pay_to').value = data.pay_to || '';
+        document.getElementById('reference_number').value = data.reference_number || '';
+        document.getElementById('check_number').value = data.check_number || '';
+        document.getElementById('description').value = data.description || '';
+        document.getElementById('memo').value = data.memo || '';
+
+        linesBody.innerHTML = '';
+        const lines = data.lines || [];
+        lines.forEach(l => {
+            const row = createLineRow(l, true);
+            linesBody.appendChild(row);
+            // no listeners for view
+        });
+        setMainFieldsReadOnly(true);
+        formTitle.textContent = 'Transaction #' + data.id;
+        updateModeBadge('view');
+        if (addLineBtn) addLineBtn.style.display = 'none';
+        if (resetLinesBtn) resetLinesBtn.style.display = 'none';
+        if (saveBtn) saveBtn.style.display = 'none';
+    }
+
+    function populateEditable(data) {
         txIdField.value = data.id;
+        currentViewData = data;
         document.getElementById('transaction_date').value = data.transaction_date || '';
         document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('reference_number').value = data.reference_number || '';
@@ -549,6 +721,47 @@
             addLine();
             addLine();
         }
+        setMainFieldsReadOnly(false);
+        formTitle.textContent = 'Edit Transaction #' + data.id;
+        updateModeBadge('edit');
+        if (addLineBtn) addLineBtn.style.display = '';
+        if (resetLinesBtn) resetLinesBtn.style.display = '';
+        if (saveBtn) saveBtn.style.display = '';
+        recalcTotals();
+    }
+
+    function enableEditFromView() {
+        const id = txIdField.value;
+        if (!id) return;
+        setMainFieldsReadOnly(false);
+        formTitle.textContent = 'Edit Transaction #' + id;
+        updateModeBadge('edit');
+        linesBody.querySelectorAll('tr').forEach(row => {
+            row.querySelectorAll('select, input').forEach(el => {
+                el.disabled = false;
+                el.classList.remove('bg-light');
+            });
+            const rem = row.querySelector('.remove-line');
+            if (rem) rem.style.display = '';
+            attachLineListeners(row);
+        });
+        recalcTotals();
+    }
+
+    function showFormForAdd() {
+        txIdField.value = '';
+        currentViewData = null;
+        form.reset();
+        document.getElementById('transaction_date').value = new Date().toISOString().slice(0, 10);
+        linesBody.innerHTML = '';
+        addLine();
+        addLine();
+        setMainFieldsReadOnly(false);
+        formTitle.textContent = 'Add New Transaction';
+        updateModeBadge('add');
+        if (addLineBtn) addLineBtn.style.display = '';
+        if (resetLinesBtn) resetLinesBtn.style.display = '';
+        if (saveBtn) saveBtn.style.display = '';
         recalcTotals();
     }
 
@@ -573,7 +786,7 @@
     }
 
     function hasUnsavedInputs() {
-        if (formSection.classList.contains('d-none')) return false;
+        // form always visible; consider unsaved if has tx id in edit or any data entered
         const fields = ['pay_to', 'reference_number', 'check_number', 'description', 'memo'];
         for (const fid of fields) {
             const el = document.getElementById(fid);
@@ -589,6 +802,8 @@
     // Basic client-side sorting for specified columns
     let currentSortCol = -1;
     let currentSortDir = 1;
+    let lastAnchorRow = null;
+    let currentViewData = null;
 
     function sortTable(colIdx) {
         const tbody = txTableBody;
@@ -652,24 +867,28 @@
 
     // Wire action buttons
     addTxBtn.addEventListener('click', () => {
-        const isEditMode = !formSection.classList.contains('d-none') && txIdField.value !== '';
+        const isEditMode = txIdField.value !== '' && !document.getElementById('transaction_date').readOnly;
         if (isEditMode && hasUnsavedInputs()) {
             if (!confirm('You have made changes to the current transaction. Discard changes and start a new transaction?')) {
                 return;
             }
         }
-        // clear the current selection when switching from edit
-        if (isEditMode) {
-            txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
-            if (selectAll) selectAll.checked = false;
-            updateButtonStates();
-        }
+        // clear the current selection when starting add
+        txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
+        if (selectAll) selectAll.checked = false;
+        updateButtonStates();
         showFormForAdd();
     });
 
     editTxBtn.addEventListener('click', () => {
         const ids = getSelectedIds();
         if (ids.length !== 1) return;
+        const curId = txIdField.value;
+        if (curId == ids[0] && !document.getElementById('transaction_date').readOnly) return; // already editing
+        if (curId == ids[0] && currentViewData) {
+            enableEditFromView();
+            return;
+        }
         fetch('pages/ledger.php?get_transaction=' + ids[0])
             .then(r => r.json())
             .then(data => {
@@ -677,7 +896,7 @@
                     alert(data.error);
                     return;
                 }
-                populateFormForEdit(data);
+                populateEditable(data);
             })
             .catch(err => {
                 console.error(err);
@@ -693,7 +912,7 @@
         const fd = new FormData();
         fd.append('action', 'clear');
         fd.append('selected_ids', JSON.stringify(ids));
-        fetch('pages/ledger.php', { method: 'POST', body: fd })
+        fetch('pages/ledger.php' + buildQueryString(true), { method: 'POST', body: fd })
             .then(r => r.text())
             .then(html => {
                 document.getElementById('main-content').innerHTML = html;
@@ -712,7 +931,7 @@
         const fd = new FormData();
         fd.append('action', 'reconcile');
         fd.append('selected_ids', JSON.stringify(ids));
-        fetch('pages/ledger.php', { method: 'POST', body: fd })
+        fetch('pages/ledger.php' + buildQueryString(true), { method: 'POST', body: fd })
             .then(r => r.text())
             .then(html => {
                 document.getElementById('main-content').innerHTML = html;
@@ -723,12 +942,20 @@
             });
     });
 
-    // Cancel form
-    function hideForm() {
-        formSection.classList.add('d-none');
+    // Cancel form (revert edit->view or deselect+blank)
+    function cancelFormAction() {
+        const curId = txIdField.value;
+        if (curId && currentViewData && String(currentViewData.id) === String(curId)) {
+            populateView(currentViewData);
+        } else {
+            txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
+            if (selectAll) selectAll.checked = false;
+            updateButtonStates();
+            showBlankForm();
+        }
     }
-    if (cancelBtn) cancelBtn.addEventListener('click', hideForm);
-    if (cancelBtn2) cancelBtn2.addEventListener('click', hideForm);
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelFormAction);
+    if (cancelBtn2) cancelBtn2.addEventListener('click', cancelFormAction);
 
     // Reset lines to exactly 2
     if (resetLinesBtn) {
@@ -773,7 +1000,7 @@
 
             linesJson.value = JSON.stringify(lines);
 
-            fetch('pages/ledger.php', {
+            fetch('pages/ledger.php' + buildQueryString(true), {
                 method: 'POST',
                 body: new FormData(form)
             })
@@ -788,49 +1015,172 @@
         });
     }
 
-    // Selection handling (multi-select via checkboxes)
+    // Selection: support checkboxes + Ctrl/Shift + click; plain click selects single and opens view (read-only)
+    function syncSelectAllState() {
+        const allCbs = txTableBody.querySelectorAll('.tx-cb');
+        const checked = txTableBody.querySelectorAll('.tx-cb:checked');
+        if (selectAll) {
+            selectAll.checked = (allCbs.length > 0 && checked.length === allCbs.length);
+        }
+    }
+
+    function afterSelectionChanged() {
+        const checkedCbs = txTableBody.querySelectorAll('.tx-cb:checked');
+        const count = checkedCbs.length;
+        updateButtonStates();
+        if (count === 1) {
+            const id = parseInt(checkedCbs[0].value, 10);
+            if (String(txIdField.value) !== String(id)) {
+                loadView(id);
+            }
+            // same id: leave current mode (view or edit) as-is
+        } else {
+            showBlankForm();
+        }
+    }
+
+    function loadView(id) {
+        fetch('pages/ledger.php?get_transaction=' + id)
+            .then(r => r.json())
+            .then(data => {
+                if (data && data.error) {
+                    showBlankForm();
+                    return;
+                }
+                populateView(data);
+            })
+            .catch(() => showBlankForm());
+    }
+
     if (selectAll) {
         selectAll.addEventListener('change', () => {
-            txTableBody.querySelectorAll('.tx-cb').forEach(cb => {
-                cb.checked = selectAll.checked;
-            });
-            updateButtonStates();
+            txTableBody.querySelectorAll('.tx-cb').forEach(cb => cb.checked = selectAll.checked);
+            syncSelectAllState();
+            afterSelectionChanged();
         });
     }
 
     if (txTableBody) {
-        // Checkbox changes
         txTableBody.addEventListener('change', function(e) {
             if (e.target.classList.contains('tx-cb')) {
-                const allCbs = txTableBody.querySelectorAll('.tx-cb');
-                const checkedCbs = txTableBody.querySelectorAll('.tx-cb:checked');
-                if (selectAll) {
-                    selectAll.checked = (checkedCbs.length === allCbs.length && allCbs.length > 0);
-                }
-                updateButtonStates();
+                syncSelectAllState();
+                afterSelectionChanged();
             }
         });
 
-        // Click row (except on checkbox or button) toggles selection
         txTableBody.addEventListener('click', function(e) {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
             const row = e.target.closest('tr');
-            if (!row) return;
+            if (!row || !row.dataset.id) return;
             const cb = row.querySelector('.tx-cb');
-            if (cb) {
+            if (!cb) return;
+
+            const allRows = Array.from(txTableBody.querySelectorAll('tr[data-id]'));
+            const rowIdx = allRows.indexOf(row);
+
+            if (e.shiftKey && lastAnchorRow) {
+                const anchorIdx = allRows.indexOf(lastAnchorRow);
+                if (anchorIdx !== -1) {
+                    const start = Math.min(anchorIdx, rowIdx);
+                    const end = Math.max(anchorIdx, rowIdx);
+                    allRows.forEach((r, i) => {
+                        const c = r.querySelector('.tx-cb');
+                        if (c) c.checked = (i >= start && i <= end);
+                    });
+                }
+            } else if (e.ctrlKey || e.metaKey) {
                 cb.checked = !cb.checked;
-                cb.dispatchEvent(new Event('change', { bubbles: true }));
+            } else {
+                allRows.forEach(r => {
+                    const c = r.querySelector('.tx-cb');
+                    if (c) c.checked = (r === row);
+                });
+                lastAnchorRow = row;
             }
+            if (!e.shiftKey) {
+                lastAnchorRow = row;
+            }
+            syncSelectAllState();
+            afterSelectionChanged();
         });
     }
 
     // Initial state
     updateButtonStates();
-
-    // Enable sorting on the transactions table
     initSorting();
 
-    // No lines pre-seeded until Add/Edit clicked (form hidden by default)
+    // Always start with blank read-only form
+    showBlankForm();
+
+    // Wire filter apply/clear + search enter + pagination
+    const applyFilterBtn = document.getElementById('applyFilterBtn');
+    const clearFilterBtn = document.getElementById('clearFilterBtn');
+    const filterSearchEl = document.getElementById('filterSearch');
+
+    if (applyFilterBtn) {
+        applyFilterBtn.addEventListener('click', () => {
+            const qs = buildQueryString(false);
+            fetch('pages/ledger.php' + qs)
+                .then(r => r.text())
+                .then(html => { document.getElementById('main-content').innerHTML = html; });
+        });
+    }
+    if (clearFilterBtn) {
+        clearFilterBtn.addEventListener('click', () => {
+            const df = document.getElementById('filterDateFrom');
+            const dt = document.getElementById('filterDateTo');
+            const sr = document.getElementById('filterSearch');
+            if (df) df.value = '';
+            if (dt) dt.value = '';
+            if (sr) sr.value = '';
+            fetch('pages/ledger.php')
+                .then(r => r.text())
+                .then(html => { document.getElementById('main-content').innerHTML = html; });
+        });
+    }
+    if (filterSearchEl) {
+        filterSearchEl.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+                const qs = buildQueryString(false);
+                fetch('pages/ledger.php' + qs)
+                    .then(r => r.text())
+                    .then(html => { document.getElementById('main-content').innerHTML = html; });
+            }
+        });
+    }
+
+    function loadWithPage(pageNum) {
+        const params = new URLSearchParams();
+        const dfEl = document.getElementById('filterDateFrom');
+        const dtEl = document.getElementById('filterDateTo');
+        const srEl = document.getElementById('filterSearch');
+        if (dfEl && dfEl.value) params.set('date_from', dfEl.value);
+        if (dtEl && dtEl.value) params.set('date_to', dtEl.value);
+        if (srEl && srEl.value.trim()) params.set('search', srEl.value.trim());
+        if (pageNum > 1) params.set('page', pageNum);
+        const qstr = params.toString() ? ('?' + params.toString()) : '';
+        fetch('pages/ledger.php' + qstr)
+            .then(r => r.text())
+            .then(html => { document.getElementById('main-content').innerHTML = html; });
+    }
+
+    const prevPageBtn = document.getElementById('prevPageBtn');
+    const nextPageBtn = document.getElementById('nextPageBtn');
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener('click', () => {
+            const bar = document.getElementById('paginationBar');
+            const cur = bar ? parseInt(bar.dataset.currentPage || '1', 10) : 1;
+            loadWithPage(Math.max(1, cur - 1));
+        });
+    }
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener('click', () => {
+            const bar = document.getElementById('paginationBar');
+            const cur = bar ? parseInt(bar.dataset.currentPage || '1', 10) : 1;
+            const tot = bar ? parseInt(bar.dataset.totalPages || '1', 10) : 1;
+            loadWithPage(Math.min(tot, cur + 1));
+        });
+    }
 })();
 </script>
 <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-ledger-script');if(s){(new Function(s.textContent))();}this.remove();">
