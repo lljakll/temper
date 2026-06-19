@@ -13,9 +13,11 @@ $db->query("SET FOREIGN_KEY_CHECKS = 0;");
 
 $drop_queries = [
     "DROP TABLE IF EXISTS transaction_lines;",
-    "DROP TABLE IF EXISTS transaction_details;",
     "DROP TABLE IF EXISTS budget_lines;",
+    "DROP TABLE IF EXISTS users;",
+    "DROP TABLE IF EXISTS transaction_details;",
     "DROP TABLE IF EXISTS budgets;",
+    "DROP TABLE IF EXISTS roles;",
     "DROP TABLE IF EXISTS funds;",
     "DROP TABLE IF EXISTS accounts;",
     "DROP TABLE IF EXISTS natural_categories;",

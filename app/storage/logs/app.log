@@ -244,3 +244,22 @@ Stack trace:
 [19-Jun-2026 10:15:01 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60
 [19-Jun-2026 10:34:13 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60
 [19-Jun-2026 10:42:04 UTC] PHP Warning:  Undefined array key "REQUEST_METHOD" in /home/jak/git_repos/temper/app/pages/ledger.php on line 60
+[19-Jun-2026 14:40:16 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Access denied for user 'treasurer_user'@'localhost' in /home/jak/git_repos/temper/app/config.php:22
+Stack trace:
+#0 /home/jak/git_repos/temper/app/config.php(22): mysqli->__construct()
+#1 /home/jak/git_repos/temper/app/auth.php(13): getDbConnection()
+#2 /home/jak/git_repos/temper/app/login.php(21): login()
+#3 {main}
+  thrown in /home/jak/git_repos/temper/app/config.php on line 22
+[19-Jun-2026 15:10:35 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'username' in 'SELECT' in /home/jak/git_repos/temper/app/auth.php:19
+Stack trace:
+#0 /home/jak/git_repos/temper/app/auth.php(19): mysqli->prepare()
+#1 /home/jak/git_repos/temper/app/login.php(21): login()
+#2 {main}
+  thrown in /home/jak/git_repos/temper/app/auth.php on line 19
+[19-Jun-2026 15:11:06 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'username' in 'SELECT' in /home/jak/git_repos/temper/app/auth.php:19
+Stack trace:
+#0 /home/jak/git_repos/temper/app/auth.php(19): mysqli->prepare()
+#1 /home/jak/git_repos/temper/app/login.php(21): login()
+#2 {main}
+  thrown in /home/jak/git_repos/temper/app/auth.php on line 19

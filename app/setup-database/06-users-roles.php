@@ -31,6 +31,7 @@ if ($db->query($roles_table) === TRUE) {
 $users_table = "CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     role_id INT NOT NULL,
+    username VARCHAR(50) NOT NULL UNIQUE,
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
     email VARCHAR(100) NOT NULL UNIQUE,
@@ -50,9 +51,9 @@ if ($db->query($users_table) === TRUE) {
 }
 
 // Create indexes
-$db->query("CREATE INDEX idx_users_email ON users(email)");
-$db->query("CREATE INDEX idx_users_role_id ON users(role_id)");
-$db->query("CREATE INDEX idx_users_is_active ON users(is_active)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)");
 
 // Insert seed data: Roles
 $roles = "INSERT INTO roles (name, description, permissions) VALUES 
@@ -68,10 +69,10 @@ if ($db->query($roles) === TRUE) {
 }
 
 // Insert seed data: Users
-$users = "INSERT INTO users (role_id, first_name, last_name, email, password, is_active) VALUES 
-    (1, 'Admin', 'User', 'admin@church.org', 'password123', TRUE),
-    (2, 'Finance', 'Manager', 'finance@church.org', 'password123', TRUE),
-    (3, 'Regular', 'Member', 'member@church.org', 'password123', TRUE)";
+$users = "INSERT INTO users (role_id, username, first_name, last_name, email, password, is_active) VALUES 
+    (1, 'admin', 'Admin', 'User', 'admin@church.org', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE),
+    (2, 'finance', 'Finance', 'Manager', 'finance@church.org', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE),
+    (3, 'member', 'Regular', 'Member', 'member@church.org', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE)";
 
 if ($db->query($users) === TRUE) {
     echo "Seed data for 'users' inserted successfully\n";
