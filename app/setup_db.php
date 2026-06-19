@@ -1,0 +1,56 @@
+<?php
+// Church Treasurer System - Run All Database Setup Scripts
+require_once 'config.php';
+
+echo "=== Starting Full Database Setup ===\n\n";
+
+// Get database connection once
+$db = getDbConnection();
+
+// Drop all tables in reverse dependency order with IF EXISTS
+echo "Dropping existing tables...\n";
+$db->query("SET FOREIGN_KEY_CHECKS = 0;");
+
+$drop_queries = [
+    "DROP TABLE IF EXISTS transaction_lines;",
+    "DROP TABLE IF EXISTS transaction_details;",
+    "DROP TABLE IF EXISTS budget_lines;",
+    "DROP TABLE IF EXISTS budgets;",
+    "DROP TABLE IF EXISTS funds;",
+    "DROP TABLE IF EXISTS accounts;",
+    "DROP TABLE IF EXISTS natural_categories;",
+    "DROP TABLE IF EXISTS functional_categories;"
+];
+
+foreach ($drop_queries as $query) {
+    echo "Executing: $query\n";
+    mysqli_query($db, $query);
+}
+
+$db->query("SET FOREIGN_KEY_CHECKS = 1;");
+
+echo "\n";
+
+// Run setup scripts in proper creation order
+$files = [
+    'setup-database/01-accounts.php',
+    'setup-database/02-categories.php',
+    'setup-database/03-funds.php',
+    'setup-database/04-transactions.php',
+    'setup-database/05-budgeting.php',
+    'setup-database/06-users-roles.php'
+];
+
+foreach ($files as $file) {
+    if (file_exists($file)) {
+        echo "Running $file...\n";
+        define('RUNNING_FROM_MASTER_SETUP', true);
+        include $file;
+        echo "\n";
+    } else {
+        echo "Warning: $file not found\n";
+    }
+}
+
+echo "=== Full Database Setup Completed ===\n";
+?>

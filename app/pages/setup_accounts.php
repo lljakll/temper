@@ -1,0 +1,394 @@
+<?php
+
+    // Security and DB connection already handled by index.php
+    // Light fallback in case
+    if (!isset($db)) {
+        require_once __DIR__ . '/../config.php';
+        $db = getDbConnection();
+    }
+
+    // Handle form submissions
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (isset($_POST['action'])) {
+            $action = $_POST['action'];
+            
+            if ($action === 'add') {
+                // Insert new account record
+                $name = $_POST['name'] ?? '';
+                $description = $_POST['description'] ?? '';
+                $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $archived = isset($_POST['archived']) ? 1 : 0;
+                $mutable_fund = isset($_POST['mutable_fund']) ? 1 : 0;
+                
+                // Validate required fields
+                if (empty($name)) {
+                    echo "Error: Account name is required\n";
+                } else {
+                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, archived, mutable_fund) VALUES (?, ?, ?, ?, ?)");
+                    $stmt->bind_param("sssii", $name, $description, $normal_balance, $archived, $mutable_fund);
+                    if ($stmt->execute() === TRUE) {
+                        echo "Account added successfully\n";
+                    } else {
+                        echo "Error adding account: " . $db->error . "\n";
+                    }
+                    $stmt->close();
+                }
+            }
+            elseif ($action === 'edit') {
+                // Update existing account record
+                $id = $_POST['id'] ?? 0;
+                $name = $_POST['name'] ?? '';
+                $description = $_POST['description'] ?? '';
+                $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $archived = isset($_POST['archived']) ? 1 : 0;
+                $mutable_fund = isset($_POST['mutable_fund']) ? 1 : 0;
+                
+                // Validate required fields and account exists
+                if (empty($name) || $id <= 0) {
+                    echo "Error: Invalid account data\n";
+                } else {
+                    // Check if account exists before updating
+                    $check_stmt = $db->prepare("SELECT id FROM accounts WHERE id = ?");
+                    $check_stmt->bind_param("i", $id);
+                    $check_stmt->execute();
+                    $result = $check_stmt->get_result();
+                    
+                    if ($result->num_rows > 0) {
+                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, archived=?, mutable_fund=? WHERE id=?");
+                        $stmt->bind_param("sssiii", $name, $description, $normal_balance, $archived, $mutable_fund, $id);
+                        if ($stmt->execute() === TRUE) {
+                            echo "Account updated successfully\n";
+                        } else {
+                            echo "Error updating account: " . $db->error . "\n";
+                        }
+                        $stmt->close();
+                    } else {
+                        echo "Error: Account not found\n";
+                    }
+                    $check_stmt->close();
+                }
+            }
+            elseif ($action === 'delete') {
+                // Delete account record
+                $id = $_POST['id'] ?? 0;
+                
+                if ($id <= 0) {
+                    echo "Error: Invalid account ID\n";
+                } else {
+                    $stmt = $db->prepare("DELETE FROM accounts WHERE id=?");
+                    $stmt->bind_param("i", $id);
+                    if ($stmt->execute() === TRUE) {
+                        echo "Account deleted successfully\n";
+                    } else {
+                        echo "Error deleting account: " . $db->error . "\n";
+                    }
+                    $stmt->close();
+                }
+            }
+            elseif ($action === 'archive') {
+                // Archive/unarchive account record
+                $id = $_POST['id'] ?? 0;
+                $archived = $_POST['archived'] ?? 0;
+                
+                // Validate ID
+                if ($id <= 0) {
+                    echo "Error: Invalid account ID\n";
+                } else {
+                    // Check if account exists before updating
+                    $check_stmt = $db->prepare("SELECT id FROM accounts WHERE id = ?");
+                    $check_stmt->bind_param("i", $id);
+                    $check_stmt->execute();
+                    $result = $check_stmt->get_result();
+                    
+                    if ($result->num_rows > 0) {
+                        $stmt = $db->prepare("UPDATE accounts SET archived=? WHERE id=?");
+                        $stmt->bind_param("ii", $archived, $id);
+                        if ($stmt->execute() === TRUE) {
+                            echo "Account archived status updated successfully\n";
+                        } else {
+                            echo "Error updating account archived status: " . $db->error . "\n";
+                        }
+                        $stmt->close();
+                    } else {
+                        echo "Error: Account not found\n";
+                    }
+                    $check_stmt->close();
+                }
+            }
+        } else {
+            echo "Error: No action specified\n";
+        }
+    } else {
+        echo "Error: Invalid request method\n";
+    }
+
+    // Check if 'show_archived' parameter is set
+    $show_archived = isset($_GET['show_archived']) && $_GET['show_archived'] == '1';
+
+    // Build query for accounts
+    if ($show_archived) {
+        $accounts_query = "SELECT id, name, description, normal_balance, archived, mutable_fund FROM accounts ORDER BY name";
+    } else {
+        $accounts_query = "SELECT id, name, description, normal_balance, archived, mutable_fund FROM accounts WHERE archived = FALSE ORDER BY name";
+    }
+
+    $accounts_result = $db->query($accounts_query);
+?>
+
+<div class="container mt-4">
+    <h2 class="mb-4">Accounts Setup</h2>
+    
+    <!-- Controls -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <button id="showArchivedBtn" class="btn btn-outline-secondary" data-show-archived="<?= $show_archived ? '1' : '0' ?>">
+                <?= $show_archived ? 'Hide' : 'Show' ?> Archived
+            </button>
+        </div>
+        <div class="col-md-6 text-end">
+            <button id="addBtn" class="btn btn-primary me-2">Add</button>
+            <button id="editBtn" class="btn btn-secondary me-2" disabled>Edit</button>
+            <button id="deleteBtn" class="btn btn-danger me-2" disabled>Delete</button>
+            <button id="archiveBtn" class="btn btn-warning me-2" disabled>Archive/Unarchive</button>
+        </div>
+    </div>
+    
+    <!-- Account Table -->
+    <div class="table-responsive">
+        <table class="table table-striped table-hover">
+            <thead class="table-dark">
+                <tr>
+                    <th>Name</th>
+                    <th>Description</th>
+                    <th>Normal Balance</th>
+                    <th>Archived</th>
+                    <th>Mut. Fund</th>
+                </tr>
+            </thead>
+            <tbody id="accountsTableBody">
+                <?php if ($accounts_result && $accounts_result->num_rows > 0): ?>
+                    <?php while ($account = $accounts_result->fetch_assoc()): ?>
+                        <tr data-id="<?= $account['id'] ?>">
+                            <td><?= htmlspecialchars($account['name']) ?></td>
+                            <td><?= htmlspecialchars($account['description'] ?? '') ?></td>
+                            <td><?= htmlspecialchars($account['normal_balance']) ?></td>
+                            <td><?= $account['archived'] ? 'Yes' : 'No' ?></td>
+                            <td><?= $account['mutable_fund'] ? 'Yes' : 'No' ?></td>
+                        </tr>
+                    <?php endwhile; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="5" class="text-center">No accounts found.</td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Form for adding/editing -->
+    <div id="accountForm" class="mt-4 d-none">
+        <h4 id="formTitle">Add New Account</h4>
+        <form id="accountFormContent" method="POST">
+            <input type="hidden" id="accountId" name="id">
+            <input type="hidden" name="action" id="formAction">
+            
+            <div class="mb-3">
+                <label for="name" class="form-label">Name</label>
+                <input type="text" class="form-control" id="name" name="name" required>
+            </div>
+            
+            <div class="mb-3">
+                <label for="description" class="form-label">Description</label>
+                <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+            </div>
+            
+            <div class="mb-3">
+                <label for="normal_balance" class="form-label">Normal Balance</label>
+                <select class="form-select" id="normal_balance" name="normal_balance" required>
+                    <option value="debit">Debit</option>
+                    <option value="credit">Credit</option>
+                </select>
+            </div>
+            
+            <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="archived" name="archived">
+                <label class="form-check-label" for="archived">Archived</label>
+            </div>
+            
+            <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="mutable_fund" name="mutable_fund">
+                <label class="form-check-label" for="mutable_fund">Mutable Fund</label>
+            </div>
+            
+            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<script type="text/plain" id="init-accounts-script">
+(function() {
+    const currentPage = 'setup_accounts';
+    const tableBody = document.getElementById('accountsTableBody');
+    const addBtn = document.getElementById('addBtn');
+    const editBtn = document.getElementById('editBtn');
+    const deleteBtn = document.getElementById('deleteBtn');
+    const archiveBtn = document.getElementById('archiveBtn');
+    const showArchivedBtn = document.getElementById('showArchivedBtn');
+    let showArchived = showArchivedBtn ? showArchivedBtn.dataset.showArchived === '1' : false;
+    const accountForm = document.getElementById('accountForm');
+    const accountFormContent = document.getElementById('accountFormContent');
+    const formAction = document.getElementById('formAction');
+    const accountId = document.getElementById('accountId');
+    const formTitle = document.getElementById('formTitle');
+    const cancelBtn = document.getElementById('cancelBtn');
+    
+    let selectedRow = null;
+    
+    // Enable/disable buttons based on row selection
+    tableBody.addEventListener('click', function(event) {
+        const row = event.target.closest('tr');
+        if (row) {
+            // Deselect previous row
+            if (selectedRow) {
+                selectedRow.classList.remove('table-primary');
+            }
+            
+            // Select new row
+            selectedRow = row;
+            if (selectedRow) {
+                selectedRow.classList.add('table-primary');
+                // Enable action buttons
+                editBtn.disabled = false;
+                deleteBtn.disabled = false;
+                archiveBtn.disabled = false;
+            }
+        }
+    });
+    
+    // Add button
+    addBtn.addEventListener('click', function() {
+        // Reset form
+        accountFormContent.reset();
+        formAction.value = 'add';
+        formTitle.textContent = 'Add New Account';
+        accountId.value = '';
+        accountForm.classList.remove('d-none');
+        
+        // Disable action buttons during editing
+        addBtn.disabled = true;
+        editBtn.disabled = true;
+        deleteBtn.disabled = true;
+        archiveBtn.disabled = true;
+    });
+    
+    // Edit button
+    editBtn.addEventListener('click', function() {
+        if (!selectedRow) return;
+        
+        // Get account data from the row
+        const id = selectedRow.getAttribute('data-id');
+        const name = selectedRow.cells[0].textContent;
+        const description = selectedRow.cells[1].textContent;
+        const normal_balance = selectedRow.cells[2].textContent;
+        const archived = selectedRow.cells[3].textContent === 'Yes';
+        const mutable_fund = selectedRow.cells[4].textContent === 'Yes';
+        
+        // Fill form
+        accountId.value = id;
+        document.getElementById('name').value = name;
+        document.getElementById('description').value = description;
+        document.getElementById('normal_balance').value = normal_balance;
+        document.getElementById('archived').checked = archived;
+        document.getElementById('mutable_fund').checked = mutable_fund;
+        
+        formAction.value = 'edit';
+        formTitle.textContent = 'Edit Account';
+        accountForm.classList.remove('d-none');
+        
+        // Disable action buttons during editing
+        addBtn.disabled = true;
+        editBtn.disabled = true;
+        deleteBtn.disabled = true;
+        archiveBtn.disabled = true;
+    });
+    
+    // Delete button
+    deleteBtn.addEventListener('click', function() {
+        if (!selectedRow) return;
+        
+        const id = selectedRow.getAttribute('data-id');
+        if (confirm('Are you sure you want to delete this account?')) {
+            // Set action to delete
+            formAction.value = 'delete';
+            accountId.value = id;
+            
+            // Submit form
+            accountFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+    });
+    
+    // Archive/Unarchive button
+    archiveBtn.addEventListener('click', function() {
+        if (!selectedRow) {
+            alert("Please select an account first.");
+            return;
+        }
+        
+        const id = selectedRow.getAttribute('data-id');
+        const isCurrentlyArchived = selectedRow.cells[3].textContent.trim() === 'Yes';
+        const newArchivedState = !isCurrentlyArchived;
+        
+        if (confirm(`Are you sure you want to ${newArchivedState ? 'archive' : 'unarchive'} this account?`)) {
+            // Set form values for archive action
+            formAction.value = 'archive';
+            accountId.value = id;
+            document.getElementById('archived').checked = newArchivedState;
+            
+            // Submit the form
+            accountFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+    });
+    
+    // Cancel button
+    cancelBtn.addEventListener('click', function() {
+        accountForm.classList.add('d-none');
+        
+        // Re-enable action buttons
+        addBtn.disabled = false;
+        editBtn.disabled = true;
+        deleteBtn.disabled = true;
+        archiveBtn.disabled = true;
+    });
+    
+    // Toggle archived via fetch (no full reload)
+    showArchivedBtn.addEventListener('click', function() {
+        showArchived = !showArchived;
+        const newShow = showArchived ? '1' : '0';
+        fetch(`pages/${currentPage}.php?show_archived=${newShow}`)
+            .then(r => r.text())
+            .then(html => { document.getElementById('main-content').innerHTML = html; })
+            .catch(e => console.error('Toggle error:', e));
+    });
+    
+    // Handle form submission via AJAX to stay in tab
+    accountFormContent.addEventListener('submit', function(e) {
+        e.preventDefault();
+        fetch(`pages/${currentPage}.php`, {
+            method: 'POST',
+            body: new FormData(accountFormContent)
+        })
+        .then(() => {
+            const qs = showArchived ? '?show_archived=1' : '';
+            fetch(`pages/${currentPage}.php${qs}`)
+                .then(r => r.text())
+                .then(html => { document.getElementById('main-content').innerHTML = html; })
+                .catch(e => console.error('Reload error:', e));
+        })
+        .catch(error => console.error('Form submit error:', error));
+    });
+})();
+</script>
+<img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-accounts-script');if(s){(new Function(s.textContent))();}this.remove();">
+
+<?php $db->close(); ?>
