@@ -19,7 +19,7 @@ $budgets_table = "CREATE TABLE IF NOT EXISTS budgets (
     end_date DATE NOT NULL,
     approved_date DATE NULL,
     reference_number VARCHAR(50) NULL,
-    status ENUM('draft', 'active', 'closed') DEFAULT 'draft',
+    status ENUM('draft', 'approved', 'active', 'closed') DEFAULT 'draft',
     total_budgeted DECIMAL(15,2) DEFAULT 0.00,
     description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

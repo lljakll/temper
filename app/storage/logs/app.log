@@ -263,3 +263,23 @@ Stack trace:
 #1 /home/jak/git_repos/temper/app/login.php(21): login()
 #2 {main}
   thrown in /home/jak/git_repos/temper/app/auth.php on line 19
+[20-Jun-2026 13:01:03 UTC] PHP Fatal error:  Uncaught Error: mysqli object is already closed in Command line code:12
+Stack trace:
+#0 Command line code(12): mysqli->close()
+#1 {main}
+  thrown in Command line code on line 12
+[20-Jun-2026 13:01:10 UTC] PHP Fatal error:  Uncaught Error: mysqli object is already closed in Command line code:25
+Stack trace:
+#0 Command line code(25): mysqli->close()
+#1 {main}
+  thrown in Command line code on line 25
+[20-Jun-2026 13:01:19 UTC] PHP Fatal error:  Uncaught Error: mysqli object is already closed in Command line code:6
+Stack trace:
+#0 Command line code(6): mysqli->close()
+#1 {main}
+  thrown in Command line code on line 6
+[20-Jun-2026 13:01:29 UTC] PHP Fatal error:  Uncaught Error: mysqli object is already closed in Command line code:7
+Stack trace:
+#0 Command line code(7): mysqli->query()
+#1 {main}
+  thrown in Command line code on line 7
