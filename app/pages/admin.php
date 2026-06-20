@@ -26,16 +26,20 @@
         $recentBackups = array_slice($recentBackups, 0, 4);
     }
 
+    $activeCards = [
+        [
+            'title' => 'Database Maintenance',
+            'description' => 'Clear test data, reset users, and run destructive database utilities.',
+            'icon' => 'bi-database-gear',
+            'page' => 'admin-database',
+        ],
+    ];
+
     $placeholderCards = [
         [
             'title' => 'Users & Roles',
             'description' => 'Manage user accounts, roles, and access permissions.',
             'icon' => 'bi-people',
-        ],
-        [
-            'title' => 'Database Maintenance',
-            'description' => 'Run utilities, optimize tables, and manage schema tools.',
-            'icon' => 'bi-database-gear',
         ],
         [
             'title' => 'System Settings',
@@ -173,6 +177,26 @@
             </div>
         </div>
     </div>
+
+    <?php foreach ($activeCards as $card): ?>
+        <div class="col-sm-6 col-xl-4">
+            <div class="card admin-card admin-card--secondary h-100 shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <i class="bi <?= $card['icon'] ?> text-secondary"></i>
+                        <h6 class="mb-0 small fw-semibold"><?= htmlspecialchars($card['title']) ?></h6>
+                    </div>
+                    <p class="text-muted small mb-2 flex-grow-1"><?= htmlspecialchars($card['description']) ?></p>
+                    <a href="javascript:void(0)"
+                       class="admin-active-link admin-page-link px-1 mt-auto"
+                       data-page="<?= htmlspecialchars($card['page']) ?>">
+                        Open <?= htmlspecialchars($card['title']) ?>
+                        <i class="bi bi-chevron-right ms-auto small text-muted"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    <?php endforeach; ?>
 
     <?php foreach ($placeholderCards as $card): ?>
         <div class="col-sm-6 col-xl-4">

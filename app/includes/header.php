@@ -41,15 +41,18 @@ if (!isLoggedIn()) {
                 return response.text();
             })
             .then(html => {
-                contentArea.innerHTML = html;
+                if (typeof applyMainContent === 'function') {
+                    applyMainContent(html);
+                } else {
+                    contentArea.innerHTML = html;
+                }
             })
             .catch(error => {
                 console.error('Error:', error);
-                contentArea.innerHTML = `
-                    <div class="alert alert-danger p-4">
-                        <h5>Error loading page</h5>
-                        <p>Could not load ${page}.php. Please try again.</p>
-                    </div>`;
+                contentArea.innerHTML = '<div class="text-muted small p-4">Page failed to load. See notification above.</div>';
+                if (typeof showToast === 'function') {
+                    showToast('Could not load ' + page + '.php. Please try again.', 'danger');
+                }
             });
     }
 

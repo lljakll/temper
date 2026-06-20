@@ -813,10 +813,6 @@
     }
 
     function renderResults(key, data) {
-        if (data.error) {
-            return '<div class="alert alert-danger py-2 small">' + data.error + '</div>';
-        }
-
         if (key === 'fund-balances') {
             let rows = '';
             data.rows.forEach(r => {
@@ -937,14 +933,22 @@
 
         fetch('pages/reports.php?' + qs)
             .then(r => r.json())
-            .then(data => { results.innerHTML = renderResults(currentReportKey, data); })
+            .then(data => {
+                if (data.error) {
+                    showToast(data.error, 'danger');
+                    results.innerHTML = '<div class="text-muted small fst-italic">Report failed. See notification above.</div>';
+                    return;
+                }
+                results.innerHTML = renderResults(currentReportKey, data);
+            })
             .catch(err => {
-                results.innerHTML = '<div class="alert alert-danger py-2 small">Failed to load report: ' + err.message + '</div>';
+                showToast('Failed to load report: ' + err.message, 'danger');
+                results.innerHTML = '<div class="text-muted small fst-italic">Report failed.</div>';
             });
     }
 
     function exportCurrentReport() {
-        if (!currentReportKey) { alert('Please open a report first.'); return; }
+        if (!currentReportKey) { showToast('Please open a report first.', 'warning'); return; }
         runCurrentReport();
     }
 

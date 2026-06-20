@@ -11,44 +11,77 @@
     // Handle form submissions
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $action = $_POST['action'];
-        
+
         if ($action === 'add') {
             $name = $_POST['name'] ?? '';
             $code = $_POST['code'] ?? '';
             $type = $_POST['type'] ?? '';
             $description = $_POST['description'] ?? '';
             $archived = isset($_POST['archived']) ? 1 : 0;
-            
-            $stmt = $db->prepare("INSERT INTO funds (name, code, type, description, archived) VALUES (?, ?, ?, ?, ?)");
-            $stmt->bind_param("sssss", $name, $code, $type, $description, $archived);
-            $stmt->execute();
-            $stmt->close();
+
+            if (empty($name)) {
+                echo "Error: Fund name is required\n";
+            } else {
+                $stmt = $db->prepare("INSERT INTO funds (name, code, type, description, archived) VALUES (?, ?, ?, ?, ?)");
+                $stmt->bind_param("sssss", $name, $code, $type, $description, $archived);
+                if ($stmt->execute() === TRUE) {
+                    echo "Fund added successfully\n";
+                } else {
+                    echo "Error adding fund: " . $db->error . "\n";
+                }
+                $stmt->close();
+            }
         } elseif ($action === 'edit') {
-            $id = $_POST['id'] ?? 0;
+            $id = (int)($_POST['id'] ?? 0);
             $name = $_POST['name'] ?? '';
             $code = $_POST['code'] ?? '';
             $type = $_POST['type'] ?? '';
             $description = $_POST['description'] ?? '';
             $archived = isset($_POST['archived']) ? 1 : 0;
-            
-            $stmt = $db->prepare("UPDATE funds SET name=?, code=?, type=?, description=?, archived=? WHERE id=?");
-            $stmt->bind_param("sssssi", $name, $code, $type, $description, $archived, $id);
-            $stmt->execute();
-            $stmt->close();
+
+            if (empty($name) || $id <= 0) {
+                echo "Error: Invalid fund data\n";
+            } else {
+                $stmt = $db->prepare("UPDATE funds SET name=?, code=?, type=?, description=?, archived=? WHERE id=?");
+                $stmt->bind_param("sssssi", $name, $code, $type, $description, $archived, $id);
+                if ($stmt->execute() === TRUE) {
+                    echo "Fund updated successfully\n";
+                } else {
+                    echo "Error updating fund: " . $db->error . "\n";
+                }
+                $stmt->close();
+            }
         } elseif ($action === 'delete') {
-            $id = $_POST['id'] ?? 0;
-            $stmt = $db->prepare("DELETE FROM funds WHERE id=?");
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
-            $stmt->close();
+            $id = (int)($_POST['id'] ?? 0);
+
+            if ($id <= 0) {
+                echo "Error: Invalid fund ID\n";
+            } else {
+                $stmt = $db->prepare("DELETE FROM funds WHERE id=?");
+                $stmt->bind_param("i", $id);
+                if ($stmt->execute() === TRUE) {
+                    echo "Fund deleted successfully\n";
+                } else {
+                    echo "Error deleting fund: " . $db->error . "\n";
+                }
+                $stmt->close();
+            }
         } elseif ($action === 'archive') {
-            $id = $_POST['id'] ?? 0;
-            $archived = $_POST['archived'] ?? 0;
-            
-            $stmt = $db->prepare("UPDATE funds SET archived=? WHERE id=?");
-            $stmt->bind_param("ii", $archived, $id);
-            $stmt->execute();
-            $stmt->close();
+            $id = (int)($_POST['id'] ?? 0);
+            $archived = (int)($_POST['archived'] ?? 0);
+
+            if ($id <= 0) {
+                echo "Error: Invalid fund ID\n";
+            } else {
+                $stmt = $db->prepare("UPDATE funds SET archived=? WHERE id=?");
+                $stmt->bind_param("ii", $archived, $id);
+                if ($stmt->execute() === TRUE) {
+                    echo "Fund archived status updated successfully\n";
+                } else {
+                    echo "Error updating fund archived status: " . $db->error . "\n";
+                }
+                $stmt->close();
+            }
         }
     }
 
@@ -282,18 +315,8 @@
     // Handle form submission via AJAX to stay in tab
     fundFormContent.addEventListener('submit', function(e) {
         e.preventDefault();
-        fetch(`pages/${currentPage}.php`, {
-            method: 'POST',
-            body: new FormData(fundFormContent)
-        })
-        .then(() => {
-            const qs = showArchived ? '?show_archived=1' : '';
-            fetch(`pages/${currentPage}.php${qs}`)
-                .then(r => r.text())
-                .then(html => { document.getElementById('main-content').innerHTML = html; })
-                .catch(e => console.error('Reload error:', e));
-        })
-        .catch(error => console.error('Form submit error:', error));
+        const qs = showArchived ? '?show_archived=1' : '';
+        submitFormAndReload(`pages/${currentPage}.php`, new FormData(fundFormContent), `pages/${currentPage}.php${qs}`);
     });
 })();
 </script>

@@ -209,6 +209,36 @@
             exit;
         }
 
+        if ($postAction === 'create_backup') {
+            header('Content-Type: application/json');
+
+            $sql = generateDatabaseBackup($db);
+            if (trim($sql) === '') {
+                echo json_encode(['error' => 'Backup generated empty content.']);
+                $db->close();
+                exit;
+            }
+
+            $filename = 'backup_' . date('Y-m-d_His') . '.sql';
+            $path = $backupDir . '/' . $filename;
+            $written = file_put_contents($path, $sql);
+            if ($written === false) {
+                echo json_encode(['error' => 'Could not save backup file on the server.']);
+                $db->close();
+                exit;
+            }
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'Backup created successfully: ' . $filename,
+                'file' => $filename,
+                'size' => $written,
+                'download_url' => 'pages/admin-backup.php?action=download&file=' . urlencode($filename),
+            ]);
+            $db->close();
+            exit;
+        }
+
         if ($postAction === 'delete_backup') {
             header('Content-Type: application/json');
 
@@ -325,8 +355,6 @@
     </div>
 </div>
 
-<div id="backupAlert" class="alert d-none" role="alert"></div>
-
 <div class="row g-3">
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
@@ -338,10 +366,11 @@
                     Create a full SQL backup of all <strong><?= $tableCount ?></strong> tables.
                     A copy is saved on the server and downloaded to your computer.
                 </p>
-                <a href="pages/admin-backup.php?action=create" class="btn btn-primary btn-sm" id="createBackupBtn">
+                <button type="button" class="btn btn-primary btn-sm" id="createBackupBtn">
                     <i class="bi bi-download"></i> Create &amp; Download Backup
-                </a>
+                </button>
 
+                <div id="backupListSection">
                 <?php if (count($backups) > 0): ?>
                     <hr class="my-3">
                     <h6 class="small fw-semibold text-uppercase text-muted mb-1">Recent Saved Backups</h6>
@@ -398,8 +427,9 @@
                         <?php endforeach; ?>
                     </div>
                 <?php else: ?>
-                    <p class="text-muted small mb-0 mt-3">No saved backups yet.</p>
+                    <p class="text-muted small mb-0 mt-3" id="backupListEmpty">No saved backups yet.</p>
                 <?php endif; ?>
+                </div>
             </div>
         </div>
     </div>
@@ -458,7 +488,6 @@
                         <label for="unlockPassword" class="form-label small fw-semibold">Your Password</label>
                         <input type="password" class="form-control form-control-sm" id="unlockPassword" name="password" required autocomplete="current-password">
                     </div>
-                    <div id="unlockError" class="alert alert-danger py-2 small mt-2 d-none"></div>
                 </div>
                 <div class="modal-footer py-2">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -474,31 +503,62 @@
 <script type="text/plain" id="init-admin-backup-script">
 (function() {
     const page = 'admin-backup';
-    const alertEl = document.getElementById('backupAlert');
+    const createBackupBtn = document.getElementById('createBackupBtn');
+    const createBackupBtnDefaultHtml = createBackupBtn ? createBackupBtn.innerHTML : '';
     const restoreForm = document.getElementById('restoreForm');
     const restoreBtn = document.getElementById('restoreBtn');
     const unlockModalEl = document.getElementById('unlockBackupModal');
     const unlockModal = unlockModalEl ? new bootstrap.Modal(unlockModalEl) : null;
     const unlockForm = document.getElementById('unlockBackupForm');
-    const unlockError = document.getElementById('unlockError');
     const unlockSubmitBtn = document.getElementById('unlockSubmitBtn');
 
     function reloadPage() {
         fetch(`pages/${page}.php`)
             .then(r => r.text())
-            .then(h => { document.getElementById('main-content').innerHTML = h; });
-    }
-
-    function showAlert(message, type) {
-        alertEl.textContent = message;
-        alertEl.className = `alert alert-${type}`;
-        alertEl.classList.remove('d-none');
+            .then(h => applyMainContent(h))
+            .catch(() => showToast('Failed to refresh page.', 'danger'));
     }
 
     function postAction(data) {
         const fd = new FormData();
         Object.entries(data).forEach(([k, v]) => fd.append(k, v));
-        return fetch(`pages/${page}.php`, { method: 'POST', body: fd }).then(r => r.json());
+        return fetch(`pages/${page}.php`, { method: 'POST', body: fd })
+            .then(r => r.json().then(body => {
+                if (!r.ok && body && !body.error) {
+                    body.error = 'Request failed (HTTP ' + r.status + ').';
+                }
+                return body;
+            }));
+    }
+
+    if (createBackupBtn) {
+        createBackupBtn.addEventListener('click', () => {
+            createBackupBtn.disabled = true;
+            createBackupBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating...';
+
+            postAction({ action: 'create_backup' })
+                .then(res => {
+                    if (res.error) {
+                        showToast(res.error, 'danger');
+                        return;
+                    }
+                    showToast(res.message || 'Backup created successfully.', 'success');
+                    if (res.download_url) {
+                        const link = document.createElement('a');
+                        link.href = res.download_url;
+                        link.style.display = 'none';
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                    }
+                    reloadPage();
+                })
+                .catch(() => showToast('Backup creation failed. Please try again.', 'danger'))
+                .finally(() => {
+                    createBackupBtn.disabled = false;
+                    createBackupBtn.innerHTML = createBackupBtnDefaultHtml;
+                });
+        });
     }
 
     document.querySelectorAll('.backup-unlock-btn').forEach(btn => {
@@ -506,7 +566,6 @@
             document.getElementById('unlockBackupFile').value = btn.dataset.file;
             document.getElementById('unlockBackupName').textContent = btn.dataset.file;
             document.getElementById('unlockPassword').value = '';
-            unlockError.classList.add('d-none');
             unlockModal.show();
         });
     });
@@ -514,24 +573,19 @@
     if (unlockForm) {
         unlockForm.addEventListener('submit', e => {
             e.preventDefault();
-            unlockError.classList.add('d-none');
             unlockSubmitBtn.disabled = true;
 
             postAction(Object.fromEntries(new FormData(unlockForm).entries()))
                 .then(res => {
                     if (res.error) {
-                        unlockError.textContent = res.error;
-                        unlockError.classList.remove('d-none');
+                        showToast(res.error, 'danger');
                         return;
                     }
                     unlockModal.hide();
-                    showAlert(res.message, 'success');
+                    showToast(res.message, 'success');
                     reloadPage();
                 })
-                .catch(() => {
-                    unlockError.textContent = 'Unlock failed. Please try again.';
-                    unlockError.classList.remove('d-none');
-                })
+                .catch(() => showToast('Unlock failed. Please try again.', 'danger'))
                 .finally(() => { unlockSubmitBtn.disabled = false; });
         });
     }
@@ -550,15 +604,15 @@
             postAction({ action: 'delete_backup', file })
                 .then(res => {
                     if (res.error) {
-                        showAlert(res.error, 'danger');
+                        showToast(res.error, 'danger');
                         btn.disabled = false;
                         return;
                     }
-                    showAlert(res.message, 'success');
+                    showToast(res.message, 'success');
                     reloadPage();
                 })
                 .catch(() => {
-                    showAlert('Delete failed. Please try again.', 'danger');
+                    showToast('Delete failed. Please try again.', 'danger');
                     btn.disabled = false;
                 });
         });
@@ -567,7 +621,7 @@
     restoreForm.addEventListener('submit', e => {
         e.preventDefault();
         if (!document.getElementById('confirmRestore').checked) {
-            showAlert('Please confirm that you understand restore will overwrite current data.', 'danger');
+            showToast('Please confirm that you understand restore will overwrite current data.', 'warning');
             return;
         }
         if (!confirm('This will overwrite ALL current database data. Continue with restore?')) {
@@ -581,13 +635,13 @@
             .then(r => r.json())
             .then(res => {
                 if (res.error) {
-                    showAlert(res.error, 'danger');
+                    showToast(res.error, 'danger');
                     return;
                 }
-                showAlert(res.message || 'Database restored successfully.', 'success');
+                showToast(res.message || 'Database restored successfully.', 'success');
                 setTimeout(reloadPage, 1500);
             })
-            .catch(() => showAlert('Restore failed. Please try again.', 'danger'))
+            .catch(() => showToast('Restore failed. Please try again.', 'danger'))
             .finally(() => {
                 restoreBtn.disabled = false;
                 restoreBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Restore Database';

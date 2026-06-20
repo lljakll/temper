@@ -47,6 +47,8 @@
         exit;
     }
 
+    $pageFlash = null;
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $action = $_POST['action'];
 
@@ -61,9 +63,17 @@
                 if ($row && $row['status'] === 'draft') {
                     $stmt = $db->prepare("DELETE FROM budgets WHERE id = ?");
                     $stmt->bind_param('i', $id);
-                    $stmt->execute();
+                    if ($stmt->execute()) {
+                        $pageFlash = ['message' => 'Budget deleted successfully.', 'type' => 'success'];
+                    } else {
+                        $pageFlash = ['message' => 'Error deleting budget: ' . $db->error, 'type' => 'danger'];
+                    }
                     $stmt->close();
+                } else {
+                    $pageFlash = ['message' => 'Only draft budgets can be deleted.', 'type' => 'warning'];
                 }
+            } else {
+                $pageFlash = ['message' => 'Invalid budget ID.', 'type' => 'danger'];
             }
         } elseif ($action === 'save_notes') {
             $id = (int)($_POST['budget_id'] ?? 0);
@@ -77,7 +87,11 @@
                 $lines = json_decode($_POST['lines_json'] ?? '[]', true) ?: [];
                 $stmt = $db->prepare("UPDATE budgets SET description = ? WHERE id = ?");
                 $stmt->bind_param('si', $desc, $id);
-                $stmt->execute();
+                if ($stmt->execute()) {
+                    $pageFlash = ['message' => 'Budget notes saved successfully.', 'type' => 'success'];
+                } else {
+                    $pageFlash = ['message' => 'Error saving notes: ' . $db->error, 'type' => 'danger'];
+                }
                 $stmt->close();
                 $upd = $db->prepare("UPDATE budget_lines SET notes = ? WHERE id = ? AND budget_id = ?");
                 foreach ($lines as $l) {
@@ -88,6 +102,8 @@
                     $upd->execute();
                 }
                 $upd->close();
+            } else {
+                $pageFlash = ['message' => 'Only approved budgets allow note edits.', 'type' => 'warning'];
             }
         } elseif ($action === 'cycle_budget') {
             header('Content-Type: application/json');
@@ -155,7 +171,7 @@
                 $status = $_POST['status'] ?? 'draft';
                 if (!in_array($status, ['draft', 'approved'], true)) $status = 'draft';
                 if ($status === 'approved' && (empty($ref) || empty($approved))) {
-                    // Reference # and Approved Date required when approving
+                    $pageFlash = ['message' => 'Reference # and Approved Date are required when approving a budget.', 'type' => 'warning'];
                 } else {
                 $desc = trim($_POST['description'] ?? '');
                 $lines = json_decode($_POST['lines_json'] ?? '[]', true) ?: [];
@@ -165,7 +181,9 @@
                 if ($id > 0) {
                     $stmt = $db->prepare("UPDATE budgets SET fiscal_year=?, name=?, start_date=?, end_date=?, approved_date=?, reference_number=?, status=?, total_budgeted=?, description=? WHERE id=?");
                     $stmt->bind_param('issssssdsi', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc, $id);
-                    $stmt->execute();
+                    if (!$stmt->execute()) {
+                        $pageFlash = ['message' => 'Error saving budget: ' . $db->error, 'type' => 'danger'];
+                    }
                     $stmt->close();
                     $del = $db->prepare("DELETE FROM budget_lines WHERE budget_id = ?");
                     $del->bind_param('i', $id);
@@ -174,8 +192,11 @@
                 } else {
                     $stmt = $db->prepare("INSERT INTO budgets (fiscal_year, name, start_date, end_date, approved_date, reference_number, status, total_budgeted, description) VALUES (?,?,?,?,?,?,?,?,?)");
                     $stmt->bind_param('issssssds', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc);
-                    $stmt->execute();
-                    $id = (int)$stmt->insert_id;
+                    if (!$stmt->execute()) {
+                        $pageFlash = ['message' => 'Error saving budget: ' . $db->error, 'type' => 'danger'];
+                    } else {
+                        $id = (int)$stmt->insert_id;
+                    }
                     $stmt->close();
                 }
                 $ins = $db->prepare("INSERT INTO budget_lines (budget_id, natural_category_id, functional_category_id, account_id, budgeted_amount, notes) VALUES (?,?,?,?,?,?)");
@@ -190,7 +211,15 @@
                     $ins->execute();
                 }
                 $ins->close();
+                if (!$pageFlash) {
+                    $pageFlash = [
+                        'message' => $status === 'approved' ? 'Budget approved and saved successfully.' : 'Budget saved successfully.',
+                        'type' => 'success',
+                    ];
                 }
+                }
+            } else {
+                $pageFlash = ['message' => 'This budget can no longer be edited.', 'type' => 'warning'];
             }
         }
     }
@@ -246,6 +275,9 @@
     }
 </style>
 
+<?php if (!empty($pageFlash)): ?>
+<script type="application/json" id="page-flash"><?= json_encode($pageFlash) ?></script>
+<?php endif; ?>
 <div class="container mt-4">
     <h2 class="mb-4">Budget</h2>
 
@@ -392,7 +424,6 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div id="cycleError" class="alert alert-danger d-none"></div>
                 <div class="mb-3">
                     <label class="form-label fw-semibold">Current Active Budget</label>
                     <div id="cycleActiveInfo" class="p-2 bg-light rounded border text-muted">Loading…</div>
@@ -526,7 +557,7 @@
         if (!approvedDateInput.value) { approvedDateInput.classList.add('is-invalid'); ok = false; }
         else approvedDateInput.classList.remove('is-invalid');
         if (!ok) {
-            alert('Reference # and Approved Date are required.\n\nThe Reference # should identify the business meeting minutes where this budget was approved.');
+            showToast('Reference # and Approved Date are required. The Reference # should identify the business meeting minutes where this budget was approved.', 'warning');
             (refInput.value.trim() ? approvedDateInput : refInput).focus();
         }
         return ok;
@@ -607,7 +638,16 @@
         updateActionButtons();
     }
     function reload() {
-        fetch(`pages/${page}.php`).then(r => r.text()).then(h => { document.getElementById('main-content').innerHTML = h; });
+        fetch(`pages/${page}.php`)
+            .then(r => r.text())
+            .then(h => applyMainContent(h))
+            .catch(() => showToast('Failed to refresh page.', 'danger'));
+    }
+    function postAndApply(body) {
+        return fetch(`pages/${page}.php`, { method: 'POST', body })
+            .then(r => r.text())
+            .then(h => applyMainContent(h))
+            .catch(() => showToast('Request failed. Please try again.', 'danger'));
     }
     function populateForm(b) {
         originalStatus = b.status || 'draft';
@@ -663,8 +703,6 @@
         }
     }
     function openCycleModal() {
-        const errEl = document.getElementById('cycleError');
-        errEl.classList.add('d-none');
         fetch(`pages/${page}.php?cycle_data=1`).then(r => r.json()).then(data => {
             cycleData = data;
             const activeEl = document.getElementById('cycleActiveInfo');
@@ -682,8 +720,7 @@
             });
             const confirmBtn = document.getElementById('cycleConfirmBtn');
             if (data.active && data.approved.length === 0) {
-                errEl.textContent = 'Cannot close the Active budget unless at least one Approved budget is available to promote.';
-                errEl.classList.remove('d-none');
+                showToast('Cannot close the Active budget unless at least one Approved budget is available to promote.', 'warning');
                 confirmBtn.disabled = true;
             } else {
                 confirmBtn.disabled = data.approved.length === 0;
@@ -721,7 +758,7 @@
         const fd = new FormData();
         fd.append('action', 'delete');
         fd.append('id', selectedRow.dataset.id);
-        fetch(`pages/${page}.php`, { method: 'POST', body: fd }).then(reload);
+        postAndApply(fd);
     });
 
     document.getElementById('cycleBtn').addEventListener('click', openCycleModal);
@@ -734,8 +771,7 @@
         if (!promoteId) return;
         const promote = cycleData.approved.find(b => b.id == promoteId);
         if (!promote.reference_number?.trim() || !promote.approved_date) {
-            document.getElementById('cycleError').textContent = 'Cannot activate: Reference # and Approved Date are required. The Reference # should identify the business meeting minutes where this budget was approved.';
-            document.getElementById('cycleError').classList.remove('d-none');
+            showToast('Cannot activate: Reference # and Approved Date are required. The Reference # should identify the business meeting minutes where this budget was approved.', 'warning');
             return;
         }
         const fd = new FormData();
@@ -756,13 +792,14 @@
             .then(r => r.json())
             .then(res => {
                 if (res.error) {
-                    document.getElementById('cycleError').textContent = res.error;
-                    document.getElementById('cycleError').classList.remove('d-none');
+                    showToast(res.error, 'danger');
                 } else {
                     cycleModal.hide();
+                    showToast('Budget cycle completed successfully.', 'success');
                     reload();
                 }
-            });
+            })
+            .catch(() => showToast('Budget cycle failed. Please try again.', 'danger'));
     });
 
     addLineBtn.addEventListener('click', () => addLine({}, 'draft'));
@@ -778,7 +815,7 @@
             if (!confirmApprovedStatus(newStatus)) return;
         }
         document.getElementById('linesJson').value = JSON.stringify(collectLines());
-        fetch(`pages/${page}.php`, { method: 'POST', body: new FormData(formEl) }).then(reload);
+        postAndApply(new FormData(formEl));
     });
 })();
 </script>

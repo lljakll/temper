@@ -300,8 +300,6 @@
     </div>
 </div>
 
-<div id="tasksAlert" class="alert d-none" role="alert"></div>
-
 <div id="kanbanView">
     <div class="kanban-board">
         <?php foreach ($validStatuses as $status): ?>
@@ -449,7 +447,6 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="addTaskError" class="alert alert-danger d-none"></div>
                     <div class="mb-3">
                         <label for="taskTitle" class="form-label">Title <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="taskTitle" name="title" maxlength="200" required>
@@ -499,11 +496,9 @@
     const calMonthLabel = document.getElementById('calMonthLabel');
     const calDayLabel = document.getElementById('calDayLabel');
     const calDayTasks = document.getElementById('calDayTasks');
-    const tasksAlert = document.getElementById('tasksAlert');
     const addTaskModalEl = document.getElementById('addTaskModal');
     const addTaskModal = new bootstrap.Modal(addTaskModalEl);
     const addTaskForm = document.getElementById('addTaskForm');
-    const addTaskError = document.getElementById('addTaskError');
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayParts = todayStr.split('-').map(Number);
     let calYear = todayParts[0];
@@ -575,10 +570,10 @@
                 postAction({ action: 'delete', id: btn.dataset.id })
                     .then(res => {
                         if (res.error) {
-                            showAlert(res.error, 'danger');
+                            showToast(res.error, 'danger');
                             return;
                         }
-                        reload();
+                        reload('Task deleted.');
                     });
             });
         });
@@ -664,17 +659,14 @@
         </td>`;
     }
 
-    function reload() {
-        fetch(`pages/${page}.php`).then(r => r.text()).then(h => {
-            document.getElementById('main-content').innerHTML = h;
-        });
-    }
-
-    function showAlert(message, type) {
-        tasksAlert.textContent = message;
-        tasksAlert.className = `alert alert-${type}`;
-        tasksAlert.classList.remove('d-none');
-        setTimeout(() => tasksAlert.classList.add('d-none'), 4000);
+    function reload(successMessage) {
+        fetch(`pages/${page}.php`)
+            .then(r => r.text())
+            .then(h => {
+                if (successMessage) showToast(successMessage, 'success');
+                applyMainContent(h);
+            })
+            .catch(() => showToast('Failed to refresh tasks.', 'danger'));
     }
 
     function updateColumnEmptyState(zone) {
@@ -724,29 +716,23 @@
 
     document.getElementById('addTaskBtn').addEventListener('click', () => {
         addTaskForm.reset();
-        addTaskError.classList.add('d-none');
         addTaskModal.show();
     });
 
     addTaskForm.addEventListener('submit', e => {
         e.preventDefault();
-        addTaskError.classList.add('d-none');
         const fd = new FormData(addTaskForm);
         fd.append('action', 'create');
         postAction(Object.fromEntries(fd.entries()))
             .then(res => {
                 if (res.error) {
-                    addTaskError.textContent = res.error;
-                    addTaskError.classList.remove('d-none');
+                    showToast(res.error, 'danger');
                     return;
                 }
                 addTaskModal.hide();
-                reload();
+                reload('Task created successfully.');
             })
-            .catch(() => {
-                addTaskError.textContent = 'Could not save task. Please try again.';
-                addTaskError.classList.remove('d-none');
-            });
+            .catch(() => showToast('Could not save task. Please try again.', 'danger'));
     });
 
     document.querySelectorAll('.task-delete').forEach(btn => {
@@ -757,10 +743,10 @@
             postAction({ action: 'delete', id: card.dataset.id })
                 .then(res => {
                     if (res.error) {
-                        showAlert(res.error, 'danger');
+                        showToast(res.error, 'danger');
                         return;
                     }
-                    reload();
+                    reload('Task deleted.');
                 });
         });
     });
@@ -771,10 +757,10 @@
             postAction({ action: 'delete', id: btn.dataset.id })
                 .then(res => {
                     if (res.error) {
-                        showAlert(res.error, 'danger');
+                        showToast(res.error, 'danger');
                         return;
                     }
-                    reload();
+                    reload('Task deleted.');
                 });
         });
     });
@@ -786,11 +772,11 @@
             postAction({ action: 'update_status', id, status })
                 .then(res => {
                     if (res.error) {
-                        showAlert(res.error, 'danger');
+                        showToast(res.error, 'danger');
                         reload();
                         return;
                     }
-                    reload();
+                    reload('Task status updated.');
                 });
         });
     });
@@ -848,12 +834,14 @@
             postAction({ action: 'update_status', id: taskId, status: newStatus })
                 .then(res => {
                     if (res.error) {
-                        showAlert(res.error, 'danger');
+                        showToast(res.error, 'danger');
                         reload();
+                        return;
                     }
+                    showToast('Task status updated.', 'success');
                 })
                 .catch(() => {
-                    showAlert('Could not update task status.', 'danger');
+                    showToast('Could not update task status.', 'danger');
                     reload();
                 });
         });

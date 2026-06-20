@@ -236,7 +236,7 @@
     // Archive/Unarchive button
     archiveBtn.addEventListener('click', function() {
         if (!selectedRow) {
-            alert("Please select a functional class first.");
+            showToast('Please select a functional class first.', 'warning');
             return;
         }
         
@@ -279,18 +279,8 @@
     // Handle form submission via AJAX to stay in tab
     functionalFormContent.addEventListener('submit', function(e) {
         e.preventDefault();
-        fetch(`pages/${currentPage}.php`, {
-            method: 'POST',
-            body: new FormData(functionalFormContent)
-        })
-        .then(() => {
-            const qs = showArchived ? '?show_archived=1' : '';
-            fetch(`pages/${currentPage}.php${qs}`)
-                .then(r => r.text())
-                .then(html => { document.getElementById('main-content').innerHTML = html; })
-                .catch(e => console.error('Reload error:', e));
-        })
-        .catch(error => console.error('Form submit error:', error));
+        const qs = showArchived ? '?show_archived=1' : '';
+        submitFormAndReload(`pages/${currentPage}.php`, new FormData(functionalFormContent), `pages/${currentPage}.php${qs}`);
     });
 })();
 </script>

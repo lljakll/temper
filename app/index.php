@@ -7,4 +7,6 @@ require_once 'includes/nav.php';
     <!-- Content will be loaded here via AJAX -->
 </div>
 
+<div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" id="appToastContainer" style="z-index: 10050;"></div>
+
 <?php require_once 'includes/footer.php'; ?>

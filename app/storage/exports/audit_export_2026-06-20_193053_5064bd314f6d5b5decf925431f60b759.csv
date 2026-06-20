@@ -1,0 +1,7 @@
+id,user_id,username,action,details,ip_address,created_at
+"1","1","admin","test_action","syntax check","","2026-06-20 15:11:29"
+"2","1","admin","clear_transactions","Tables: transaction_lines, transaction_details","::1","2026-06-20 15:29:09"
+"3","1","admin","clear_transactions_completed","{""transaction_lines"":""truncated"",""transaction_details"":""truncated""}","::1","2026-06-20 15:29:10"
+"4","1","admin","clear_all_financial","Tables: transaction_lines, transaction_details, budget_lines, budgets, tasks, accounts, funds, functional_categories, natural_categories","::1","2026-06-20 15:29:39"
+"5","1","admin","clear_all_financial_completed","{""transaction_lines"":""truncated"",""transaction_details"":""truncated"",""budget_lines"":""truncated"",""budgets"":""truncated"",""tasks"":""truncated"",""accounts"":""truncated"",""funds"":""truncated"",""functional_categories"":""truncated"",""natural_categories"":""truncated""}","::1","2026-06-20 15:29:39"
+"6","1","admin","reset_users","Starting user reset to default admin account.","::1","2026-06-20 15:30:53"

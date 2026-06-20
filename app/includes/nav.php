@@ -67,6 +67,11 @@ $user = getCurrentUser();
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('admin-database')" class="nav-link text-white">
+                                <i class="bi bi-database-gear"></i> Database Maintenance
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link text-white" data-bs-toggle="collapse" href="#lookupsCollapse" role="button" aria-expanded="false" aria-controls="lookupsCollapse">
                                 <i class="bi bi-list"></i> Lookups
                             </a>

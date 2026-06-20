@@ -399,28 +399,9 @@
     }
 ?>
 <div class="container-fluid">
-    <!-- Fixed toast container (overlay, no content shift). Success or error shown temporarily as confirmation. -->
-    <div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" style="z-index: 9999;">
-        <?php if ($success): ?>
-            <div id="ledgerToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="d-flex">
-                    <div class="toast-body">
-                        <?= htmlspecialchars($success) ?>
-                    </div>
-                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-                </div>
-            </div>
-        <?php elseif ($error): ?>
-            <div id="ledgerToast" class="toast align-items-center text-bg-danger border-0" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="d-flex">
-                    <div class="toast-body">
-                        <?= htmlspecialchars($error) ?>
-                    </div>
-                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-                </div>
-            </div>
-        <?php endif; ?>
-    </div>
+<?php if ($success || $error): ?>
+<script type="application/json" id="ledger-flash"><?= json_encode(['message' => $success ?: $error, 'type' => $success ? 'success' : 'danger']) ?></script>
+<?php endif; ?>
 
     <!-- Top Action Buttons -->
     <div class="d-flex flex-wrap gap-2 mb-1">
@@ -931,22 +912,6 @@
         });
     }
 
-    function showLedgerToast(msg, variant = 'warning') {
-        const cont = document.querySelector('.toast-container');
-        if (!cont || typeof bootstrap === 'undefined' || !bootstrap.Toast) {
-            alert(msg);
-            return;
-        }
-        const d = document.createElement('div');
-        d.className = `toast align-items-center text-bg-${variant} border-0`;
-        d.setAttribute('role', 'alert');
-        d.innerHTML = `<div class="d-flex"><div class="toast-body">${msg}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>`;
-        cont.appendChild(d);
-        const t = new bootstrap.Toast(d, { autohide: true, delay: 4500 });
-        d.addEventListener('hidden.bs.toast', () => d.remove(), { once: true });
-        t.show();
-    }
-
     function hasUnsavedInputs() {
         // form always visible; consider unsaved if has tx id in edit or any data entered
         const fields = ['pay_to', 'reference_number', 'check_number', 'description', 'memo'];
@@ -1055,14 +1020,14 @@
             .then(r => r.json())
             .then(data => {
                 if (data.error) {
-                    alert(data.error);
+                    showToast(data.error, 'danger');
                     return;
                 }
                 populateEditable(data);
             })
             .catch(err => {
                 console.error(err);
-                alert('Failed to load transaction for edit.');
+                showToast('Failed to load transaction for edit.', 'danger');
             });
     });
 
@@ -1070,7 +1035,7 @@
         const ids = getSelectedIds();
         if (ids.length === 0) return;
         if (anySelectedNonPending()) {
-            showLedgerToast('Only pending transactions can be cleared.');
+            showToast('Only pending transactions can be cleared.', 'warning');
             return;
         }
         if (!confirm('Mark ' + ids.length + ' selected transaction(s) as cleared?')) return;
@@ -1081,11 +1046,11 @@
         fetch('pages/ledger.php' + buildQueryString(true), { method: 'POST', body: fd })
             .then(r => r.text())
             .then(html => {
-                document.getElementById('main-content').innerHTML = html;
+                applyMainContent(html);
             })
             .catch(err => {
                 console.error(err);
-                alert('Clear operation failed.');
+                showToast('Clear operation failed.', 'danger');
             });
     });
 
@@ -1093,7 +1058,7 @@
         const ids = getSelectedIds();
         if (ids.length === 0) return;
         if (anySelectedNonPending()) {
-            showLedgerToast('Only pending transactions can be reconciled.');
+            showToast('Only pending transactions can be reconciled.', 'warning');
             return;
         }
         if (!confirm('Mark ' + ids.length + ' selected transaction(s) as reconciled? (placeholder action)')) return;
@@ -1104,11 +1069,11 @@
         fetch('pages/ledger.php' + buildQueryString(true), { method: 'POST', body: fd })
             .then(r => r.text())
             .then(html => {
-                document.getElementById('main-content').innerHTML = html;
+                applyMainContent(html);
             })
             .catch(err => {
                 console.error(err);
-                alert('Reconcile operation failed.');
+                showToast('Reconcile operation failed.', 'danger');
             });
     });
 
@@ -1164,7 +1129,7 @@
             });
 
             if (lines.length < 2) {
-                alert('Every transaction must have at least 2 lines.');
+                showToast('Every transaction must have at least 2 lines.', 'warning');
                 return;
             }
 
@@ -1176,11 +1141,11 @@
             })
             .then(r => r.text())
             .then(html => {
-                document.getElementById('main-content').innerHTML = html;
+                applyMainContent(html);
             })
             .catch(err => {
                 console.error(err);
-                alert('Save failed. See console.');
+                showToast('Save failed. See console.', 'danger');
             });
         });
     }
@@ -1292,7 +1257,7 @@
             const qs = buildQueryString(false);
             fetch('pages/ledger.php' + qs)
                 .then(r => r.text())
-                .then(html => { document.getElementById('main-content').innerHTML = html; });
+                .then(html => { applyMainContent(html); });
         });
     }
     if (clearFilterBtn) {
@@ -1308,7 +1273,7 @@
             const qs = buildQueryString(false);
             fetch('pages/ledger.php' + qs)
                 .then(r => r.text())
-                .then(html => { document.getElementById('main-content').innerHTML = html; });
+                .then(html => { applyMainContent(html); });
         });
     }
     if (filterSearchEl) {
@@ -1317,7 +1282,7 @@
                 const qs = buildQueryString(false);
                 fetch('pages/ledger.php' + qs)
                     .then(r => r.text())
-                    .then(html => { document.getElementById('main-content').innerHTML = html; });
+                    .then(html => { applyMainContent(html); });
             }
         });
     }
@@ -1336,7 +1301,7 @@
         const qstr = params.toString() ? ('?' + params.toString()) : '';
         fetch('pages/ledger.php' + qstr)
             .then(r => r.text())
-            .then(html => { document.getElementById('main-content').innerHTML = html; });
+            .then(html => { applyMainContent(html); });
     }
 
     const prevPageBtn = document.getElementById('prevPageBtn');
@@ -1357,12 +1322,6 @@
         });
     }
 
-    // Show temporary toast confirmation (drops down, auto-hides after ~5.5s, no permanent layout shift)
-    const toastEl = document.getElementById('ledgerToast');
-    if (toastEl && typeof bootstrap !== 'undefined' && bootstrap.Toast) {
-        const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5500 });
-        toast.show();
-    }
 })();
 </script>
 <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-ledger-script');if(s){(new Function(s.textContent))();}this.remove();">
