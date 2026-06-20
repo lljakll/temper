@@ -64,29 +64,47 @@
             $ids = json_decode($_POST['selected_ids'] ?? '[]', true) ?: [];
             if (count($ids) > 0) {
                 $in = implode(',', array_fill(0, count($ids), '?'));
-                $stmt = $db->prepare("UPDATE transaction_details SET status='cleared', cleared_date=CURDATE() WHERE id IN ($in)");
                 $types = str_repeat('i', count($ids));
-                $stmt->bind_param($types, ...$ids);
-                if ($stmt->execute()) {
-                    $success = count($ids) . ' transaction(s) marked as cleared.';
+                $chk = $db->prepare("SELECT COUNT(*) FROM transaction_details WHERE id IN ($in) AND status <> 'pending'");
+                $chk->bind_param($types, ...$ids);
+                $chk->execute();
+                $bad = (int)($chk->get_result()->fetch_row()[0] ?? 0);
+                $chk->close();
+                if ($bad > 0) {
+                    $error = 'Only pending transactions can be cleared.';
                 } else {
-                    $error = 'Clear failed: ' . $db->error;
+                    $stmt = $db->prepare("UPDATE transaction_details SET status='cleared', cleared_date=CURDATE() WHERE id IN ($in)");
+                    $stmt->bind_param($types, ...$ids);
+                    if ($stmt->execute()) {
+                        $success = count($ids) . ' transaction(s) marked as cleared.';
+                    } else {
+                        $error = 'Clear failed: ' . $db->error;
+                    }
+                    $stmt->close();
                 }
-                $stmt->close();
             }
         } elseif ($action === 'reconcile') {
             $ids = json_decode($_POST['selected_ids'] ?? '[]', true) ?: [];
             if (count($ids) > 0) {
                 $in = implode(',', array_fill(0, count($ids), '?'));
-                $stmt = $db->prepare("UPDATE transaction_details SET status='reconciled', date_reconciled=CURDATE() WHERE id IN ($in)");
                 $types = str_repeat('i', count($ids));
-                $stmt->bind_param($types, ...$ids);
-                if ($stmt->execute()) {
-                    $success = count($ids) . ' transaction(s) marked as reconciled.';
+                $chk = $db->prepare("SELECT COUNT(*) FROM transaction_details WHERE id IN ($in) AND status <> 'pending'");
+                $chk->bind_param($types, ...$ids);
+                $chk->execute();
+                $bad = (int)($chk->get_result()->fetch_row()[0] ?? 0);
+                $chk->close();
+                if ($bad > 0) {
+                    $error = 'Only pending transactions can be reconciled.';
                 } else {
-                    $error = 'Reconcile failed: ' . $db->error;
+                    $stmt = $db->prepare("UPDATE transaction_details SET status='reconciled', date_reconciled=CURDATE() WHERE id IN ($in)");
+                    $stmt->bind_param($types, ...$ids);
+                    if ($stmt->execute()) {
+                        $success = count($ids) . ' transaction(s) marked as reconciled.';
+                    } else {
+                        $error = 'Reconcile failed: ' . $db->error;
+                    }
+                    $stmt->close();
                 }
-                $stmt->close();
             }
         } elseif ($action === 'save' || $action === '') {
             // Shared add / edit save handler
@@ -232,12 +250,46 @@
         }
     }
 
+    // Curated accounts for Account View dropdown: only Assets, Liabilities, Equity (exclude revenue accounts like Contributions)
+    $view_accts = [];
+    $vaq = $db->query("SELECT id, name, normal_balance FROM accounts WHERE archived=FALSE ORDER BY FIELD(normal_balance, 'debit', 'credit'), name");
+    if ($vaq) {
+        while ($va = $vaq->fetch_assoc()) {
+            if (stripos($va['name'], 'contribution') !== false) continue;
+            $view_accts[] = $va;
+        }
+    }
+
     // Filters and pagination
     $date_from = $_GET['date_from'] ?? '';
     $date_to = $_GET['date_to'] ?? '';
     $search = trim($_GET['search'] ?? '');
     $page = max(1, (int)($_GET['page'] ?? 1));
     $per_page = 25;
+
+    // Account View filter (defaults to Bank Account or first Asset only on bare loads; explicit 0 forces All)
+    $account_param = $_GET['account_id'] ?? null;
+    $raw_account_id = $account_param !== null ? (int)$account_param : 0;
+    $filter_account_id = $raw_account_id;
+    if ($account_param === null) {
+        // Default to main Bank Account (or first debit/asset account)
+        $dstmt = $db->prepare("SELECT id FROM accounts WHERE name = 'Bank Account' AND archived = FALSE LIMIT 1");
+        $dstmt->execute();
+        $drow = $dstmt->get_result()->fetch_assoc();
+        $dstmt->close();
+        if ($drow && !empty($drow['id'])) {
+            $filter_account_id = (int)$drow['id'];
+        } else {
+            $dstmt = $db->prepare("SELECT id FROM accounts WHERE normal_balance = 'debit' AND archived = FALSE ORDER BY id LIMIT 1");
+            $dstmt->execute();
+            $drow = $dstmt->get_result()->fetch_assoc();
+            $dstmt->close();
+            if ($drow && !empty($drow['id'])) {
+                $filter_account_id = (int)$drow['id'];
+            }
+        }
+    }
+    $dropdown_selected = ($account_param === null ? $filter_account_id : $raw_account_id);
 
     $conditions = [];
     $bind_params = [];
@@ -258,7 +310,24 @@
         $bind_params = array_merge($bind_params, [$like, $like, $like, $like, $like]);
         $bind_types .= str_repeat('s', 5);
     }
+    if ($filter_account_id > 0) {
+        $conditions[] = "EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.account_id = ?)";
+        $bind_params[] = $filter_account_id;
+        $bind_types .= 'i';
+    }
     $where_clause = $conditions ? ' WHERE ' . implode(' AND ', $conditions) : '';
+
+    // Load selected account info for signed amount calc
+    $view_normal = '';
+    if ($filter_account_id > 0) {
+        $vn = $db->prepare("SELECT normal_balance FROM accounts WHERE id = ? LIMIT 1");
+        $vn->bind_param('i', $filter_account_id);
+        $vn->execute();
+        if ($vnr = $vn->get_result()->fetch_assoc()) {
+            $view_normal = $vnr['normal_balance'];
+        }
+        $vn->close();
+    }
 
     // Total for pagination
     $count_stmt = $db->prepare("SELECT COUNT(*) AS total FROM transaction_details td" . $where_clause);
@@ -294,19 +363,67 @@
     }
     $tx_stmt->execute();
     $tx_result = $tx_stmt->get_result();
-?>
-<div class="container-fluid mt-2">
-    <h2 class="mb-3">Ledger</h2>
 
-    <?php if ($success): ?>
-        <div class="alert alert-success py-2"><?= htmlspecialchars($success) ?></div>
-    <?php endif; ?>
-    <?php if ($error): ?>
-        <div class="alert alert-danger py-2"><?= htmlspecialchars($error) ?></div>
-    <?php endif; ?>
+    // Collect rows (small page size)
+    $tx_rows = [];
+    if ($tx_result) {
+        while ($r = $tx_result->fetch_assoc()) {
+            $tx_rows[] = $r;
+        }
+        $tx_result->close();
+    }
+
+    // When an account is selected, compute signed amount (delta) from that account's perspective
+    // +amount if line.type matches the account's normal_balance, else -amount
+    $acct_amounts = [];
+    if ($filter_account_id > 0 && $view_normal && count($tx_rows) > 0) {
+        $ids = [];
+        foreach ($tx_rows as $r) { $ids[] = (int)$r['id']; }
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $dq = $db->prepare("
+            SELECT transaction_detail_id,
+                   SUM(CASE WHEN type = ? THEN amount ELSE -amount END) AS delta
+            FROM transaction_lines
+            WHERE transaction_detail_id IN ($in) AND account_id = ?
+            GROUP BY transaction_detail_id
+        ");
+        $dtypes = 's' . str_repeat('i', count($ids)) . 'i';
+        $dparams = array_merge([$view_normal], $ids, [$filter_account_id]);
+        $dq->bind_param($dtypes, ...$dparams);
+        $dq->execute();
+        $dres = $dq->get_result();
+        while ($dm = $dres->fetch_assoc()) {
+            $acct_amounts[(int)$dm['transaction_detail_id']] = (float)$dm['delta'];
+        }
+        $dq->close();
+    }
+?>
+<div class="container-fluid">
+    <!-- Fixed toast container (overlay, no content shift). Success or error shown temporarily as confirmation. -->
+    <div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" style="z-index: 9999;">
+        <?php if ($success): ?>
+            <div id="ledgerToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <?= htmlspecialchars($success) ?>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>
+        <?php elseif ($error): ?>
+            <div id="ledgerToast" class="toast align-items-center text-bg-danger border-0" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <?= htmlspecialchars($error) ?>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>
+        <?php endif; ?>
+    </div>
 
     <!-- Top Action Buttons -->
-    <div class="d-flex flex-wrap gap-2 mb-3">
+    <div class="d-flex flex-wrap gap-2 mb-1">
         <button type="button" id="addTxBtn" class="btn btn-primary">
             <i class="bi bi-plus-lg"></i> Add Transaction
         </button>
@@ -324,7 +441,7 @@
     <!-- Constrained viewport area: list fixed at 35%, form takes remainder and scrolls internally if long -->
     <div class="d-flex flex-column" style="height: calc(100vh - 170px); min-height: 300px;">
         <!-- Filters -->
-        <div class="mb-2 flex-shrink-0">
+        <div class="mb-1 flex-shrink-0">
             <div class="row g-2 align-items-end">
                 <div class="col-auto">
                     <label class="form-label small mb-1">Date From</label>
@@ -334,7 +451,17 @@
                     <label class="form-label small mb-1">Date To</label>
                     <input type="date" id="filterDateTo" class="form-control form-control-sm" value="<?= htmlspecialchars($date_to) ?>">
                 </div>
-                <div class="col-md-4 col-sm-12">
+                <div class="col-auto">
+                    <label class="form-label small mb-1">Account View</label>
+                    <select id="filterAccount" class="form-select form-select-sm" style="min-width:170px;">
+                        <option value="0" <?= $dropdown_selected === 0 ? 'selected' : '' ?>>All Accounts</option>
+<?php foreach ($view_accts as $va): ?>
+<?php $vid = (int)$va['id']; ?>
+                        <option value="<?= $vid ?>" <?= $vid === $dropdown_selected ? 'selected' : '' ?>><?= htmlspecialchars($va['name']) ?></option>
+<?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3 col-sm-12">
                     <label class="form-label small mb-1">Search (Pay To / Ref # / Check # / Memo / Amount)</label>
                     <input type="search" id="filterSearch" class="form-control form-control-sm" value="<?= htmlspecialchars($search) ?>" placeholder="Search transactions...">
                 </div>
@@ -371,14 +498,17 @@
                             </tr>
                         </thead>
                         <tbody id="txTableBody">
-                            <?php if ($tx_result && $tx_result->num_rows > 0): ?>
-                                <?php while ($r = $tx_result->fetch_assoc()): ?>
+                            <?php if (count($tx_rows) > 0): ?>
+                                <?php foreach ($tx_rows as $r): ?>
                                     <?php
                                         $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
                                         $statusBadge = 'bg-secondary';
                                         $statusText = 'Pending';
                                         if ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
                                         elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
+                                        $raw_amt = (float)($r['total_amount'] ?? 0);
+                                        $disp_amt = isset($acct_amounts[$r['id']]) ? $acct_amounts[$r['id']] : $raw_amt;
+                                        $amt_display = ($disp_amt < 0 ? '-$' : '$') . number_format(abs($disp_amt), 2);
                                     ?>
                                     <tr data-id="<?= (int)$r['id'] ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= (int)$r['id'] ?>"></td>
@@ -387,11 +517,11 @@
                                         <td><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
                                         <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
-                                        <td class="text-end fw-semibold">$<?= number_format((float)$r['total_amount'], 2) ?></td>
+                                        <td class="text-end fw-semibold<?= ($filter_account_id > 0 && $disp_amt < 0) ? ' text-danger' : '' ?>"><?= $amt_display ?></td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
                                     </tr>
-                                <?php endwhile; ?>
+                                <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
                                     <td colspan="9" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
@@ -418,48 +548,47 @@
                     <strong id="formTitle">Transaction Details</strong>
                     <span id="formModeBadge" class="badge bg-light text-dark ms-1"></span>
                 </div>
-                <button type="button" id="cancelFormBtn" class="btn btn-sm btn-outline-secondary">Cancel</button>
             </div>
             <div class="card-body flex-grow-1 overflow-auto" style="min-height: 0;">
                 <form id="txForm" method="post">
                     <input type="hidden" name="tx_id" id="tx_id">
                     <input type="hidden" name="lines_json" id="lines_json">
 
-                    <div class="row g-3">
-                        <div class="col-md-2">
-                            <label class="form-label">Date *</label>
-                            <input type="date" class="form-control" name="transaction_date" id="transaction_date" required>
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label">Pay To</label>
-                            <input type="text" class="form-control" name="pay_to" id="pay_to" placeholder="Vendor or person">
+                    <div class="row g-2">
+                        <div class="col-md-1">
+                            <label class="form-label small mb-1">Date *</label>
+                            <input type="date" class="form-control form-control-sm" name="transaction_date" id="transaction_date" required>
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label">Reference #</label>
-                            <input type="text" class="form-control" name="reference_number" id="reference_number" placeholder="Ref #">
+                            <label class="form-label small mb-1">Pay To</label>
+                            <input type="text" class="form-control form-control-sm" name="pay_to" id="pay_to" placeholder="Vendor or person">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label">Check Number</label>
-                            <input type="text" class="form-control" name="check_number" id="check_number">
+                            <label class="form-label small mb-1">Reference #</label>
+                            <input type="text" class="form-control form-control-sm" name="reference_number" id="reference_number" placeholder="Ref #">
                         </div>
-                        <div class="col-md-3">
-                            <label class="form-label">Description</label>
-                            <input type="text" class="form-control" name="description" id="description" placeholder="Short description">
+                        <div class="col-md-1">
+                            <label class="form-label small mb-1">Check Number</label>
+                            <input type="text" class="form-control form-control-sm" name="check_number" id="check_number">
                         </div>
-                        <div class="col-12">
-                            <label class="form-label">Memo</label>
-                            <input type="text" class="form-control" name="memo" id="memo" placeholder="Additional notes">
+                        <div class="col-md-2">
+                            <label class="form-label small mb-1">Description</label>
+                            <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Short description">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small mb-1">Memo</label>
+                            <input type="text" class="form-control form-control-sm" name="memo" id="memo" placeholder="Additional notes">
                         </div>
                     </div>
 
-                    <div class="mt-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h6 class="mb-0">Lines <small class="text-muted">(min 2 required)</small></h6>
+                    <div class="mt-2">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <h6 class="mb-0 small">Lines <small class="text-muted">(min 2 required)</small></h6>
                             <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary">+ Add Line</button>
                         </div>
 
                         <div class="table-responsive">
-                            <table class="table table-sm table-bordered align-middle mb-2">
+                            <table class="table table-sm table-bordered align-middle mb-1">
                                 <thead class="table-light">
                                     <tr>
                                         <th>Account *</th>
@@ -475,7 +604,7 @@
                             </table>
                         </div>
 
-                        <div class="d-flex gap-4 align-items-center small">
+                        <div class="d-flex gap-3 align-items-center small">
                             <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">0.00</span></div>
                             <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">0.00</span></div>
                             <div><strong>Diff:</strong> <span id="diff" class="fw-bold">0.00</span></div>
@@ -483,10 +612,10 @@
                         </div>
                     </div>
 
-                    <div class="mt-3">
-                        <button type="submit" id="saveBtn" class="btn btn-primary" disabled>Save Transaction</button>
-                        <button type="button" id="resetLinesBtn" class="btn btn-outline-secondary ms-2">Reset to 2 Lines</button>
-                        <button type="button" id="cancelFormBtn2" class="btn btn-outline-secondary ms-2">Cancel</button>
+                    <div class="mt-2">
+                        <button type="submit" id="saveBtn" class="btn btn-sm btn-primary" disabled>Save Transaction</button>
+                        <button type="button" id="resetLinesBtn" class="btn btn-sm btn-outline-secondary ms-2">Reset to 2 Lines</button>
+                        <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary ms-2">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -529,6 +658,8 @@
         if (dt && dt.value) p.set('date_to', dt.value);
         const sr = document.getElementById('filterSearch');
         if (sr && sr.value.trim()) p.set('search', sr.value.trim());
+        const acc = document.getElementById('filterAccount');
+        if (acc) p.set('account_id', acc.value);
         if (preservePage) {
             const bar = document.getElementById('paginationBar');
             if (bar) {
@@ -672,6 +803,7 @@
         if (addLineBtn) addLineBtn.style.display = 'none';
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
         if (saveBtn) saveBtn.style.display = 'none';
+        if (cancelBtn2) cancelBtn2.style.display = 'none';
     }
 
     function populateView(data) {
@@ -697,6 +829,7 @@
         if (addLineBtn) addLineBtn.style.display = 'none';
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
         if (saveBtn) saveBtn.style.display = 'none';
+        if (cancelBtn2) cancelBtn2.style.display = 'none';
     }
 
     function populateEditable(data) {
@@ -727,6 +860,7 @@
         if (addLineBtn) addLineBtn.style.display = '';
         if (resetLinesBtn) resetLinesBtn.style.display = '';
         if (saveBtn) saveBtn.style.display = '';
+        if (cancelBtn2) cancelBtn2.style.display = '';
         recalcTotals();
     }
 
@@ -736,6 +870,10 @@
         setMainFieldsReadOnly(false);
         formTitle.textContent = 'Edit Transaction #' + id;
         updateModeBadge('edit');
+        if (addLineBtn) addLineBtn.style.display = '';
+        if (resetLinesBtn) resetLinesBtn.style.display = '';
+        if (saveBtn) saveBtn.style.display = '';
+        if (cancelBtn2) cancelBtn2.style.display = '';
         linesBody.querySelectorAll('tr').forEach(row => {
             row.querySelectorAll('select, input').forEach(el => {
                 el.disabled = false;
@@ -762,6 +900,7 @@
         if (addLineBtn) addLineBtn.style.display = '';
         if (resetLinesBtn) resetLinesBtn.style.display = '';
         if (saveBtn) saveBtn.style.display = '';
+        if (cancelBtn2) cancelBtn2.style.display = '';
         recalcTotals();
     }
 
@@ -783,6 +922,29 @@
 
     function getSelectedIds() {
         return Array.from(txTableBody.querySelectorAll('.tx-cb:checked')).map(cb => parseInt(cb.value, 10));
+    }
+
+    function anySelectedNonPending() {
+        return Array.from(txTableBody.querySelectorAll('.tx-cb:checked')).some(cb => {
+            const row = cb.closest('tr');
+            return row && row.dataset.status && row.dataset.status !== 'pending';
+        });
+    }
+
+    function showLedgerToast(msg, variant = 'warning') {
+        const cont = document.querySelector('.toast-container');
+        if (!cont || typeof bootstrap === 'undefined' || !bootstrap.Toast) {
+            alert(msg);
+            return;
+        }
+        const d = document.createElement('div');
+        d.className = `toast align-items-center text-bg-${variant} border-0`;
+        d.setAttribute('role', 'alert');
+        d.innerHTML = `<div class="d-flex"><div class="toast-body">${msg}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>`;
+        cont.appendChild(d);
+        const t = new bootstrap.Toast(d, { autohide: true, delay: 4500 });
+        d.addEventListener('hidden.bs.toast', () => d.remove(), { once: true });
+        t.show();
     }
 
     function hasUnsavedInputs() {
@@ -907,6 +1069,10 @@
     clearTxBtn.addEventListener('click', () => {
         const ids = getSelectedIds();
         if (ids.length === 0) return;
+        if (anySelectedNonPending()) {
+            showLedgerToast('Only pending transactions can be cleared.');
+            return;
+        }
         if (!confirm('Mark ' + ids.length + ' selected transaction(s) as cleared?')) return;
 
         const fd = new FormData();
@@ -926,6 +1092,10 @@
     reconcileTxBtn.addEventListener('click', () => {
         const ids = getSelectedIds();
         if (ids.length === 0) return;
+        if (anySelectedNonPending()) {
+            showLedgerToast('Only pending transactions can be reconciled.');
+            return;
+        }
         if (!confirm('Mark ' + ids.length + ' selected transaction(s) as reconciled? (placeholder action)')) return;
 
         const fd = new FormData();
@@ -1130,10 +1300,13 @@
             const df = document.getElementById('filterDateFrom');
             const dt = document.getElementById('filterDateTo');
             const sr = document.getElementById('filterSearch');
+            const accf = document.getElementById('filterAccount');
             if (df) df.value = '';
             if (dt) dt.value = '';
             if (sr) sr.value = '';
-            fetch('pages/ledger.php')
+            if (accf) accf.value = '0';
+            const qs = buildQueryString(false);
+            fetch('pages/ledger.php' + qs)
                 .then(r => r.text())
                 .then(html => { document.getElementById('main-content').innerHTML = html; });
         });
@@ -1154,9 +1327,11 @@
         const dfEl = document.getElementById('filterDateFrom');
         const dtEl = document.getElementById('filterDateTo');
         const srEl = document.getElementById('filterSearch');
+        const accEl = document.getElementById('filterAccount');
         if (dfEl && dfEl.value) params.set('date_from', dfEl.value);
         if (dtEl && dtEl.value) params.set('date_to', dtEl.value);
         if (srEl && srEl.value.trim()) params.set('search', srEl.value.trim());
+        if (accEl) params.set('account_id', accEl.value);
         if (pageNum > 1) params.set('page', pageNum);
         const qstr = params.toString() ? ('?' + params.toString()) : '';
         fetch('pages/ledger.php' + qstr)
@@ -1180,6 +1355,13 @@
             const tot = bar ? parseInt(bar.dataset.totalPages || '1', 10) : 1;
             loadWithPage(Math.min(tot, cur + 1));
         });
+    }
+
+    // Show temporary toast confirmation (drops down, auto-hides after ~5.5s, no permanent layout shift)
+    const toastEl = document.getElementById('ledgerToast');
+    if (toastEl && typeof bootstrap !== 'undefined' && bootstrap.Toast) {
+        const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5500 });
+        toast.show();
     }
 })();
 </script>

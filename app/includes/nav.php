@@ -13,8 +13,14 @@ if (!isLoggedIn()) {
 $user = getCurrentUser();
 ?>
 
-<div class="row">
-    <div class="col-md-2 bg-dark text-white min-vh-100 p-3">
+<div class="row g-2">
+    <div class="col-md-2 sidebar bg-dark text-white p-3 position-sticky top-2 rounded-3 d-flex flex-column shadow-sm border border-white border-opacity-25">
+
+        <!-- Brand / Title -->
+        <div class="d-flex align-items-center pb-2 mb-3 border-bottom border-secondary">
+            <i class="bi bi-bank me-2 fs-5"></i>
+            <strong>Hope Baptist Treasurer</strong>
+        </div>
 
         <ul class="nav flex-column">
             <li class="nav-item">
@@ -78,7 +84,18 @@ $user = getCurrentUser();
                 </div>
             </li>
         </ul>
-        <hr class="bg-white">
-        <small class="text-muted">Based on Treasurer's Guide, Rev 1.0</small>
+
+        <!-- Bottom: footer note + user info + logout -->
+        <div class="pt-3 mt-auto">
+            <hr class="bg-white border-secondary opacity-50">
+            <small class="text-muted d-block mb-3">Based on Treasurer's Guide, Rev 1.0</small>
+
+            <div class="small text-white-50 mb-1">
+                Welcome, <strong class="text-white"><?= htmlspecialchars($user['name'] ?? 'Admin') ?></strong>
+            </div>
+            <a href="logout.php" class="btn btn-sm w-100 btn-light text-dark d-flex align-items-center justify-content-center gap-1">
+                <i class="bi bi-box-arrow-right"></i> Logout
+            </a>
+        </div>
     </div>
-    <div class="col-md-10 p-4">
+    <div class="col-md-10 p-3">

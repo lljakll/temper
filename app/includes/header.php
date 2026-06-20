@@ -8,14 +8,6 @@ if (!isLoggedIn()) {
     header('Location: ../login.php');
     exit;
 }
-
-// Get current user info
-$user = getCurrentUser();
-
-// Database connection (only create if not already set)
-if (!isset($db)) {
-    $db = getDbConnection();
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -29,6 +21,9 @@ if (!isset($db)) {
     <style>
         .collapse.show {
             display: block !important;
+        }
+        .sidebar {
+            height: calc(100vh - 1rem);
         }
     </style>
 </head>
@@ -65,25 +60,4 @@ if (!isset($db)) {
     </script>
 <body class="bg-light">
 
-<!-- Simple Top Navbar -->
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm mb-4">
-    <div class="container-fluid px-4">
-        <!-- Logo / Brand -->
-        <a class="navbar-brand d-flex align-items-center" href="index.php">
-            <i class="bi bi-bank me-2"></i>
-            Hope Baptist Treasurer
-        </a>
-
-        <!-- User Info & Logout -->
-        <div class="d-flex align-items-center gap-3">
-            <span class="text-light">
-                Welcome, <strong><?= htmlspecialchars($user['name'] ?? 'Admin') ?></strong>
-            </span>
-            <a href="logout.php" class="btn btn-outline-light btn-sm">
-                <i class="bi bi-box-arrow-right"></i> Logout
-            </a>
-        </div>
-    </div>
-</nav>
-
-<div class="container-fluid px-4">
+<div class="container-fluid p-2">

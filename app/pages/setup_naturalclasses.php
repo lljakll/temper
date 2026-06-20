@@ -114,8 +114,6 @@
         } else {
             echo "Error: No action specified\n";
         }
-    } else {
-        echo "Error: Invalid request method\n";
     }
 
     // Check if 'show_archived' parameter is set
