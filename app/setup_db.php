@@ -13,6 +13,7 @@ $db->query("SET FOREIGN_KEY_CHECKS = 0;");
 
 $drop_queries = [
     "DROP TABLE IF EXISTS transaction_lines;",
+    "DROP TABLE IF EXISTS tasks;",
     "DROP TABLE IF EXISTS budget_lines;",
     "DROP TABLE IF EXISTS users;",
     "DROP TABLE IF EXISTS transaction_details;",
@@ -40,7 +41,8 @@ $files = [
     'setup-database/03-funds.php',
     'setup-database/04-transactions.php',
     'setup-database/05-budgeting.php',
-    'setup-database/06-users-roles.php'
+    'setup-database/06-users-roles.php',
+    'setup-database/07-tasks.php'
 ];
 
 foreach ($files as $file) {

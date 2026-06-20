@@ -43,6 +43,11 @@ $user = getCurrentUser();
                     <i class="bi bi-graph-up"></i> Budget
                 </a>
             </li>
+            <li class="nav-item">
+                <a href="javascript:void(0)" onclick="loadPage('tasks')" class="nav-link text-white">
+                    <i class="bi bi-check2-square"></i> Tasks / Reminders
+                </a>
+            </li>
             
             <!-- Setup Section -->
             <li class="nav-item">
