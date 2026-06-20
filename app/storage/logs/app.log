@@ -283,3 +283,12 @@ Stack trace:
 #0 Command line code(7): mysqli->query()
 #1 {main}
   thrown in Command line code on line 7
+[20-Jun-2026 18:04:42 UTC] PHP Notice:  session_start(): Ignoring session_start() because a session is already active (started from Command line code on line 4) in /home/jak/git_repos/temper/app/auth.php on line 2
+[20-Jun-2026 18:07:32 UTC] PHP Warning:  file_put_contents(/home/jak/git_repos/temper/app/pages/../storage/backups/backup_2026-06-20_180732.sql): Failed to open stream: Permission denied in /home/jak/git_repos/temper/app/pages/admin-backup.php on line 107
+[20-Jun-2026 18:08:11 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '<br />
+<b>Warning</b>:  file_put_contents(/home/jak/git_repos/temper/app/page...' at line 1 in /home/jak/git_repos/temper/app/pages/admin-backup.php:177
+Stack trace:
+#0 /home/jak/git_repos/temper/app/pages/admin-backup.php(177): mysqli->multi_query()
+#1 {main}
+  thrown in /home/jak/git_repos/temper/app/pages/admin-backup.php on line 177
+[20-Jun-2026 18:11:41 UTC] PHP Warning:  file_put_contents(/home/jak/git_repos/temper/app/pages/../storage/backups/backup_2026-06-20_181141.sql): Failed to open stream: Permission denied in /home/jak/git_repos/temper/app/pages/admin-backup.php on line 107

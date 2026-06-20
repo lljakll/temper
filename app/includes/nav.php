@@ -49,13 +49,23 @@ $user = getCurrentUser();
                 </a>
             </li>
             
-            <!-- Setup Section -->
+            <!-- Admin Section -->
             <li class="nav-item">
-                <a class="nav-link text-white" data-bs-toggle="collapse" href="#setupCollapse" role="button" aria-expanded="false" aria-controls="setupCollapse">
-                    <i class="bi bi-gear"></i> Setup
+                <a class="nav-link text-white" data-bs-toggle="collapse" href="#adminCollapse" role="button" aria-expanded="false" aria-controls="adminCollapse">
+                    <i class="bi bi-gear"></i> Admin
                 </a>
-                <div class="collapse" id="setupCollapse">
+                <div class="collapse" id="adminCollapse">
                     <ul class="nav flex-column ms-3">
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('admin')" class="nav-link text-white">
+                                <i class="bi bi-grid"></i> Overview
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('admin-backup')" class="nav-link text-white">
+                                <i class="bi bi-cloud-arrow-up"></i> Backup / Restore
+                            </a>
+                        </li>
                         <li class="nav-item">
                             <a class="nav-link text-white" data-bs-toggle="collapse" href="#lookupsCollapse" role="button" aria-expanded="false" aria-controls="lookupsCollapse">
                                 <i class="bi bi-list"></i> Lookups
