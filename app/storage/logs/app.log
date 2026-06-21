@@ -344,3 +344,28 @@ Stack trace:
 [20-Jun-2026 20:12:50 UTC] [AUDIT] user=admin action=clear_all_financial_completed details={"transaction_lines":"truncated","transaction_details":"truncated","budget_lines":"truncated","budgets":"truncated","tasks":"truncated","accounts":"truncated","funds":"truncated","functional_categories":"truncated","natural_categories":"truncated","repopulated":{"natural_categories":13,"functional_categories":10}} ip=::1
 [20-Jun-2026 20:13:02 UTC] [AUDIT] user=admin action=reset_users details=Starting user reset to default admin account. ip=::1
 [20-Jun-2026 20:13:02 UTC] [AUDIT] user=admin action=reset_users_repopulate_categories details={"natural_categories":13,"functional_categories":10} ip=::1
+[21-Jun-2026 01:44:14 UTC] PHP Warning:  Constant RUNNING_FROM_MASTER_SETUP already defined, this will be an error in PHP 9 in /home/jak/git_repos/temper/app/setup_db.php on line 51
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Constant RUNNING_FROM_MASTER_SETUP already defined, this will be an error in PHP 9 in /home/jak/git_repos/temper/app/setup_db.php on line 51
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Constant RUNNING_FROM_MASTER_SETUP already defined, this will be an error in PHP 9 in /home/jak/git_repos/temper/app/setup_db.php on line 51
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Constant RUNNING_FROM_MASTER_SETUP already defined, this will be an error in PHP 9 in /home/jak/git_repos/temper/app/setup_db.php on line 51
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Constant RUNNING_FROM_MASTER_SETUP already defined, this will be an error in PHP 9 in /home/jak/git_repos/temper/app/setup_db.php on line 51
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Undefined variable $hElsAKEKx9CLXDqzYsxEeOLXq2V7vr in /home/jak/git_repos/temper/app/setup-database/06-users-roles.php on line 73
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Undefined variable $hElsAKEKx9CLXDqzYsxEeOLXq2V7vr in /home/jak/git_repos/temper/app/setup-database/06-users-roles.php on line 74
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Undefined variable $hElsAKEKx9CLXDqzYsxEeOLXq2V7vr in /home/jak/git_repos/temper/app/setup-database/06-users-roles.php on line 75
+[21-Jun-2026 01:44:15 UTC] PHP Warning:  Constant RUNNING_FROM_MASTER_SETUP already defined, this will be an error in PHP 9 in /home/jak/git_repos/temper/app/setup_db.php on line 51
+[21-Jun-2026 02:56:44 UTC] PHP Warning:  include(pages/admin-backup-test-functions.php): Failed to open stream: No such file or directory in Command line code on line 19
+[21-Jun-2026 02:56:44 UTC] PHP Warning:  include(): Failed opening 'pages/admin-backup-test-functions.php' for inclusion (include_path='.:/usr/share/php') in Command line code on line 19
+[21-Jun-2026 03:01:45 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:01:45 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:08:32 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214

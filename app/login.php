@@ -1,6 +1,4 @@
 <?php
-session_start();
-
 require_once 'auth.php';
 
 // If user is already logged in, redirect to dashboard

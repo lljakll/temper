@@ -1,5 +1,5 @@
 -- Hope Baptist Treasurer Database Backup
--- Generated: 2026-06-20 20:31:47
+-- Generated: 2026-06-21 03:01:37
 -- Database: treasurer_db
 
 SET NAMES utf8mb4;
@@ -367,6 +367,24 @@ INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `f
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('75', '35', '6', '3', '22.00', 'credit', '5', '1', NULL, '', '2026-06-20 16:27:08', '2026-06-20 16:27:08');
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('76', '36', '4', '3', '33.00', 'debit', '3', '3', NULL, '', '2026-06-20 16:30:58', '2026-06-20 16:30:58');
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('77', '36', '6', '3', '33.00', 'credit', '7', '1', NULL, '', '2026-06-20 16:30:58', '2026-06-20 16:30:58');
+
+DROP TABLE IF EXISTS `transactions`;
+CREATE TABLE `transactions` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `fund_id` int(11) NOT NULL,
+  `transaction_date` date NOT NULL,
+  `description` varchar(255) NOT NULL,
+  `debit` decimal(15,2) DEFAULT 0.00,
+  `credit` decimal(15,2) DEFAULT 0.00,
+  `transaction_type` enum('donation','expense','transfer','adjustment') NOT NULL,
+  `category` varchar(100) DEFAULT NULL,
+  `reference_number` varchar(50) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `fund_id` (`fund_id`),
+  CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`fund_id`) REFERENCES `funds` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (

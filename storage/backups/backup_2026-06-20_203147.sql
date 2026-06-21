@@ -1,5 +1,5 @@
 -- Hope Baptist Treasurer Database Backup
--- Generated: 2026-06-20 18:17:08
+-- Generated: 2026-06-20 20:31:47
 -- Database: treasurer_db
 
 SET NAMES utf8mb4;
@@ -31,6 +31,20 @@ INSERT INTO `accounts` (`id`, `name`, `description`, `normal_balance`, `archived
 INSERT INTO `accounts` (`id`, `name`, `description`, `normal_balance`, `archived`, `archived_at`, `created_at`, `mutable_fund`) VALUES ('9', 'Retained Earnings', 'Cumulative earnings of the church', 'credit', '0', NULL, '2026-06-19 11:15:17', '0');
 INSERT INTO `accounts` (`id`, `name`, `description`, `normal_balance`, `archived`, `archived_at`, `created_at`, `mutable_fund`) VALUES ('10', 'Contributions', 'Donations received', 'credit', '0', NULL, '2026-06-19 11:15:17', '1');
 
+DROP TABLE IF EXISTS `audit_log`;
+CREATE TABLE `audit_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL,
+  `username` varchar(50) NOT NULL,
+  `action` varchar(100) NOT NULL,
+  `details` text DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_log_created_at` (`created_at`),
+  KEY `idx_audit_log_action` (`action`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+
 DROP TABLE IF EXISTS `budget_lines`;
 CREATE TABLE `budget_lines` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -52,7 +66,7 @@ CREATE TABLE `budget_lines` (
   CONSTRAINT `budget_lines_ibfk_2` FOREIGN KEY (`natural_category_id`) REFERENCES `natural_categories` (`id`) ON DELETE SET NULL,
   CONSTRAINT `budget_lines_ibfk_3` FOREIGN KEY (`functional_category_id`) REFERENCES `functional_categories` (`id`) ON DELETE SET NULL,
   CONSTRAINT `budget_lines_ibfk_4` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=29 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('1', '1', '1', '1', '1', '200000.00', 'Contributions for worship and programs', '2026-06-19 11:15:18', '2026-06-19 11:15:18');
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('2', '1', '2', '2', '2', '150000.00', 'Program expenses', '2026-06-19 11:15:18', '2026-06-19 11:15:18');
@@ -62,10 +76,12 @@ INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functiona
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('10', '4', '4', '5', '2', '2500.00', 'tmp', '2026-06-20 10:31:11', '2026-06-20 10:31:11');
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('15', '5', '4', '7', '5', '25.00', 'fdsa', '2026-06-20 10:37:13', '2026-06-20 10:37:13');
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('16', '5', '2', '7', '8', '25.00', 'fs', '2026-06-20 10:37:13', '2026-06-20 10:37:13');
-INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('17', '6', '6', '7', '8', '2500.00', 'tes', '2026-06-20 10:43:17', '2026-06-20 10:43:17');
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('21', '7', '8', '5', '5', '2500.00', '', '2026-06-20 11:41:11', '2026-06-20 11:41:11');
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('22', '7', '4', '7', '6', '2500.00', '', '2026-06-20 11:41:11', '2026-06-20 11:41:11');
 INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('23', '7', '7', '7', '5', '25.00', '', '2026-06-20 11:41:11', '2026-06-20 11:41:11');
+INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('26', '6', '6', '7', '8', '2500.00', 'tes', '2026-06-20 16:31:19', '2026-06-20 16:31:19');
+INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('27', '6', '2', '1', '8', '250.00', 'fds', '2026-06-20 16:31:19', '2026-06-20 16:31:19');
+INSERT INTO `budget_lines` (`id`, `budget_id`, `natural_category_id`, `functional_category_id`, `account_id`, `budgeted_amount`, `notes`, `created_at`, `updated_at`) VALUES ('28', '6', '8', '1', '4', '222.22', 'fds', '2026-06-20 16:31:19', '2026-06-20 16:31:19');
 
 DROP TABLE IF EXISTS `budgets`;
 CREATE TABLE `budgets` (
@@ -90,7 +106,7 @@ INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `a
 INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `approved_date`, `reference_number`, `status`, `total_budgeted`, `description`, `created_at`, `updated_at`) VALUES ('3', '2026', 'Verify B', '2026-01-01', '2026-06-20', NULL, 'BM20261022-010', 'closed', '999.50', '', '2026-06-20 09:01:29', '2026-06-20 10:32:54');
 INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `approved_date`, `reference_number`, `status`, `total_budgeted`, `description`, `created_at`, `updated_at`) VALUES ('4', '2027', 'CY2027 Budget', '2026-06-20', '2027-12-31', '2026-10-15', 'CY2027BDGT', 'active', '2500.00', 'Temp2', '2026-06-20 09:07:48', '2026-06-20 10:32:54');
 INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `approved_date`, `reference_number`, `status`, `total_budgeted`, `description`, `created_at`, `updated_at`) VALUES ('5', '2028', '2028 Budget', '2028-01-01', '2028-12-31', '2026-06-20', 'OFF-250504', 'approved', '50.00', 'test 2', '2026-06-20 10:34:48', '2026-06-20 10:37:13');
-INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `approved_date`, `reference_number`, `status`, `total_budgeted`, `description`, `created_at`, `updated_at`) VALUES ('6', '2029', '2029 Budget', '2029-01-01', '2029-12-31', NULL, '', 'draft', '2500.00', 'test 4', '2026-06-20 10:43:16', '2026-06-20 10:43:16');
+INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `approved_date`, `reference_number`, `status`, `total_budgeted`, `description`, `created_at`, `updated_at`) VALUES ('6', '2029', '2029 Budget', '2029-01-01', '2029-12-31', NULL, '', 'draft', '2972.22', 'test 4', '2026-06-20 10:43:16', '2026-06-20 16:31:19');
 INSERT INTO `budgets` (`id`, `fiscal_year`, `name`, `start_date`, `end_date`, `approved_date`, `reference_number`, `status`, `total_budgeted`, `description`, `created_at`, `updated_at`) VALUES ('7', '2025', '2025 Budget', '2025-01-01', '2025-12-31', '2025-06-20', 'test', 'closed', '5025.00', '', '2026-06-20 11:40:36', '2026-06-20 11:41:38');
 
 DROP TABLE IF EXISTS `functional_categories`;
@@ -189,9 +205,10 @@ CREATE TABLE `tasks` (
   PRIMARY KEY (`id`),
   KEY `idx_tasks_status` (`status`),
   KEY `idx_tasks_due_date` (`due_date`)
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 INSERT INTO `tasks` (`id`, `title`, `description`, `due_date`, `status`, `created_at`, `updated_at`) VALUES ('2', 'Pay Morrisons', 'Pay Morrison\'s Home Center Statement', '2026-07-05', 'upcoming', '2026-06-20 12:33:27', '2026-06-20 12:33:40');
+INSERT INTO `tasks` (`id`, `title`, `description`, `due_date`, `status`, `created_at`, `updated_at`) VALUES ('3', 'test', 'test', '2029-01-02', 'upcoming', '2026-06-20 16:31:38', '2026-06-20 16:31:38');
 
 DROP TABLE IF EXISTS `transaction_details`;
 CREATE TABLE `transaction_details` (
@@ -209,7 +226,7 @@ CREATE TABLE `transaction_details` (
   PRIMARY KEY (`id`),
   KEY `idx_transaction_details_date` (`transaction_date`),
   KEY `idx_transaction_details_status` (`status`)
-) ENGINE=InnoDB AUTO_INCREMENT=35 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=37 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('1', '2025-01-05', '2025-01-06', NULL, 'Worship Service Offering', 'First Sunday tithes and offerings of the year', 'OFF-250105', 'cleared', NULL, '2026-06-19 11:15:18', '2026-06-19 11:15:18');
 INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('2', '2025-01-08', '2025-01-09', '1201', 'City Electric Co.', 'Monthly electric utility bill', NULL, 'cleared', NULL, '2026-06-19 11:15:18', '2026-06-19 11:15:18');
@@ -245,6 +262,8 @@ INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `ch
 INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('32', '2025-05-01', '2025-05-02', NULL, 'Global Missions Outreach', 'Q2 missions support payment', 'MSN-2025Q2', 'cleared', NULL, '2026-06-19 11:15:18', '2026-06-19 11:15:18');
 INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('33', '2025-05-04', '2026-06-19', NULL, 'Worship Service Offering', 'May the fourth Sunday offerings', 'OFF-250504', 'cleared', NULL, '2026-06-19 11:15:18', '2026-06-19 12:46:49');
 INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('34', '2026-06-10', NULL, '1219', 'Corner Market Supplies', 'Fellowship supplies and coffee', '', 'reconciled', '2026-06-19', '2026-06-19 11:15:18', '2026-06-19 12:52:11');
+INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('35', '2026-06-20', NULL, '', 'fdsa', 'fa | fa', '', 'pending', NULL, '2026-06-20 16:27:08', '2026-06-20 16:27:08');
+INSERT INTO `transaction_details` (`id`, `transaction_date`, `cleared_date`, `check_number`, `pay_to`, `memo`, `reference_number`, `status`, `date_reconciled`, `created_at`, `updated_at`) VALUES ('36', '2026-06-20', NULL, '', 'fdsa', 'fda | fda', '', 'pending', NULL, '2026-06-20 16:30:58', '2026-06-20 16:30:58');
 
 DROP TABLE IF EXISTS `transaction_lines`;
 CREATE TABLE `transaction_lines` (
@@ -273,7 +292,7 @@ CREATE TABLE `transaction_lines` (
   CONSTRAINT `transaction_lines_ibfk_3` FOREIGN KEY (`fund_id`) REFERENCES `funds` (`id`) ON DELETE SET NULL,
   CONSTRAINT `transaction_lines_ibfk_4` FOREIGN KEY (`natural_category_id`) REFERENCES `natural_categories` (`id`) ON DELETE SET NULL,
   CONSTRAINT `transaction_lines_ibfk_5` FOREIGN KEY (`functional_category_id`) REFERENCES `functional_categories` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=74 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=78 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('1', '1', '2', '1', '2845.50', 'debit', '1', '6', NULL, 'Cash and checks deposit', '2026-06-19 11:15:18', '2026-06-19 11:15:18');
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('2', '1', '10', '1', '2845.50', 'credit', '1', '6', NULL, 'General contributions', '2026-06-19 11:15:18', '2026-06-19 11:15:18');
@@ -344,6 +363,10 @@ INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `f
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('67', '33', '10', '1', '2680.00', 'credit', '1', '6', NULL, 'General contributions', '2026-06-19 11:15:18', '2026-06-19 11:15:18');
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('72', '34', '6', '1', '58.75', 'credit', '8', '1', NULL, '', '2026-06-19 11:58:41', '2026-06-19 11:58:41');
 INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('73', '34', '2', '1', '58.75', 'debit', '8', '1', NULL, '', '2026-06-19 11:58:41', '2026-06-19 11:58:41');
+INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('74', '35', '1', '3', '22.00', 'debit', '7', '3', NULL, '', '2026-06-20 16:27:08', '2026-06-20 16:27:08');
+INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('75', '35', '6', '3', '22.00', 'credit', '5', '1', NULL, '', '2026-06-20 16:27:08', '2026-06-20 16:27:08');
+INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('76', '36', '4', '3', '33.00', 'debit', '3', '3', NULL, '', '2026-06-20 16:30:58', '2026-06-20 16:30:58');
+INSERT INTO `transaction_lines` (`id`, `transaction_detail_id`, `account_id`, `fund_id`, `amount`, `type`, `natural_category_id`, `functional_category_id`, `budget_line_id`, `description`, `created_at`, `updated_at`) VALUES ('77', '36', '6', '3', '33.00', 'credit', '7', '1', NULL, '', '2026-06-20 16:30:58', '2026-06-20 16:30:58');
 
 DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (

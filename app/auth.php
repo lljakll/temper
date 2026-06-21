@@ -1,5 +1,7 @@
 <?php
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Security: Prevent direct access to this helper file
 if (basename($_SERVER['PHP_SELF']) === basename(__FILE__)) {

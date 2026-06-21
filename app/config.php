@@ -17,6 +17,8 @@ define('DB_NAME', 'treasurer_db');
 define('DB_USER', 'treasurer_user');
 define('DB_PASS', 'treasurer_password');
 
+require_once __DIR__ . '/includes/storage_paths.php';
+
 // Database connection function following GAAP principles
 function getDbConnection() {
     $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
@@ -35,7 +37,7 @@ function getDbConnection() {
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Log all errors to storage/logs/app.log
+// Log all errors to the resolved writable logs directory
 ini_set('log_errors', 1);
-ini_set('error_log', __DIR__ . '/storage/logs/app.log');
+ini_set('error_log', getLogsDir() . '/app.log');
 ?>

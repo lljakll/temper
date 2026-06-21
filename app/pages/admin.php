@@ -1,8 +1,10 @@
 <?php
     // Admin - Inner content only for AJAX loading
 
+    require_once __DIR__ . '/../config.php';
+    require_once __DIR__ . '/../includes/backup_utils.php';
+
     if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
         $db = getDbConnection();
     }
 
@@ -13,18 +15,7 @@
         ['page' => 'setup_functionalclasses', 'title' => 'Functional Classes', 'icon' => 'bi-tags'],
     ];
 
-    $backupDir = __DIR__ . '/../storage/backups';
-    $recentBackups = [];
-    if (is_dir($backupDir)) {
-        foreach (glob($backupDir . '/backup_*.sql') as $path) {
-            $recentBackups[] = [
-                'name' => basename($path),
-                'modified' => filemtime($path),
-            ];
-        }
-        usort($recentBackups, fn($a, $b) => $b['modified'] <=> $a['modified']);
-        $recentBackups = array_slice($recentBackups, 0, 4);
-    }
+    $recentBackups = listRecentBackupSummaries(getBackupDir(), 4);
 
     $activeCards = [
         [
@@ -105,11 +96,7 @@
         color: var(--bs-success);
         line-height: 1.2;
     }
-    .admin-backup-date .time {
-        font-weight: 500;
-        font-size: 0.8rem;
-        color: #495057;
-    }
+
 </style>
 
 <div class="row mb-3">
@@ -158,8 +145,7 @@
                         <div class="admin-backup-dates">
                             <?php foreach ($recentBackups as $backup): ?>
                                 <div class="admin-backup-date">
-                                    <i class="bi bi-calendar-check me-1"></i><?= date('M j, Y', $backup['modified']) ?>
-                                    <span class="time ms-1"><?= date('g:i A', $backup['modified']) ?></span>
+                                    <i class="bi bi-calendar-check me-1"></i><?= htmlspecialchars((string)($backup['display_datetime'] ?? 'Unknown')) ?>
                                 </div>
                             <?php endforeach; ?>
                         </div>

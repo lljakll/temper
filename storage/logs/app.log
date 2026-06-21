@@ -1,0 +1,19 @@
+[21-Jun-2026 03:05:23 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:23 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Warning:  Trying to access array offset on null in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:05:43 UTC] PHP Deprecated:  strtolower(): Passing null to parameter #1 ($string) of type string is deprecated in /var/www/temper/app/pages/admin-backup.php on line 214
+[21-Jun-2026 03:22:30 UTC] [AUDIT] user=admin action=clear_all_financial details=Tables: transaction_lines, transaction_details, budget_lines, budgets, tasks, accounts, funds, functional_categories, natural_categories ip=::1
+[21-Jun-2026 03:22:31 UTC] [AUDIT] user=admin action=clear_all_financial_repopulate_categories details={"natural_categories":13,"functional_categories":10} ip=::1
+[21-Jun-2026 03:22:31 UTC] [AUDIT] user=admin action=clear_all_financial_completed details={"transaction_lines":"truncated","transaction_details":"truncated","budget_lines":"truncated","budgets":"truncated","tasks":"truncated","accounts":"truncated","funds":"truncated","functional_categories":"truncated","natural_categories":"truncated","repopulated":{"natural_categories":13,"functional_categories":10}} ip=::1

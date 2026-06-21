@@ -18,11 +18,8 @@
     define('MAINTENANCE_PIN', '464546');
     define('DEFAULT_ADMIN_PASSWORD_HASH', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute');
 
-    $backupDir = __DIR__ . '/../storage/backups';
-    $exportDir = __DIR__ . '/../storage/exports';
-    if (!is_dir($exportDir)) {
-        mkdir($exportDir, 0750, true);
-    }
+    $backupDir = getBackupDir();
+    $exportDir = getExportsDir();
 
     $clearActionTables = [
         'clear_transactions' => ['transaction_lines', 'transaction_details'],
