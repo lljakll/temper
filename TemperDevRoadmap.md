@@ -1,84 +1,79 @@
-# Church Treasurer System – Architecture & Development Roadmap
-**Hope Baptist Church of Nashville, Georgia**  
-**Revision: 1.7**  
-**Date: 27 May 2026**
+# Temper – Church Treasurer System Development Roadmap
+**Hope Baptist Church, Nashville, GA**  
+**Revision: 2.0**  
+**Date: June 21, 2026**
 
 **Single Source of Truth:**  
-The **Treasurer’s Guide Conceptual Edition Rev 1.0** is the authoritative source for all accounting principles, stewardship rules, fund accounting logic, and financial practices.
+The **Treasurer’s Guide** remains the authoritative source for all accounting principles, fund accounting rules, donor stewardship, and audit standards.
 
-### Core Requirements & Constraints
-- Primary user (Treasurer) needs full read/write capability.
-- Other users need read-only access via roles.
-- Data centralized on church Linux server.
-- No public internet exposure.
-- Strictly follow Treasurer’s Guide (WODR / WDR, releases from restrictions, functional + natural classification, donor stewardship, audit-readiness).
-- Development using local LLM (Qwen3-Coder:30B primarily).
+**Current Architecture:** Simple PHP + MariaDB LAMP stack (Bootstrap/jQuery) running at `/var/www/temper`
 
-**Tech Stack:** Plain PHP + MariaDB + Bootstrap 5 + jQuery  
-**Development Environment:** Linux, Apache2, OpenCode + Grok (Architect)
+**Philosophy:** Frequent small, visible wins + production-ready stability + easy handover to successor.
 
 ---
 
-## 1. Architecture Overview
-
-**Core Stack**
-- Backend: PHP + MariaDB (mysqli)
-- Frontend: Bootstrap 5 + jQuery
-- Simple, auditable, maintainable code
-
----
-
-## 2. Detailed Development Roadmap
-
-### Phase 0: Project Setup & Foundations (3–5 days)
-**Goal:** Get a working system quickly.
-
-- Initialize folder structure and database
-- Basic navigation (sidebar)
-- Login / authentication stub
-- Simple dashboard
-
-**Small Wins:**
-- [ ] Basic dashboard page loading
-- [ ] Simple navigation working
-- [ ] Database connection + test tables created
-
-**Deliverables:** Functional skeleton with sidebar navigation.
-
-### Phase 1: Core Accounting & Budgeting (2–3 weeks)
-- Fund accounting schema (funds, transactions, releases, net assets)
-- Budgeting system
-- Transaction entry with proper fund rules and classification
-- Basic Dashboard with fund balances
-
-**Small Wins:**
-- [ ] Unrestricted contribution entry
-- [ ] Basic Budget vs Actual view
-
-### Phase 2: Major Features & Polish (3–4 weeks)
-- Full transaction CRUD
-- Reports (Fund Statements, Functional Expense, Reconciliation)
-- Advanced budgeting + variance warnings
-- User roles & permissions
-
-### Phase 3: Extensibility & Production Readiness (2–3 weeks)
-- Security hardening
-- Backup procedures
-- Logging and audit trails
-- UI refinements
-- Future module groundwork
+### Core Priorities (Still in Effect)
+- Accurate fund accounting (WODR/WDR, releases from restrictions, functional + natural classification)
+- Strong budgeting module (budget entry, copy previous year, variance reporting)
+- Reliable double-entry ledger with transaction management
+- Professional, board-ready reports
+- Backup / restore robustness (already significantly advanced)
 
 ---
 
-## 3. Code Quality & Maintainability Guidelines
+## Phase 1: Foundation & Data Integrity (Completed)
+**Status: Mostly Done**
 
-**File Size Limits:**
-- **Ideal**: ≤ 500 lines per file
-- **Safe**: ≤ 700 lines
-- **Hard Limit**: Do not exceed 900 lines
+- [x] Production deployment to `/var/www/temper` with proper permissions and symlink workflow
+- [x] Robust backup system (timestamps, SHA256 checksums, integrity validation, overview card)
+- [x] Storage path handling and error resilience
+- [x] Basic dashboard and navigation
 
-Keep prompts small and focused when working with Q3:30B to avoid hallucinations.
+**Small Wins Achieved:** Reliable backup/restore workflow, safe environment for real data entry.
 
-**Motivation Philosophy:** Frequent small, visible wins.
+---
 
-**Approval Status:** Revised v1.7 — Plain PHP + Bootstrap direction locked.
+## Phase 2: Core Accounting Engine (High Priority – Next Focus)
+**Goal:** Enable safe, confident entry of real church data.
+
+**Key Features:**
+- [ ] Double-entry ledger with full transaction CRUD (create, read, update, delete)
+- [ ] Fund-aware transaction entry (unrestricted/restricted, releases, natural/functional classification)
+- [ ] Budget module (create, edit, copy from prior year, budget vs actual tracking)
+- [ ] Basic reconciliation tools
+- [ ] Transaction search/filtering and memo/attachment support
+
+**Small Wins to Target:**
+- [ ] Simple transaction entry form working with fund rules
+- [ ] First budget vs actual report
+- [ ] Ability to enter real offerings and expenses safely
+
+**Milestone:** Stable core ledger + budgeting system ready for daily use and real data.
+
+---
+
+## Phase 3: Reporting & Polish (Following Phase 2)
+- [ ] Professional board-ready reports (Fund Statements, Budget vs Actual, Functional Expense, etc.)
+- [ ] Dashboard enhancements with key balances and charts
+- [ ] User roles & permissions (Treasurer full access, board read-only)
+- [ ] Lookup tables / chart of accounts management
+- [ ] Export capabilities (PDF/CSV)
+
+---
+
+## Phase 4: Extensibility & Handover
+- [ ] Member portal groundwork (read-only views)
+- [ ] Documentation / successor guide
+- [ ] Additional modules (if needed: payroll, membership integration, etc.)
+- [ ] Performance tuning and final hardening
+
+---
+
+**Current Status (June 21, 2026):**  
+Strong foundation and backup system in place. Ready to accelerate work on the ledger and budgeting modules now that safe data management is reliable.
+
+**Next Action:** Begin detailed work on transaction/ledger entry and budgeting features.
+
+---
+
+**Approval Note:** This roadmap reflects actual development progress and keeps budgeting + ledger as top priorities.
