@@ -12,32 +12,32 @@
 
 ### Workflows Development
 
-    - [ ] Create Workflow sidebar entry
-        - [ ] Create workflows for
+- [ ] Create Workflow sidebar entry
+Create workflows for
 
-            - [ ] Reimbursments
-            - [ ] Invoices
-            - [ ] Payments
-            - [ ] Contributions
-            - [ ] Payroll
-            - [ ] Bank Transaction Matching
-            - [ ] Bank Statement Reconcilition
-            - [ ] Match Transactions or Create New Transactions
-            - [ ] Workflows will:
-                - [ ] Guide through required actions
-                - [ ] Require document upload
-                - [ ] Gather approvals
-                - [ ] Create auditable paperwork package with approvals sheet.
+- [ ] Reimbursments
+- [ ] Invoices
+- [ ] Payments
+- [ ] Contributions
+- [ ] Payroll
+- [ ] Bank Transaction Matching
+- [ ] Bank Statement Reconcilition
+- [ ] Match Transactions or Create New Transactions
+Workflows will:
+- [ ] Guide through required actions
+- [ ] Require document upload
+- [ ] Gather approvals
+- [ ] Create auditable paperwork package with approvals sheet.
 
 
 ### Document System Development
 
-    - [ ] Create Documents sidebar entry
-        - [ ] 
+Create Documents sidebar entry
+
 
 
 ### Audit System Development
-    - [ ] Create Audit sidebar entry
-        - [ ] List all audits
-        - [ ] View Audit details and list documents
-        - [ ] View documents
+- [ ] Create Audit sidebar entry
+- [ ] List all audits
+- [ ] View Audit details and list documents
+- [ ] View documents
