@@ -1,10 +1,11 @@
 # Temper – Church Treasurer System Development Roadmap
+
 **Hope Baptist Church, Nashville, GA**  
-**Revision: 2.0**  
-**Date: June 21, 2026**
+**Revision: 2.1**  
+**Date: June 30, 2026**
 
 **Single Source of Truth:**  
-The **Treasurer’s Guide** remains the authoritative source for all accounting principles, fund accounting rules, donor stewardship, and audit standards.
+The **Treasurer’s Guide** remains the authoritative source...
 
 **Current Architecture:** Simple PHP + MariaDB LAMP stack (Bootstrap/jQuery) running at `/var/www/temper`
 
@@ -13,72 +14,63 @@ The **Treasurer’s Guide** remains the authoritative source for all accounting 
 ---
 
 ### Core Priorities (Still in Effect)
-- Accurate fund accounting (WODR/WDR, releases from restrictions, functional + natural classification)
-- Strong budgeting module (budget entry, copy previous year, variance reporting)
-- Reliable double-entry ledger with transaction management
+- Accurate fund accounting...
+- Strong budgeting module...
+- Reliable double-entry ledger...
 - Professional, board-ready reports
 - Backup / restore robustness (already significantly advanced)
 
 ---
 
 ## Phase 1: Foundation & Data Integrity (Completed)
-**Status: Mostly Done**
+**Status: Done**
 
-- Production deployment to `/var/www/temper` with proper permissions and symlink workflow
-- Robust backup system:
-  - Filename-based timestamps (YYYY-MM-DD_HHMMSS)
-  - SHA256 checksums with .sha256 companion files
-  - SQL integrity validation (no HTML/warnings in dumps)
-  - Recent backups card on admin overview
-  - Restore validation improvements
-- Storage path handling and error resilience
-- Basic dashboard and navigation
+- [x] Production deployment...
+- [x] Robust backup system...
+- [x] Storage path handling...
+- [x] Basic dashboard and navigation
 
-**Small Wins Achieved:** Reliable backup/restore workflow, safe environment for real data entry.
+**Small Wins Achieved:** Reliable backup/restore workflow + safe environment for real data.
 
 ---
 
-## Phase 2: Core Accounting Engine (High Priority – Next Focus)
-**Goal:** Enable safe, confident entry of real church data.
+## Phase 2: Core Accounting Engine (Mostly Complete)
+**Goal:** Solid ledger and budgeting foundation.
 
 **Key Features:**
-- Double-entry ledger with full transaction CRUD (create, read, update, delete)
-- Fund-aware transaction entry (unrestricted/restricted, releases, natural/functional classification)
-- Budget module (create, edit, copy from prior year, budget vs actual tracking)
-- Basic reconciliation tools
-- Transaction search/filtering and memo/attachment support
+- [x] Double-entry ledger with full transaction CRUD
+- [x] Fund-aware transaction entry
+- [x] Budget module (create, edit, copy, tracking)
+- [ ] Basic reconciliation tools
+- [ ] Transaction search/filtering and memo/attachment support
 
-**Small Wins to Target:**
-- [ ] Simple transaction entry form working with fund rules
-- [ ] First budget vs actual report
-- [ ] Ability to enter real offerings and expenses safely
+**Remaining Small Wins:**
+- [ ] Polish transaction entry form
+- [ ] Enhanced budget vs actual reporting
+- [ ] Full reconciliation workflow
 
-**Milestone:** Stable core ledger + budgeting system ready for daily use and real data.
+**Milestone:** Core accounting engine stable for daily use.
 
 ---
 
-## Phase 3: Reporting & Polish (Following Phase 2)
-- Professional board-ready reports (Fund Statements, Budget vs Actual, Functional Expense, etc.)
-- Dashboard enhancements with key balances and charts
-- User roles & permissions (Treasurer full access, board read-only)
-- Lookup tables / chart of accounts management
-- Export capabilities (PDF/CSV)
+## Phase 3: Reporting & Polish (Next Focus)
+- [ ] Professional board-ready reports...
+- [ ] Dashboard enhancements with charts
+- [ ] User roles & permissions
+- [ ] Lookup tables / chart of accounts management
+- [ ] Export capabilities (PDF/CSV)
 
 ---
 
 ## Phase 4: Extensibility & Handover
-- Member portal groundwork (read-only views)
-- Documentation / successor guide
-- Additional modules (if needed: payroll, membership integration, etc.)
-- Performance tuning and final hardening
+- [ ] Member portal groundwork
+- [ ] Documentation / successor guide
+- [ ] Additional modules (if needed)
+- [ ] Final performance tuning & hardening
 
 ---
 
-**Current Status (June 21, 2026):**  
-Strong foundation and backup system in place. Ready to accelerate work on the ledger and budgeting modules now that safe data management is reliable.
+**Current Status (June 30, 2026):**  
+Strong foundation and core ledger/budgeting functionality in place. Focus is now shifting to polishing Phase 2 items and moving into reporting & user management.
 
-**Next Action:** Begin detailed work on transaction/ledger entry and budgeting features.
-
----
-
-**Approval Note:** This roadmap reflects actual development progress and restores budgeting + ledger as top priorities.
+**Next Action:** Complete remaining Phase 2 polish, then begin Phase 3 reporting features.
