@@ -10,11 +10,11 @@
 - [ ] Add Document Package view to Transactions
 
 
-### Workflows Development
+## Workflows Development
 
 - [ ] Create Workflow sidebar entry
-Create workflows for
 
+Create workflows for
 - [ ] Reimbursments
 - [ ] Invoices
 - [ ] Payments
@@ -23,6 +23,7 @@ Create workflows for
 - [ ] Bank Transaction Matching
 - [ ] Bank Statement Reconcilition
 - [ ] Match Transactions or Create New Transactions
+
 Workflows will:
 - [ ] Guide through required actions
 - [ ] Require document upload
@@ -30,13 +31,14 @@ Workflows will:
 - [ ] Create auditable paperwork package with approvals sheet.
 
 
-### Document System Development
+## Document System Development
 
-Create Documents sidebar entry
+- [ ] Create Documents sidebar entry
 
 
 
-### Audit System Development
+## Audit System Development
+
 - [ ] Create Audit sidebar entry
 - [ ] List all audits
 - [ ] View Audit details and list documents
