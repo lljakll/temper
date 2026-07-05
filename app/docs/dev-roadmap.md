@@ -40,6 +40,9 @@ The **Treasurer’s Guide** remains the authoritative source for all accounting 
 
 **Alpha Goals (Major Feature Implementation):**
 
+- **Budget System Polish**
+  - Remove the previous "only one active budget at a time" restriction to support proper year-end deconfliction
+
 - **Transaction Entry Polish**
   - Add rich memo field support
   - Implement file attachments (receipts, PDFs, images) with storage handling
@@ -82,6 +85,15 @@ The **Treasurer’s Guide** remains the authoritative source for all accounting 
   - Build audit listing interface
   - Implement detailed audit view (with linked documents and history)
   - Support viewing and managing document packages within audits
+
+- **Archival Data Loader (Temporary Tool)**
+  - Bulk upload (CSV/Excel) + manual entry for historical budgets and transactions
+  - Dedicated Archivist role (separate from Treasurer)
+  - Located in Admin menu, visible only to Admin + Archivist
+  - Hard guardrails preventing current-year data
+  - Ensure accounting continuity (fund/account balances carry forward correctly)
+  - Immediate "Closed" status for budgets and "Reconciled" status for transactions
+  - Full audit logging of all imports
 
 **Milestone:** All major feature sets functionally complete → ready for Beta polish.
 
