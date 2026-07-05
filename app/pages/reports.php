@@ -183,16 +183,19 @@
 
             } elseif ($report === 'budget-vs-actual') {
                 $fiscalYear = (int)($_GET['fiscal_year'] ?? 0);
+                $budgetId   = (int)($_GET['budget_id'] ?? 0);
                 $period     = $_GET['period'] ?? 'ytd';
                 $groupBy    = $_GET['group_by'] ?? 'natural_category';
                 $dateFrom   = $_GET['date_from'] ?? '';
                 $dateTo     = $_GET['date_to'] ?? '';
 
-                // Resolve budget for the requested fiscal year (one active per FY is supported)
-                $budget = budgetResolveForYear($db, $fiscalYear);
+                $budget = budgetResolveForYear($db, $fiscalYear, $budgetId > 0 ? $budgetId : null);
 
                 if (!$budget) {
-                    echo json_encode(['error' => "No budget found for fiscal year $fiscalYear"]);
+                    $detail = $budgetId > 0
+                        ? "No budget with ID $budgetId for fiscal year $fiscalYear"
+                        : "No budget found for fiscal year $fiscalYear";
+                    echo json_encode(['error' => $detail]);
                     exit;
                 }
 
@@ -320,17 +323,20 @@
                 usort($rows, fn($a, $b) => strcmp($a['label'], $b['label']));
 
                 $activeBudgets = array_map(
-                    fn($b) => ['fiscal_year' => (int)$b['fiscal_year'], 'name' => $b['name']],
+                    fn($b) => ['id' => (int)$b['id'], 'fiscal_year' => (int)$b['fiscal_year'], 'name' => $b['name']],
                     budgetFetchActiveList($db)
                 );
+                $yearBudgets = budgetFetchListForYear($db, $fiscalYear);
 
                 $response = [
                     'generated'   => date('Y-m-d H:i:s'),
                     'fiscal_year' => $fiscalYear,
+                    'budget_id'   => (int)$budget['id'],
                     'current_fiscal_year' => budgetCurrentFiscalYear(),
                     'budget_name' => $budget['name'],
                     'budget_status'=> $budget['status'],
                     'active_budgets' => $activeBudgets,
+                    'year_budget_count' => count($yearBudgets),
                     'period_start'=> $pStart,
                     'period_end'  => $pEnd,
                     'group_by'    => $groupBy,
@@ -466,7 +472,7 @@
     if (!$budget_years) $budget_years = [$currentFiscalYear];
 
     $activeBudgetMeta = array_map(
-        fn($b) => ['fiscal_year' => (int)$b['fiscal_year'], 'name' => $b['name']],
+        fn($b) => ['id' => (int)$b['id'], 'fiscal_year' => (int)$b['fiscal_year'], 'name' => $b['name']],
         budgetFetchActiveList($db)
     );
 
@@ -480,6 +486,7 @@
         'budgetYears'=> $budget_years,
         'currentFiscalYear' => $currentFiscalYear,
         'activeBudgets' => $activeBudgetMeta,
+        'budgetsByYear' => budgetListGroupedByYear($db),
     ]);
 ?>
 
@@ -734,22 +741,26 @@
         if (key === 'budget-vs-actual') {
             const yearOpts = FD.budgetYears.map(y => {
                 const isCurrent = y === FD.currentFiscalYear;
-                const active = (FD.activeBudgets || []).some(b => b.fiscal_year === y);
-                const suffix = isCurrent ? ' (Current FY)' : (active ? ' (Active)' : '');
+                const activeCount = (FD.activeBudgets || []).filter(b => b.fiscal_year === y).length;
+                const suffix = isCurrent ? ' (Current FY)' : (activeCount > 0 ? ' (' + activeCount + ' active)' : '');
                 const selected = isCurrent ? ' selected' : '';
                 return '<option value="' + y + '"' + selected + '>' + y + suffix + '</option>';
             }).join('');
             const activeNote = (FD.activeBudgets || []).length > 1
                 ? '<div class="col-12"><div class="alert alert-info py-2 small mb-0">Multiple active budgets: ' +
-                  FD.activeBudgets.map(b => 'FY ' + b.fiscal_year).join(', ') +
-                  '. Select the fiscal year whose budget you want to compare.</div></div>'
+                  FD.activeBudgets.map(b => b.name + ' (FY ' + b.fiscal_year + ')').join(', ') +
+                  '. Choose the fiscal year and specific budget below.</div></div>'
                 : '';
             return `
                 <div class="row g-2 align-items-end">
                     ${activeNote}
                     <div class="col-md-2">
                         <label class="form-label small mb-1">Fiscal Year</label>
-                        <select id="ba-year" class="form-select form-select-sm">${yearOpts}</select>
+                        <select id="ba-year" class="form-select form-select-sm" onchange="updateBaBudgetSelect()">${yearOpts}</select>
+                    </div>
+                    <div class="col-md-4" id="ba-budget-wrap" style="display:none">
+                        <label class="form-label small mb-1">Budget</label>
+                        <select id="ba-budget" class="form-select form-select-sm"></select>
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small mb-1">Period</label>
@@ -818,6 +829,7 @@
             p.search = document.getElementById('tl-search')?.value || '';
         } else if (key === 'budget-vs-actual') {
             p.fiscal_year = document.getElementById('ba-year')?.value || '';
+            p.budget_id = document.getElementById('ba-budget')?.value || '';
             p.period = document.getElementById('ba-period')?.value || 'ytd';
             p.group_by = document.getElementById('ba-group')?.value || 'natural_category';
             if (p.period === 'custom') {
@@ -884,11 +896,14 @@
             const netCls = data.totals.variance >= 0 ? 'text-success' : 'text-danger';
             const netSign = data.totals.variance >= 0 ? '+' : '';
             const fyNote = data.fiscal_year === data.current_fiscal_year ? ' &bull; Current FY' : '';
+            const multiYear = (data.year_budget_count || 0) > 1
+                ? ' &bull; ' + data.year_budget_count + ' budgets in FY ' + data.fiscal_year
+                : '';
             const multiActive = (data.active_budgets || []).length > 1
-                ? ' &bull; ' + data.active_budgets.length + ' active budgets across fiscal years'
+                ? ' &bull; ' + data.active_budgets.length + ' active budgets system-wide'
                 : '';
             return `
-                <div class="small text-muted mb-2">Generated ${data.generated} &bull; FY ${data.fiscal_year}${fyNote} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}${multiActive}</div>
+                <div class="small text-muted mb-2">Generated ${data.generated} &bull; FY ${data.fiscal_year}${fyNote} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}${multiYear}${multiActive}</div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle mb-0">
                         <thead class="table-dark"><tr><th>Category</th><th class="text-end">Budget</th><th class="text-end">Actual</th><th class="text-end">Variance</th><th class="text-end">% Used</th></tr></thead>
@@ -938,7 +953,32 @@
                 if (el) el.style.display = baPeriod.value === 'custom' ? '' : 'none';
             });
         }
+        if (key === 'budget-vs-actual') {
+            updateBaBudgetSelect();
+        }
     }
+
+    window.updateBaBudgetSelect = function() {
+        const year = parseInt(document.getElementById('ba-year')?.value || '0', 10);
+        const budgets = (FD.budgetsByYear || {})[year] || [];
+        const wrap = document.getElementById('ba-budget-wrap');
+        const sel = document.getElementById('ba-budget');
+        if (!wrap || !sel) return;
+        if (budgets.length <= 1) {
+            wrap.style.display = 'none';
+            sel.innerHTML = budgets.length === 1
+                ? '<option value="' + budgets[0].id + '" selected>' + budgets[0].name + '</option>'
+                : '';
+            return;
+        }
+        wrap.style.display = '';
+        sel.innerHTML = budgets.map(b => {
+            const statusTag = b.status === 'active' ? ' (active)' : ' (' + b.status + ')';
+            return '<option value="' + b.id + '">' + b.name + statusTag + '</option>';
+        }).join('');
+        const firstActive = budgets.find(b => b.status === 'active');
+        if (firstActive) sel.value = String(firstActive.id);
+    };
 
     function closeViewer() {
         const viewer = document.getElementById('reportViewer');
