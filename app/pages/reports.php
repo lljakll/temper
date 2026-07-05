@@ -5,6 +5,7 @@
         require_once __DIR__ . '/../config.php';
         $db = getDbConnection();
     }
+    require_once __DIR__ . '/../includes/budget_utils.php';
 
     $today = date('Y-m-d');
     $yearStart = date('Y') . '-01-01';
@@ -187,16 +188,8 @@
                 $dateFrom   = $_GET['date_from'] ?? '';
                 $dateTo     = $_GET['date_to'] ?? '';
 
-                // Resolve budget for fiscal year (prefer active, then approved, then closed)
-                $bStmt = $db->prepare("SELECT id, name, start_date, end_date, status
-                                       FROM budgets
-                                       WHERE fiscal_year = ?
-                                       ORDER BY FIELD(status,'active','approved','closed','draft'), id DESC
-                                       LIMIT 1");
-                $bStmt->bind_param('i', $fiscalYear);
-                $bStmt->execute();
-                $budget = $bStmt->get_result()->fetch_assoc();
-                $bStmt->close();
+                // Resolve budget for the requested fiscal year (one active per FY is supported)
+                $budget = budgetResolveForYear($db, $fiscalYear);
 
                 if (!$budget) {
                     echo json_encode(['error' => "No budget found for fiscal year $fiscalYear"]);
@@ -326,10 +319,18 @@
                 }
                 usort($rows, fn($a, $b) => strcmp($a['label'], $b['label']));
 
+                $activeBudgets = array_map(
+                    fn($b) => ['fiscal_year' => (int)$b['fiscal_year'], 'name' => $b['name']],
+                    budgetFetchActiveList($db)
+                );
+
                 $response = [
                     'generated'   => date('Y-m-d H:i:s'),
+                    'fiscal_year' => $fiscalYear,
+                    'current_fiscal_year' => budgetCurrentFiscalYear(),
                     'budget_name' => $budget['name'],
                     'budget_status'=> $budget['status'],
+                    'active_budgets' => $activeBudgets,
                     'period_start'=> $pStart,
                     'period_end'  => $pEnd,
                     'group_by'    => $groupBy,
@@ -461,7 +462,13 @@
     $budget_years = [];
     $r = $db->query("SELECT DISTINCT fiscal_year FROM budgets ORDER BY fiscal_year DESC");
     while ($row = $r->fetch_assoc()) $budget_years[] = (int)$row['fiscal_year'];
-    if (!$budget_years) $budget_years = [(int)date('Y')];
+    $currentFiscalYear = budgetCurrentFiscalYear();
+    if (!$budget_years) $budget_years = [$currentFiscalYear];
+
+    $activeBudgetMeta = array_map(
+        fn($b) => ['fiscal_year' => (int)$b['fiscal_year'], 'name' => $b['name']],
+        budgetFetchActiveList($db)
+    );
 
     $filterData = json_encode([
         'today'      => $today,
@@ -471,6 +478,8 @@
         'accounts'   => $accounts_list,
         'categories' => $categories_list,
         'budgetYears'=> $budget_years,
+        'currentFiscalYear' => $currentFiscalYear,
+        'activeBudgets' => $activeBudgetMeta,
     ]);
 ?>
 
@@ -723,9 +732,21 @@
                 </div>`;
         }
         if (key === 'budget-vs-actual') {
-            const yearOpts = FD.budgetYears.map(y => '<option value="' + y + '">' + y + '</option>').join('');
+            const yearOpts = FD.budgetYears.map(y => {
+                const isCurrent = y === FD.currentFiscalYear;
+                const active = (FD.activeBudgets || []).some(b => b.fiscal_year === y);
+                const suffix = isCurrent ? ' (Current FY)' : (active ? ' (Active)' : '');
+                const selected = isCurrent ? ' selected' : '';
+                return '<option value="' + y + '"' + selected + '>' + y + suffix + '</option>';
+            }).join('');
+            const activeNote = (FD.activeBudgets || []).length > 1
+                ? '<div class="col-12"><div class="alert alert-info py-2 small mb-0">Multiple active budgets: ' +
+                  FD.activeBudgets.map(b => 'FY ' + b.fiscal_year).join(', ') +
+                  '. Select the fiscal year whose budget you want to compare.</div></div>'
+                : '';
             return `
                 <div class="row g-2 align-items-end">
+                    ${activeNote}
                     <div class="col-md-2">
                         <label class="form-label small mb-1">Fiscal Year</label>
                         <select id="ba-year" class="form-select form-select-sm">${yearOpts}</select>
@@ -862,8 +883,12 @@
             if (!data.rows.length) rows = '<tr><td colspan="5" class="text-center text-muted py-3">No budget lines found for this period.</td></tr>';
             const netCls = data.totals.variance >= 0 ? 'text-success' : 'text-danger';
             const netSign = data.totals.variance >= 0 ? '+' : '';
+            const fyNote = data.fiscal_year === data.current_fiscal_year ? ' &bull; Current FY' : '';
+            const multiActive = (data.active_budgets || []).length > 1
+                ? ' &bull; ' + data.active_budgets.length + ' active budgets across fiscal years'
+                : '';
             return `
-                <div class="small text-muted mb-2">Generated ${data.generated} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}</div>
+                <div class="small text-muted mb-2">Generated ${data.generated} &bull; FY ${data.fiscal_year}${fyNote} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}${multiActive}</div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle mb-0">
                         <thead class="table-dark"><tr><th>Category</th><th class="text-end">Budget</th><th class="text-end">Actual</th><th class="text-end">Variance</th><th class="text-end">% Used</th></tr></thead>

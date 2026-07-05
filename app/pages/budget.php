@@ -5,6 +5,7 @@
         require_once __DIR__ . '/../config.php';
         $db = getDbConnection();
     }
+    require_once __DIR__ . '/../includes/budget_utils.php';
 
     if (isset($_GET['get_budget'])) {
         $id = (int)$_GET['get_budget'];
@@ -39,11 +40,17 @@
 
     if (isset($_GET['cycle_data'])) {
         header('Content-Type: application/json');
-        $active = $db->query("SELECT id, name, fiscal_year, start_date, end_date FROM budgets WHERE status = 'active' LIMIT 1")->fetch_assoc() ?: null;
+        $summary = budgetActiveSummary($db);
         $approved = [];
         $r = $db->query("SELECT id, name, fiscal_year, start_date, end_date, reference_number, approved_date FROM budgets WHERE status = 'approved' ORDER BY fiscal_year DESC, name");
-        while ($row = $r->fetch_assoc()) $approved[] = $row;
-        echo json_encode(['active' => $active, 'approved' => $approved]);
+        while ($row = $r->fetch_assoc()) {
+            $approved[] = $row;
+        }
+        echo json_encode([
+            'active' => $summary['active'],
+            'approved' => $approved,
+            'current_fiscal_year' => $summary['current_fiscal_year'],
+        ]);
         exit;
     }
 
@@ -105,6 +112,38 @@
             } else {
                 $pageFlash = ['message' => 'Only approved budgets allow note edits.', 'type' => 'warning'];
             }
+        } elseif ($action === 'close_budget') {
+            header('Content-Type: application/json');
+            $close_id = (int)($_POST['close_budget_id'] ?? 0);
+            $old_end = $_POST['old_end_date'] ?? null;
+
+            if ($close_id <= 0) {
+                echo json_encode(['error' => 'Select an active budget to close.']);
+                exit;
+            }
+
+            $chk = $db->prepare("SELECT id, status, end_date, name, fiscal_year FROM budgets WHERE id = ?");
+            $chk->bind_param('i', $close_id);
+            $chk->execute();
+            $close = $chk->get_result()->fetch_assoc();
+            $chk->close();
+
+            if (!$close || $close['status'] !== 'active') {
+                echo json_encode(['error' => 'Only an active budget can be closed.']);
+                exit;
+            }
+
+            $end = $old_end ?: $close['end_date'];
+            $stmt = $db->prepare("UPDATE budgets SET status = 'closed', end_date = ? WHERE id = ?");
+            $stmt->bind_param('si', $end, $close_id);
+            $stmt->execute();
+            $stmt->close();
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'FY ' . (int)$close['fiscal_year'] . ' budget "' . $close['name'] . '" closed.',
+            ]);
+            exit;
         } elseif ($action === 'cycle_budget') {
             header('Content-Type: application/json');
             $promote_id = (int)($_POST['promote_id'] ?? 0);
@@ -112,10 +151,10 @@
             $old_end = $_POST['old_end_date'] ?? null;
 
             if ($promote_id <= 0) {
-                echo json_encode(['error' => 'Select an Approved budget to promote.']);
+                echo json_encode(['error' => 'Select an Approved budget to activate.']);
                 exit;
             }
-            $chk = $db->prepare("SELECT id, status, start_date, reference_number, approved_date FROM budgets WHERE id = ?");
+            $chk = $db->prepare("SELECT id, status, start_date, fiscal_year, reference_number, approved_date, name FROM budgets WHERE id = ?");
             $chk->bind_param('i', $promote_id);
             $chk->execute();
             $promote = $chk->get_result()->fetch_assoc();
@@ -129,16 +168,11 @@
                 exit;
             }
 
-            $active = $db->query("SELECT id, end_date FROM budgets WHERE status = 'active' LIMIT 1")->fetch_assoc();
-            if ($active) {
-                $approved_count = (int)($db->query("SELECT COUNT(*) FROM budgets WHERE status = 'approved'")->fetch_row()[0] ?? 0);
-                if ($approved_count < 1) {
-                    echo json_encode(['error' => 'Cannot close the Active budget unless at least one Approved budget is available to promote.']);
-                    exit;
-                }
-                $end = $old_end ?: $active['end_date'];
+            $sameFyActive = budgetFetchActiveForYear($db, (int)$promote['fiscal_year']);
+            if ($sameFyActive) {
+                $end = $old_end ?: $sameFyActive['end_date'];
                 $stmt = $db->prepare("UPDATE budgets SET status = 'closed', end_date = ? WHERE id = ?");
-                $stmt->bind_param('si', $end, $active['id']);
+                $stmt->bind_param('si', $end, $sameFyActive['id']);
                 $stmt->execute();
                 $stmt->close();
             }
@@ -148,7 +182,15 @@
             $stmt->bind_param('si', $start, $promote_id);
             $stmt->execute();
             $stmt->close();
-            echo json_encode(['success' => true]);
+
+            $message = 'FY ' . (int)$promote['fiscal_year'] . ' budget "' . $promote['name'] . '" is now active.';
+            if ($sameFyActive) {
+                $message .= ' The prior active budget for FY ' . (int)$promote['fiscal_year'] . ' was closed.';
+            } else {
+                $message .= ' Other fiscal years with active budgets remain open for year-end entries.';
+            }
+
+            echo json_encode(['success' => true, 'message' => $message]);
             exit;
         } elseif ($action === 'save') {
             $id = (int)($_POST['budget_id'] ?? 0);
@@ -230,6 +272,9 @@
         $r = $db->query("SELECT id, name FROM $tbl WHERE archived = FALSE ORDER BY name");
         while ($row = $r->fetch_assoc()) $lookups[$k][] = $row;
     }
+    $budgetSummary = budgetActiveSummary($db);
+    $currentFiscalYear = $budgetSummary['current_fiscal_year'];
+    $activeBudgets = $budgetSummary['active'];
     $budgets = $db->query("SELECT id, fiscal_year, name, start_date, end_date, approved_date, reference_number, status, total_budgeted FROM budgets ORDER BY fiscal_year DESC, name");
 ?>
 
@@ -273,17 +318,50 @@
         min-width: 0;
         max-width: 100%;
     }
+    tr.budget-row-current-fy td {
+        background-color: rgba(var(--bs-primary-rgb), 0.06);
+    }
+    tr.budget-row-current-fy.table-primary td {
+        background-color: rgba(var(--bs-primary-rgb), 0.14);
+    }
+    .budget-active-list .budget-active-item + .budget-active-item {
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
+    }
 </style>
 
 <?php if (!empty($pageFlash)): ?>
 <script type="application/json" id="page-flash"><?= json_encode($pageFlash) ?></script>
 <?php endif; ?>
 <div class="container mt-4">
-    <h2 class="mb-4">Budget</h2>
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+            <h2 class="mb-1">Budget</h2>
+            <p class="text-muted small mb-0">Current fiscal year: <strong><?= $currentFiscalYear ?></strong>. Multiple budgets may be active across different fiscal years for year-end entries.</p>
+        </div>
+        <?php if (count($activeBudgets) > 0): ?>
+        <div class="small text-end">
+            <span class="text-muted">Active:</span>
+            <?php foreach ($activeBudgets as $ab): ?>
+                <span class="badge bg-success ms-1">FY <?= (int)$ab['fiscal_year'] ?><?= (int)$ab['fiscal_year'] === $currentFiscalYear ? ' · Current' : '' ?></span>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <?php if (count($activeBudgets) > 1): ?>
+    <div class="alert alert-info py-2 small mb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        <?= count($activeBudgets) ?> budgets are currently active
+        (<?= implode(', ', array_map(fn($b) => 'FY ' . (int)$b['fiscal_year'], $activeBudgets)) ?>).
+        Prior-year budgets stay open so January payments can be recorded against the correct fiscal year.
+    </div>
+    <?php endif; ?>
 
     <div class="row mb-3">
         <div class="col text-end">
-            <button type="button" id="cycleBtn" class="btn btn-outline-primary me-2"><i class="bi bi-arrow-repeat"></i> Cycle Budget</button>
+            <button type="button" id="cycleBtn" class="btn btn-outline-primary me-2"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
             <button id="addBtn" class="btn btn-primary me-2">New Budget</button>
             <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
         </div>
@@ -299,13 +377,22 @@
             <tbody id="budgetTableBody">
                 <?php if ($budgets && $budgets->num_rows > 0): ?>
                     <?php while ($b = $budgets->fetch_assoc()): ?>
-                        <tr data-id="<?= $b['id'] ?>" data-status="<?= htmlspecialchars($b['status']) ?>">
-                            <td><?= (int)$b['fiscal_year'] ?></td>
+                        <?php $isCurrentFy = ((int)$b['fiscal_year'] === $currentFiscalYear); ?>
+                        <tr data-id="<?= $b['id'] ?>" data-status="<?= htmlspecialchars($b['status']) ?>" data-fiscal-year="<?= (int)$b['fiscal_year'] ?>" class="<?= $isCurrentFy ? 'budget-row-current-fy' : '' ?>">
+                            <td>
+                                <?= (int)$b['fiscal_year'] ?>
+                                <?php if ($isCurrentFy): ?><span class="badge bg-primary ms-1">Current FY</span><?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($b['name']) ?></td>
                             <td><?= htmlspecialchars($b['start_date']) ?> – <?= htmlspecialchars($b['end_date']) ?></td>
                             <td><?= htmlspecialchars($b['approved_date'] ?? '—') ?></td>
                             <td><?= htmlspecialchars($b['reference_number'] ?? '') ?></td>
-                            <td><span class="badge bg-<?= $statusBadges[$b['status']] ?? 'secondary' ?>"><?= htmlspecialchars($b['status']) ?></span></td>
+                            <td>
+                                <span class="badge bg-<?= $statusBadges[$b['status']] ?? 'secondary' ?>"><?= htmlspecialchars($b['status']) ?></span>
+                                <?php if ($b['status'] === 'active'): ?>
+                                    <span class="badge bg-light text-dark border ms-1">FY <?= (int)$b['fiscal_year'] ?></span>
+                                <?php endif; ?>
+                            </td>
                             <td class="text-end">$<?= number_format((float)$b['total_budgeted'], 2) ?></td>
                         </tr>
                     <?php endwhile; ?>
@@ -415,21 +502,25 @@
     </div>
 </div>
 
-<!-- Cycle Budget Modal -->
+<!-- Activate / Close Budget Modal -->
 <div class="modal fade" id="cycleModal" tabindex="-1" aria-labelledby="cycleModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="cycleModalLabel">Cycle Budget</h5>
+                <h5 class="modal-title" id="cycleModalLabel">Activate / Close Budget</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <p class="small text-muted mb-3">
+                    Multiple budgets may be active at once across different fiscal years.
+                    Activating a budget only closes another active budget for the <strong>same</strong> fiscal year.
+                </p>
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Current Active Budget</label>
-                    <div id="cycleActiveInfo" class="p-2 bg-light rounded border text-muted">Loading…</div>
+                    <label class="form-label fw-semibold">Currently Active Budgets</label>
+                    <div id="cycleActiveInfo" class="p-2 bg-light rounded border text-muted budget-active-list">Loading…</div>
                 </div>
                 <div class="mb-3">
-                    <label for="cyclePromoteSelect" class="form-label fw-semibold">Promote to Active</label>
+                    <label for="cyclePromoteSelect" class="form-label fw-semibold">Activate Approved Budget</label>
                     <select class="form-select" id="cyclePromoteSelect">
                         <option value="">— Select Approved budget —</option>
                     </select>
@@ -442,15 +533,31 @@
                             <input type="date" class="form-control form-control-sm" id="cycleNewStart">
                         </div>
                         <div class="col-md-6" id="oldEndGroup">
-                            <label class="form-label small">Current active end date</label>
+                            <label class="form-label small">Same-FY active budget end date</label>
                             <input type="date" class="form-control form-control-sm" id="cycleOldEnd">
                         </div>
                     </div>
                 </div>
+                <hr>
+                <div class="mb-2">
+                    <label for="cycleCloseSelect" class="form-label fw-semibold">Close Active Budget (Year-End)</label>
+                    <select class="form-select" id="cycleCloseSelect">
+                        <option value="">— Select active budget to close —</option>
+                    </select>
+                    <div class="form-text">Close a prior-year budget when year-end entries are complete, without activating a new one.</div>
+                </div>
+                <div id="closeDateWarning" class="alert alert-warning d-none">
+                    <p class="mb-2 small" id="closeDateWarningText"></p>
+                    <label class="form-label small">Budget end date</label>
+                    <input type="date" class="form-control form-control-sm" id="cycleCloseEnd">
+                </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="cycleConfirmBtn" disabled>Activate Selected Budget</button>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-outline-warning" id="closeConfirmBtn" disabled>Close Selected Budget</button>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="cycleConfirmBtn" disabled>Activate Selected Budget</button>
+                </div>
             </div>
         </div>
     </div>
@@ -479,7 +586,7 @@
     let originalStatus = 'draft';
     let formMode = 'draft';
     let savedSnapshot = null;
-    let cycleData = { active: null, approved: [] };
+    let cycleData = { active: [], approved: [], current_fiscal_year: <?= (int)$currentFiscalYear ?> };
 
     function fmt(n) { return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
     function opts(list, val) {
@@ -678,6 +785,21 @@
         fetch(`pages/${page}.php?get_budget=${id}`).then(r => r.json()).then(b => { if (!b.error) populateForm(b); });
     }
 
+    function renderActiveBudgetList(activeList, currentFy) {
+        if (!activeList.length) {
+            return '<span class="text-muted">No active budgets</span>';
+        }
+        return activeList.map(b => {
+            const fyBadge = Number(b.fiscal_year) === Number(currentFy)
+                ? '<span class="badge bg-primary ms-1">Current FY</span>'
+                : '';
+            return `<div class="budget-active-item"><strong>${b.name}</strong> (FY ${b.fiscal_year})${fyBadge}<br><small class="text-muted">${b.start_date} – ${b.end_date}</small></div>`;
+        }).join('');
+    }
+    function findSameFyActive(promote) {
+        if (!promote) return null;
+        return (cycleData.active || []).find(b => Number(b.fiscal_year) === Number(promote.fiscal_year)) || null;
+    }
     function updateCycleDateWarning() {
         const sel = document.getElementById('cyclePromoteSelect');
         const promote = cycleData.approved.find(b => b.id == sel.value);
@@ -686,17 +808,43 @@
         const newStartGrp = document.getElementById('newStartGroup');
         const oldEndGrp = document.getElementById('oldEndGroup');
         if (!promote) { warn.classList.add('d-none'); return; }
+        const sameFyActive = findSameFyActive(promote);
         const msgs = [];
         const needNewStart = !withinOneWeek(promote.start_date);
-        const needOldEnd = cycleData.active && !withinOneWeek(cycleData.active.end_date);
+        const needOldEnd = sameFyActive && !withinOneWeek(sameFyActive.end_date);
         if (needNewStart) msgs.push('Today is not within one week of the selected budget\'s start date.');
-        if (needOldEnd) msgs.push('Today is not within one week of the current active budget\'s end date.');
+        if (needOldEnd) msgs.push(`Today is not within one week of the active FY ${sameFyActive.fiscal_year} budget's end date.`);
+        if (sameFyActive && !needOldEnd) {
+            msgs.push(`The active FY ${sameFyActive.fiscal_year} budget "${sameFyActive.name}" will be closed when this budget is activated.`);
+        }
         if (msgs.length) {
-            warnText.textContent = msgs.join(' ') + ' You may override the dates below:';
+            warnText.textContent = msgs.join(' ') + (needNewStart || needOldEnd ? ' You may override the dates below:' : '');
             document.getElementById('cycleNewStart').value = promote.start_date;
-            document.getElementById('cycleOldEnd').value = cycleData.active?.end_date || '';
+            document.getElementById('cycleOldEnd').value = sameFyActive?.end_date || '';
             newStartGrp.classList.toggle('d-none', !needNewStart);
             oldEndGrp.classList.toggle('d-none', !needOldEnd);
+            warn.classList.remove('d-none');
+        } else if (sameFyActive) {
+            warnText.textContent = `The active FY ${sameFyActive.fiscal_year} budget "${sameFyActive.name}" will be closed. Other fiscal years remain active.`;
+            warn.classList.remove('d-none');
+            newStartGrp.classList.add('d-none');
+            oldEndGrp.classList.add('d-none');
+        } else {
+            warn.classList.add('d-none');
+        }
+    }
+    function updateCloseDateWarning() {
+        const closeId = document.getElementById('cycleCloseSelect').value;
+        const closeBudget = (cycleData.active || []).find(b => b.id == closeId);
+        const warn = document.getElementById('closeDateWarning');
+        const warnText = document.getElementById('closeDateWarningText');
+        if (!closeBudget) {
+            warn.classList.add('d-none');
+            return;
+        }
+        if (!withinOneWeek(closeBudget.end_date)) {
+            warnText.textContent = `Today is not within one week of FY ${closeBudget.fiscal_year}'s scheduled end date. You may override it below:`;
+            document.getElementById('cycleCloseEnd').value = closeBudget.end_date;
             warn.classList.remove('d-none');
         } else {
             warn.classList.add('d-none');
@@ -706,26 +854,27 @@
         fetch(`pages/${page}.php?cycle_data=1`).then(r => r.json()).then(data => {
             cycleData = data;
             const activeEl = document.getElementById('cycleActiveInfo');
-            if (data.active) {
-                activeEl.innerHTML = `<strong>${data.active.name}</strong> (${data.active.fiscal_year})<br><small>${data.active.start_date} – ${data.active.end_date}</small>`;
-                activeEl.classList.remove('text-muted');
-            } else {
-                activeEl.textContent = 'No active budget';
-                activeEl.classList.add('text-muted');
-            }
+            activeEl.innerHTML = renderActiveBudgetList(data.active || [], data.current_fiscal_year);
+            activeEl.classList.toggle('text-muted', !(data.active || []).length);
+
             const sel = document.getElementById('cyclePromoteSelect');
             sel.innerHTML = '<option value="">— Select Approved budget —</option>';
-            data.approved.forEach(b => {
-                sel.innerHTML += `<option value="${b.id}" data-start="${b.start_date}">${b.name} (${b.fiscal_year})</option>`;
+            (data.approved || []).forEach(b => {
+                const currentTag = Number(b.fiscal_year) === Number(data.current_fiscal_year) ? ' · Current FY' : '';
+                sel.innerHTML += `<option value="${b.id}" data-start="${b.start_date}">${b.name} (FY ${b.fiscal_year}${currentTag})</option>`;
             });
-            const confirmBtn = document.getElementById('cycleConfirmBtn');
-            if (data.active && data.approved.length === 0) {
-                showToast('Cannot close the Active budget unless at least one Approved budget is available to promote.', 'warning');
-                confirmBtn.disabled = true;
-            } else {
-                confirmBtn.disabled = data.approved.length === 0;
-            }
+
+            const closeSel = document.getElementById('cycleCloseSelect');
+            closeSel.innerHTML = '<option value="">— Select active budget to close —</option>';
+            (data.active || []).forEach(b => {
+                const currentTag = Number(b.fiscal_year) === Number(data.current_fiscal_year) ? ' · Current FY' : '';
+                closeSel.innerHTML += `<option value="${b.id}">${b.name} (FY ${b.fiscal_year}${currentTag})</option>`;
+            });
+
+            document.getElementById('cycleConfirmBtn').disabled = !(data.approved || []).length;
+            document.getElementById('closeConfirmBtn').disabled = !(data.active || []).length;
             document.getElementById('cycleDateWarning').classList.add('d-none');
+            document.getElementById('closeDateWarning').classList.add('d-none');
             cycleModal.show();
         });
     }
@@ -766,6 +915,10 @@
         document.getElementById('cycleConfirmBtn').disabled = !document.getElementById('cyclePromoteSelect').value;
         updateCycleDateWarning();
     });
+    document.getElementById('cycleCloseSelect').addEventListener('change', () => {
+        document.getElementById('closeConfirmBtn').disabled = !document.getElementById('cycleCloseSelect').value;
+        updateCloseDateWarning();
+    });
     document.getElementById('cycleConfirmBtn').addEventListener('click', () => {
         const promoteId = document.getElementById('cyclePromoteSelect').value;
         if (!promoteId) return;
@@ -784,9 +937,10 @@
             if (!document.getElementById('oldEndGroup').classList.contains('d-none'))
                 fd.append('old_end_date', document.getElementById('cycleOldEnd').value);
         }
-        const msg = cycleData.active
-            ? `Close "${cycleData.active.name}" and activate "${promote.name}"?`
-            : `Activate "${promote.name}" as the active budget?`;
+        const sameFyActive = findSameFyActive(promote);
+        const msg = sameFyActive
+            ? `Close FY ${sameFyActive.fiscal_year} budget "${sameFyActive.name}" and activate FY ${promote.fiscal_year} budget "${promote.name}"?`
+            : `Activate FY ${promote.fiscal_year} budget "${promote.name}"? Other active fiscal years will remain open.`;
         if (!confirm(msg)) return;
         fetch(`pages/${page}.php`, { method: 'POST', body: fd })
             .then(r => r.json())
@@ -795,11 +949,37 @@
                     showToast(res.error, 'danger');
                 } else {
                     cycleModal.hide();
-                    showToast('Budget cycle completed successfully.', 'success');
+                    showToast(res.message || 'Budget activated successfully.', 'success');
                     reload();
                 }
             })
-            .catch(() => showToast('Budget cycle failed. Please try again.', 'danger'));
+            .catch(() => showToast('Budget activation failed. Please try again.', 'danger'));
+    });
+    document.getElementById('closeConfirmBtn').addEventListener('click', () => {
+        const closeId = document.getElementById('cycleCloseSelect').value;
+        if (!closeId) return;
+        const closeBudget = (cycleData.active || []).find(b => b.id == closeId);
+        if (!closeBudget) return;
+        const fd = new FormData();
+        fd.append('action', 'close_budget');
+        fd.append('close_budget_id', closeId);
+        const closeWarn = document.getElementById('closeDateWarning');
+        if (!closeWarn.classList.contains('d-none')) {
+            fd.append('old_end_date', document.getElementById('cycleCloseEnd').value);
+        }
+        if (!confirm(`Close FY ${closeBudget.fiscal_year} budget "${closeBudget.name}"? This does not affect other active fiscal years.`)) return;
+        fetch(`pages/${page}.php`, { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.error) {
+                    showToast(res.error, 'danger');
+                } else {
+                    cycleModal.hide();
+                    showToast(res.message || 'Budget closed successfully.', 'success');
+                    reload();
+                }
+            })
+            .catch(() => showToast('Budget close failed. Please try again.', 'danger'));
     });
 
     addLineBtn.addEventListener('click', () => addLine({}, 'draft'));
