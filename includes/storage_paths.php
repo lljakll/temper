@@ -182,6 +182,10 @@ function getLogsDir(): string {
     return ensureStorageSubdir('logs')['path'];
 }
 
+function getWorkflowDocumentsDir(): string {
+    return ensureStorageSubdir('workflow_documents')['path'];
+}
+
 function describeFileOperationFailure(string $operation, string $path): string {
     $err = error_get_last();
     $detail = is_array($err) ? ($err['message'] ?? '') : '';

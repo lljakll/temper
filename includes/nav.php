@@ -11,6 +11,9 @@ if (!isLoggedIn()) {
 
 // Get current user info
 $user = getCurrentUser();
+$db = getDbConnection();
+$tellerLimited = $user ? isTellerLimitedUser($db, (int)$user['id']) : false;
+$db->close();
 ?>
 
 <div class="row g-2">
@@ -23,6 +26,7 @@ $user = getCurrentUser();
         </div>
 
         <ul class="nav flex-column">
+            <?php if (!$tellerLimited): ?>
             <li class="nav-item">
                 <a href="javascript:void(0)" onclick="loadPage('dashboard')" class="nav-link text-white">
                     <i class="bi bi-speedometer2"></i> Dashboard
@@ -43,6 +47,13 @@ $user = getCurrentUser();
                     <i class="bi bi-graph-up"></i> Budget
                 </a>
             </li>
+            <?php endif; ?>
+            <li class="nav-item">
+                <a href="javascript:void(0)" onclick="loadPage('workflows')" class="nav-link text-white">
+                    <i class="bi bi-diagram-3"></i> Workflows
+                </a>
+            </li>
+            <?php if (!$tellerLimited): ?>
             <li class="nav-item">
                 <a href="javascript:void(0)" onclick="loadPage('tasks')" class="nav-link text-white">
                     <i class="bi bi-check2-square"></i> Tasks / Reminders
@@ -103,6 +114,7 @@ $user = getCurrentUser();
                     </ul>
                 </div>
             </li>
+            <?php endif; ?>
         </ul>
 
         <!-- Bottom: footer note + user info + logout -->

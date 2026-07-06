@@ -12,6 +12,10 @@ echo "Dropping existing tables...\n";
 $db->query("SET FOREIGN_KEY_CHECKS = 0;");
 
 $drop_queries = [
+    "DROP TABLE IF EXISTS workflow_events;",
+    "DROP TABLE IF EXISTS workflow_documents;",
+    "DROP TABLE IF EXISTS workflow_steps;",
+    "DROP TABLE IF EXISTS workflow_instances;",
     "DROP TABLE IF EXISTS transaction_lines;",
     "DROP TABLE IF EXISTS tasks;",
     "DROP TABLE IF EXISTS budget_lines;",
@@ -42,7 +46,8 @@ $files = [
     'setup-database/04-transactions.php',
     'setup-database/05-budgeting.php',
     'setup-database/06-users-roles.php',
-    'setup-database/07-tasks.php'
+    'setup-database/07-tasks.php',
+    'setup-database/08-workflows.php'
 ];
 
 foreach ($files as $file) {
