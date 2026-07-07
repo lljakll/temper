@@ -1,34 +1,22 @@
 <?php
 // Safety: This file should only be executed from the master setup_db.php
-if (!defined('RUNNING_FROM_MASTER_SETUP')) {
+if (!defined('RUNNING_FROM_MASTER_SETUP') && !defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
     die("❌ ERROR: This script should only be run from setup_db.php\n");
 }
 
-// Require config file to get database connection details
-require_once 'config.php';
-
-// Get database connection
-$db = getDbConnection();
-
-// Create roles table
-$roles_table = "CREATE TABLE IF NOT EXISTS roles (
+function setupSchemaUsersRoles(): array
+{
+    return [
+        'tables' => [
+            'roles' => "CREATE TABLE IF NOT EXISTS roles (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE,
     description TEXT,
     permissions JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)";
-
-if ($db->query($roles_table) === TRUE) {
-    echo "Table 'roles' created successfully\n";
-} else {
-    echo "Error creating table 'roles': " . $db->error . "\n";
-    exit(1);
-}
-
-// Create users table
-$users_table = "CREATE TABLE IF NOT EXISTS users (
+)",
+            'users' => "CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     role_id INT NOT NULL,
     username VARCHAR(50) NOT NULL UNIQUE,
@@ -41,9 +29,31 @@ $users_table = "CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
-)";
+)",
+        ],
+    ];
+}
 
-if ($db->query($users_table) === TRUE) {
+if (defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
+    return;
+}
+
+// Require config file to get database connection details
+require_once 'config.php';
+
+// Get database connection
+$db = getDbConnection();
+
+$schema = setupSchemaUsersRoles()['tables'];
+
+if ($db->query($schema['roles']) === TRUE) {
+    echo "Table 'roles' created successfully\n";
+} else {
+    echo "Error creating table 'roles': " . $db->error . "\n";
+    exit(1);
+}
+
+if ($db->query($schema['users']) === TRUE) {
     echo "Table 'users' created successfully\n";
 } else {
     echo "Error creating table 'users': " . $db->error . "\n";
@@ -70,9 +80,9 @@ if ($db->query($roles) === TRUE) {
 
 // Insert seed data: Users
 $users = "INSERT INTO users (role_id, username, first_name, last_name, email, password, is_active) VALUES 
-    (1, 'admin', 'Admin', 'User', 'admin@church.org', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE),
-    (2, 'finance', 'Finance', 'Manager', 'finance@church.org', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE),
-    (3, 'member', 'Regular', 'Member', 'member@church.org', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE)";
+    (1, 'admin', 'Admin', 'User', 'admin@church.org', '\$2y\$12\$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE),
+    (2, 'finance', 'Finance', 'Manager', 'finance@church.org', '\$2y\$12\$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE),
+    (3, 'member', 'Regular', 'Member', 'member@church.org', '\$2y\$12\$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute', TRUE)";
 
 if ($db->query($users) === TRUE) {
     echo "Seed data for 'users' inserted successfully\n";

@@ -1,17 +1,14 @@
 <?php
 // Safety: This file should only be executed from the master setup_db.php
-if (!defined('RUNNING_FROM_MASTER_SETUP')) {
+if (!defined('RUNNING_FROM_MASTER_SETUP') && !defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
     die("❌ ERROR: This script should only be run from setup_db.php\n");
 }
 
-// Require config file to get database connection details
-require_once 'config.php';
-
-// Get database connection
-$db = getDbConnection();
-
-// Create funds table
-$funds_table = "CREATE TABLE IF NOT EXISTS funds (
+function setupSchemaFunds(): array
+{
+    return [
+        'tables' => [
+            'funds' => "CREATE TABLE IF NOT EXISTS funds (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     code VARCHAR(50) UNIQUE NULL,
@@ -25,7 +22,22 @@ $funds_table = "CREATE TABLE IF NOT EXISTS funds (
     archived_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)";
+)",
+        ],
+    ];
+}
+
+if (defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
+    return;
+}
+
+// Require config file to get database connection details
+require_once 'config.php';
+
+// Get database connection
+$db = getDbConnection();
+
+$funds_table = setupSchemaFunds()['tables']['funds'];
 
 if ($db->query($funds_table) === TRUE) {
     echo "Table 'funds' created successfully\n";

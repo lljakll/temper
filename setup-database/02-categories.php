@@ -1,7 +1,35 @@
 <?php
 // Safety: This file should only be executed from the master setup_db.php
-if (!defined('RUNNING_FROM_MASTER_SETUP')) {
+if (!defined('RUNNING_FROM_MASTER_SETUP') && !defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
     die("❌ ERROR: This script should only be run from setup_db.php\n");
+}
+
+function setupSchemaCategories(): array
+{
+    return [
+        'tables' => [
+            'natural_categories' => "CREATE TABLE IF NOT EXISTS natural_categories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    archived_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+            'functional_categories' => "CREATE TABLE IF NOT EXISTS functional_categories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    archived BOOLEAN DEFAULT FALSE,
+    archived_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+        ],
+    ];
+}
+
+if (defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
+    return;
 }
 
 // Require config file to get database connection details
@@ -10,34 +38,16 @@ require_once 'config.php';
 // Get database connection
 $db = getDbConnection();
 
-// Create natural_categories table
-$natural_categories_table = "CREATE TABLE IF NOT EXISTS natural_categories (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    archived BOOLEAN DEFAULT FALSE,
-    archived_at DATETIME NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)";
+$schema = setupSchemaCategories()['tables'];
 
-if ($db->query($natural_categories_table) === TRUE) {
+if ($db->query($schema['natural_categories']) === TRUE) {
     echo "Table 'natural_categories' created successfully\n";
 } else {
     echo "Error creating table 'natural_categories': " . $db->error . "\n";
     exit(1);
 }
 
-// Create functional_categories table
-$functional_categories_table = "CREATE TABLE IF NOT EXISTS functional_categories (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    archived BOOLEAN DEFAULT FALSE,
-    archived_at DATETIME NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)";
-
-if ($db->query($functional_categories_table) === TRUE) {
+if ($db->query($schema['functional_categories']) === TRUE) {
     echo "Table 'functional_categories' created successfully\n";
 } else {
     echo "Error creating table 'functional_categories': " . $db->error . "\n";

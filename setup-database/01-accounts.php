@@ -1,17 +1,14 @@
 <?php
 // Safety: This file should only be executed from the master setup_db.php
-if (!defined('RUNNING_FROM_MASTER_SETUP')) {
+if (!defined('RUNNING_FROM_MASTER_SETUP') && !defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
     die("❌ ERROR: This script should only be run from setup_db.php\n");
 }
 
-// Require config file to get database connection details
-require_once 'config.php';
-
-// Get database connection
-$db = getDbConnection();
-
-// Create accounts table
-$accounts_table = "CREATE TABLE IF NOT EXISTS accounts (
+function setupSchemaAccounts(): array
+{
+    return [
+        'tables' => [
+            'accounts' => "CREATE TABLE IF NOT EXISTS accounts (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     description TEXT,
@@ -20,7 +17,22 @@ $accounts_table = "CREATE TABLE IF NOT EXISTS accounts (
     archived_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     mutable_fund BOOLEAN DEFAULT TRUE
-)";
+)",
+        ],
+    ];
+}
+
+if (defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
+    return;
+}
+
+// Require config file to get database connection details
+require_once 'config.php';
+
+// Get database connection
+$db = getDbConnection();
+
+$accounts_table = setupSchemaAccounts()['tables']['accounts'];
 
 if ($db->query($accounts_table) === TRUE) {
     echo "Table 'accounts' created successfully\n";

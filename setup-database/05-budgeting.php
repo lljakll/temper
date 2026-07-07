@@ -1,17 +1,14 @@
 <?php
 // Safety: This file should only be executed from the master setup_db.php
-if (!defined('RUNNING_FROM_MASTER_SETUP')) {
+if (!defined('RUNNING_FROM_MASTER_SETUP') && !defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
     die("❌ ERROR: This script should only be run from setup_db.php\n");
 }
 
-// Require config file to get database connection details
-require_once 'config.php';
-
-// Get database connection
-$db = getDbConnection();
-
-// Create budgets table
-$budgets_table = "CREATE TABLE IF NOT EXISTS budgets (
+function setupSchemaBudgeting(): array
+{
+    return [
+        'tables' => [
+            'budgets' => "CREATE TABLE IF NOT EXISTS budgets (
     id INT AUTO_INCREMENT PRIMARY KEY,
     fiscal_year INT NOT NULL,
     name VARCHAR(100) NOT NULL,
@@ -24,17 +21,8 @@ $budgets_table = "CREATE TABLE IF NOT EXISTS budgets (
     description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)";
-
-if ($db->query($budgets_table) === TRUE) {
-    echo "Table 'budgets' created successfully\n";
-} else {
-    echo "Error creating table 'budgets': " . $db->error . "\n";
-    exit(1);
-}
-
-// Create budget_lines table
-$budget_lines_table = "CREATE TABLE IF NOT EXISTS budget_lines (
+)",
+            'budget_lines' => "CREATE TABLE IF NOT EXISTS budget_lines (
     id INT AUTO_INCREMENT PRIMARY KEY,
     budget_id INT NOT NULL,
     natural_category_id INT NULL,
@@ -48,9 +36,31 @@ $budget_lines_table = "CREATE TABLE IF NOT EXISTS budget_lines (
     FOREIGN KEY (natural_category_id) REFERENCES natural_categories(id) ON DELETE SET NULL,
     FOREIGN KEY (functional_category_id) REFERENCES functional_categories(id) ON DELETE SET NULL,
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
-)";
+)",
+        ],
+    ];
+}
 
-if ($db->query($budget_lines_table) === TRUE) {
+if (defined('SETUP_DB_COLLECT_SCHEMA_ONLY')) {
+    return;
+}
+
+// Require config file to get database connection details
+require_once 'config.php';
+
+// Get database connection
+$db = getDbConnection();
+
+$schema = setupSchemaBudgeting()['tables'];
+
+if ($db->query($schema['budgets']) === TRUE) {
+    echo "Table 'budgets' created successfully\n";
+} else {
+    echo "Error creating table 'budgets': " . $db->error . "\n";
+    exit(1);
+}
+
+if ($db->query($schema['budget_lines']) === TRUE) {
     echo "Table 'budget_lines' created successfully\n";
 } else {
     echo "Error creating table 'budget_lines': " . $db->error . "\n";

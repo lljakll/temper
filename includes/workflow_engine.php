@@ -9,70 +9,40 @@ require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/audit.php';
 require_once __DIR__ . '/storage_paths.php';
 
-function workflowEnsureTables(mysqli $db): void {
-    $db->query("CREATE TABLE IF NOT EXISTS workflow_instances (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        workflow_type VARCHAR(50) NOT NULL,
-        title VARCHAR(200) NOT NULL,
-        status VARCHAR(80) NOT NULL,
-        current_step VARCHAR(80) NOT NULL,
-        created_by_user_id INT NOT NULL,
-        payload JSON NOT NULL,
-        transaction_detail_id INT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_workflow_type (workflow_type),
-        INDEX idx_workflow_status (status),
-        INDEX idx_workflow_created_by (created_by_user_id)
-    )");
+/**
+ * Verify workflow tables exist. Does not create or modify schema —
+ * run setup_db.php to initialize the database.
+ */
+function workflowRequireTables(mysqli $db): void {
+    static $verified = false;
+    if ($verified) {
+        return;
+    }
 
-    $db->query("CREATE TABLE IF NOT EXISTS workflow_steps (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        workflow_instance_id INT NOT NULL,
-        step_key VARCHAR(80) NOT NULL,
-        step_order INT NOT NULL DEFAULT 0,
-        status ENUM('pending','completed','rejected') NOT NULL DEFAULT 'pending',
-        required_role VARCHAR(50) NULL,
-        completed_by_user_id INT NULL,
-        completed_at DATETIME NULL,
-        signature_username VARCHAR(50) NULL,
-        notes TEXT NULL,
-        payload JSON NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE,
-        INDEX idx_workflow_steps_instance (workflow_instance_id),
-        INDEX idx_workflow_steps_key (step_key)
-    )");
+    $required = [
+        'workflow_instances',
+        'workflow_steps',
+        'workflow_documents',
+        'workflow_events',
+    ];
 
-    $db->query("CREATE TABLE IF NOT EXISTS workflow_documents (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        workflow_instance_id INT NOT NULL,
-        workflow_step_id INT NULL,
-        stored_filename VARCHAR(255) NOT NULL,
-        original_filename VARCHAR(255) NOT NULL,
-        mime_type VARCHAR(120) NULL,
-        file_size INT NOT NULL DEFAULT 0,
-        uploaded_by_user_id INT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE,
-        INDEX idx_workflow_documents_instance (workflow_instance_id)
-    )");
+    $missing = [];
+    foreach ($required as $table) {
+        $escaped = $db->real_escape_string($table);
+        $result = $db->query("SHOW TABLES LIKE '{$escaped}'");
+        if ($result === false || $result->num_rows === 0) {
+            $missing[] = $table;
+        }
+    }
 
-    $db->query("CREATE TABLE IF NOT EXISTS workflow_events (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        workflow_instance_id INT NOT NULL,
-        workflow_step_id INT NULL,
-        event_type VARCHAR(80) NOT NULL,
-        user_id INT NULL,
-        username VARCHAR(50) NOT NULL,
-        summary VARCHAR(255) NOT NULL,
-        details JSON NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE,
-        INDEX idx_workflow_events_instance (workflow_instance_id),
-        INDEX idx_workflow_events_type (event_type)
-    )");
+    if ($missing !== []) {
+        throw new RuntimeException(
+            'Workflow tables are not initialized (missing: ' . implode(', ', $missing) . '). '
+            . 'Run: php setup_db.php or php setup_db.php --check-only'
+        );
+    }
+
+    $verified = true;
 }
 
 function workflowLogEvent(
@@ -85,7 +55,7 @@ function workflowLogEvent(
     string $summary,
     array $details = []
 ): void {
-    workflowEnsureTables($db);
+    workflowRequireTables($db);
     $json = $details ? json_encode($details) : null;
     $stmt = $db->prepare(
         'INSERT INTO workflow_events (workflow_instance_id, workflow_step_id, event_type, user_id, username, summary, details)
@@ -115,7 +85,7 @@ function workflowCreateInstance(
     array $stepDefs,
     array $actor
 ): int {
-    workflowEnsureTables($db);
+    workflowRequireTables($db);
     $payloadJson = json_encode($payload);
     $stmt = $db->prepare(
         'INSERT INTO workflow_instances (workflow_type, title, status, current_step, created_by_user_id, payload)
@@ -155,7 +125,7 @@ function workflowCreateInstance(
 }
 
 function workflowFetchInstance(mysqli $db, int $instanceId): ?array {
-    workflowEnsureTables($db);
+    workflowRequireTables($db);
     $stmt = $db->prepare('SELECT * FROM workflow_instances WHERE id = ?');
     $stmt->bind_param('i', $instanceId);
     $stmt->execute();
@@ -311,7 +281,7 @@ function workflowStoreDocument(
 }
 
 function workflowListInstances(mysqli $db, ?string $type = null, int $limit = 100): array {
-    workflowEnsureTables($db);
+    workflowRequireTables($db);
     $rows = [];
     if ($type) {
         $stmt = $db->prepare(

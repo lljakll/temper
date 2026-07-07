@@ -6,7 +6,7 @@
     require_once __DIR__ . '/../includes/workflow_engine.php';
     require_once __DIR__ . '/../includes/workflows/contribution_workflow.php';
 
-    workflowEnsureTables($db);
+    workflowRequireTables($db);
 
     $actor = getCurrentUserWithRole($db);
     if (!$actor) {
