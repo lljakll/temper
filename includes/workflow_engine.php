@@ -38,7 +38,7 @@ function workflowRequireTables(mysqli $db): void {
     if ($missing !== []) {
         throw new RuntimeException(
             'Workflow tables are not initialized (missing: ' . implode(', ', $missing) . '). '
-            . 'Run: php setup_db.php or php setup_db.php --check-only'
+            . 'Run: php setup_db.php or php setup_db.php --check'
         );
     }
 

@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Database schema validator for setup_db.php --check-only mode.
+ * Database schema validator for setup_db.php --check mode.
  * Compares live database structure against CREATE TABLE definitions
  * from setup-database/*.php files.
  */
@@ -10,12 +10,17 @@ class DbSchemaValidator
 {
     private mysqli $db;
     private string $databaseName;
+    private bool $verbose;
     /** @var list<array{type: string, message: string, fix?: string}> */
     private array $issues = [];
+    private int $tablesChecked = 0;
+    private int $columnsChecked = 0;
+    private int $foreignKeysChecked = 0;
 
-    public function __construct(mysqli $db)
+    public function __construct(mysqli $db, bool $verbose = false)
     {
         $this->db = $db;
+        $this->verbose = $verbose;
         $this->databaseName = $db->query('SELECT DATABASE()')->fetch_row()[0] ?? '';
     }
 
@@ -35,6 +40,10 @@ class DbSchemaValidator
      */
     public function validateAll(array $tables): void
     {
+        if ($this->verbose) {
+            echo "\n";
+        }
+
         $this->validateDatabaseAccessible();
 
         if ($this->hasIssues()) {
@@ -43,9 +52,14 @@ class DbSchemaValidator
 
         $this->validatePermissions();
 
+        if ($this->verbose) {
+            echo "\nTables (" . count($tables) . " expected)\n";
+        }
+
         foreach ($tables as $tableName => $createSql) {
             $this->validateTable($tableName, $createSql);
             $this->validateForeignKeys($tableName, $createSql);
+            $this->tablesChecked++;
         }
     }
 
@@ -68,7 +82,10 @@ class DbSchemaValidator
         $result = $this->db->query('SELECT 1');
         if ($result === false) {
             $this->addIssue('database', 'Database exists but is not queryable: ' . $this->db->error);
+            return;
         }
+
+        $this->logVerbose('Connection', "Database '{$this->databaseName}' is accessible");
     }
 
     private function validatePermissions(): void
@@ -90,6 +107,8 @@ class DbSchemaValidator
                 );
                 return;
             }
+
+            $this->logVerbose('Permissions (user: ' . DB_USER . ')', $permission);
         }
     }
 
@@ -108,7 +127,15 @@ class DbSchemaValidator
                 "Required table '{$tableName}' does not exist.",
                 rtrim($fixSql) . ';'
             );
+            if ($this->verbose) {
+                echo "  ✗ {$tableName} — missing\n";
+            }
             return;
+        }
+
+        if ($this->verbose) {
+            echo "  {$tableName}\n";
+            echo "    ✓ table exists\n";
         }
 
         $expectedColumns = $this->parseColumnsFromCreateSql($createSql);
@@ -121,6 +148,9 @@ class DbSchemaValidator
                     "Table '{$tableName}' is missing required column '{$columnName}'.",
                     "ALTER TABLE `{$tableName}` ADD COLUMN {$expected['definition']};"
                 );
+                if ($this->verbose) {
+                    echo "    ✗ column {$columnName} — missing\n";
+                }
                 continue;
             }
 
@@ -150,7 +180,16 @@ class DbSchemaValidator
                     "Table '{$tableName}' column '{$columnName}' mismatch: " . implode('; ', $details) . '.',
                     "ALTER TABLE `{$tableName}` MODIFY COLUMN {$expected['definition']};"
                 );
+                if ($this->verbose) {
+                    echo "    ✗ column {$columnName} — " . implode('; ', $details) . "\n";
+                }
+            } elseif ($this->verbose) {
+                $nullLabel = $actual['is_nullable'] ? 'NULL' : 'NOT NULL';
+                $extra = $actual['extra_has_auto_increment'] ? ', AUTO_INCREMENT' : '';
+                echo "    ✓ column {$columnName} ({$actual['column_type']}, {$nullLabel}{$extra})\n";
             }
+
+            $this->columnsChecked++;
         }
     }
 
@@ -167,6 +206,14 @@ class DbSchemaValidator
         }
 
         $expected = $this->parseForeignKeysFromCreateSql($createSql);
+        if ($expected === [] && !$this->verbose) {
+            return;
+        }
+
+        if ($this->verbose && $expected !== []) {
+            echo "    Foreign keys\n";
+        }
+
         $actual = $this->fetchActualForeignKeys($tableName);
 
         foreach ($expected as $fk) {
@@ -190,6 +237,9 @@ class DbSchemaValidator
                     "ALTER TABLE `{$tableName}` ADD CONSTRAINT `{$constraint}` "
                     . "FOREIGN KEY (`{$fk['column']}`) REFERENCES `{$fk['ref_table']}`(`{$fk['ref_column']}`){$onDelete};"
                 );
+                if ($this->verbose) {
+                    echo "    ✗ {$fk['column']} -> {$fk['ref_table']}({$fk['ref_column']}) — missing\n";
+                }
                 continue;
             }
 
@@ -203,7 +253,16 @@ class DbSchemaValidator
                     . "FOREIGN KEY (`{$fk['column']}`) REFERENCES `{$fk['ref_table']}`(`{$fk['ref_column']}`) "
                     . "ON DELETE {$fk['on_delete']};"
                 );
+                if ($this->verbose) {
+                    echo "    ✗ {$fk['column']} -> {$fk['ref_table']}({$fk['ref_column']}) "
+                        . "ON DELETE {$match['on_delete']} (expected {$fk['on_delete']})\n";
+                }
+            } elseif ($this->verbose) {
+                $onDeleteLabel = $fk['on_delete'] !== 'RESTRICT' ? " ON DELETE {$fk['on_delete']}" : '';
+                echo "    ✓ {$fk['column']} -> {$fk['ref_table']}({$fk['ref_column']}){$onDeleteLabel}\n";
             }
+
+            $this->foreignKeysChecked++;
         }
     }
 
@@ -514,15 +573,40 @@ class DbSchemaValidator
         $this->issues[] = $issue;
     }
 
-    public function printReport(): int
+    private function logVerbose(string $section, string $message): void
+    {
+        if (!$this->verbose) {
+            return;
+        }
+
+        static $lastSection = '';
+        if ($section !== $lastSection) {
+            if ($lastSection !== '') {
+                echo "\n";
+            }
+            echo "{$section}\n";
+            $lastSection = $section;
+        }
+
+        echo "  ✓ {$message}\n";
+    }
+
+    public function printReport(bool $verbose = false): int
     {
         if (!$this->hasIssues()) {
             echo "\n=== Summary ===\n";
+            if ($verbose) {
+                echo "Checked {$this->tablesChecked} tables, {$this->columnsChecked} columns, "
+                    . "{$this->foreignKeysChecked} foreign keys — all OK\n";
+            }
             echo "Database is ready\n";
             return 0;
         }
 
-        echo "\n=== Issues Found ===\n";
+        if (!$verbose) {
+            echo "\n=== Issues Found ===\n";
+        }
+
         foreach ($this->issues as $index => $issue) {
             $num = $index + 1;
             echo "{$num}. [{$issue['type']}] {$issue['message']}\n";
