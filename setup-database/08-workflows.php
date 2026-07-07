@@ -36,18 +36,6 @@ function setupSchemaWorkflows(): array
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE
 )",
-            'workflow_documents' => "CREATE TABLE IF NOT EXISTS workflow_documents (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    workflow_instance_id INT NOT NULL,
-    workflow_step_id INT NULL,
-    stored_filename VARCHAR(255) NOT NULL,
-    original_filename VARCHAR(255) NOT NULL,
-    mime_type VARCHAR(120) NULL,
-    file_size INT NOT NULL DEFAULT 0,
-    uploaded_by_user_id INT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE
-)",
             'workflow_events' => "CREATE TABLE IF NOT EXISTS workflow_events (
     id INT AUTO_INCREMENT PRIMARY KEY,
     workflow_instance_id INT NOT NULL,
@@ -87,7 +75,6 @@ $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_status ON workflow_instances
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_created_by ON workflow_instances(created_by_user_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_steps_instance ON workflow_steps(workflow_instance_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_steps_key ON workflow_steps(step_key)");
-$db->query("CREATE INDEX IF NOT EXISTS idx_workflow_documents_instance ON workflow_documents(workflow_instance_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_events_instance ON workflow_events(workflow_instance_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_events_type ON workflow_events(event_type)");
 

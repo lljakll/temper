@@ -182,8 +182,13 @@ function getLogsDir(): string {
     return ensureStorageSubdir('logs')['path'];
 }
 
+function getTransactionDocumentsDir(): string {
+    return ensureStorageSubdir('transaction_documents')['path'];
+}
+
+/** @deprecated Use getTransactionDocumentsDir() */
 function getWorkflowDocumentsDir(): string {
-    return ensureStorageSubdir('workflow_documents')['path'];
+    return getTransactionDocumentsDir();
 }
 
 function describeFileOperationFailure(string $operation, string $path): string {

@@ -5,9 +5,31 @@
         require_once __DIR__ . '/../config.php';
         $db = getDbConnection();
     }
+    require_once __DIR__ . '/../includes/ledger_engine.php';
 
     $success = null;
     $error = null;
+
+    if (isset($_GET['download_document'])) {
+        $docId = (int)$_GET['download_document'];
+        $doc = ledgerFetchDocument($db, $docId);
+        if (!$doc) {
+            http_response_code(404);
+            echo 'Document not found.';
+            exit;
+        }
+        $path = ledgerResolveDocumentPath((int)$doc['transaction_detail_id'], $doc['stored_filename']);
+        if (!$path) {
+            http_response_code(404);
+            echo 'File not found.';
+            exit;
+        }
+        header('Content-Type: ' . ($doc['mime_type'] ?: 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . basename($doc['original_filename']) . '"');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        exit;
+    }
 
     // JSON data endpoint for edit (fetched by JS, does not render HTML)
     if (isset($_GET['get_transaction'])) {
@@ -17,17 +39,12 @@
             echo json_encode(['error' => 'Invalid ID']);
             exit;
         }
-        $stmt = $db->prepare("SELECT id, transaction_date, pay_to, reference_number, check_number, memo, status, cleared_date FROM transaction_details WHERE id = ?");
-        $stmt->bind_param('i', $id);
-        $stmt->execute();
-        $det = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $det = ledgerFetchTransaction($db, $id);
         if (!$det) {
             header('Content-Type: application/json');
             echo json_encode(['error' => 'Transaction not found']);
             exit;
         }
-        // Split combined memo back into description | memo for the form if applicable
         $fullMemo = $det['memo'] ?? '';
         if (strpos($fullMemo, ' | ') !== false) {
             list($det['description'], $det['memo']) = explode(' | ', $fullMemo, 2);
@@ -35,13 +52,8 @@
             $det['description'] = '';
             $det['memo'] = $fullMemo;
         }
-        // Load lines
-        $lst = $db->prepare("SELECT account_id, fund_id, amount, natural_category_id, functional_category_id FROM transaction_lines WHERE transaction_detail_id = ? ORDER BY id ASC");
-        $lst->bind_param('i', $id);
-        $lst->execute();
         $lines = [];
-        $res = $lst->get_result();
-        while ($l = $res->fetch_assoc()) {
+        foreach ($det['lines'] as $l) {
             $lines[] = [
                 'account_id' => (int)$l['account_id'],
                 'fund_id' => $l['fund_id'] !== null ? (int)$l['fund_id'] : '',
@@ -50,7 +62,6 @@
                 'functional_category_id' => $l['functional_category_id'] !== null ? (int)$l['functional_category_id'] : ''
             ];
         }
-        $lst->close();
         $det['lines'] = $lines;
         header('Content-Type: application/json');
         echo json_encode($det);
@@ -59,6 +70,44 @@
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? 'save';
+        require_once __DIR__ . '/../auth.php';
+        $actor = getCurrentUserWithRole($db);
+
+        if ($action === 'upload_document') {
+            header('Content-Type: application/json');
+            $txId = (int)($_POST['tx_id'] ?? 0);
+            if ($txId <= 0 || empty($_FILES['document']['tmp_name'])) {
+                echo json_encode(['error' => 'Transaction ID and document are required.']);
+                exit;
+            }
+            $tx = ledgerFetchTransaction($db, $txId);
+            if (!$tx) {
+                echo json_encode(['error' => 'Transaction not found.']);
+                exit;
+            }
+            $userId = $actor ? (int)$actor['id'] : 0;
+            $result = ledgerStoreDocument(
+                $db,
+                $txId,
+                $userId,
+                $_FILES['document']['name'],
+                $_FILES['document']['tmp_name'],
+                $_FILES['document']['type'] ?? 'application/octet-stream'
+            );
+            if (!empty($result['success'])) {
+                ledgerLogEvent(
+                    $db,
+                    $txId,
+                    'document_uploaded',
+                    $userId,
+                    $actor['username'] ?? 'system',
+                    'Document uploaded: ' . $_FILES['document']['name'],
+                    ['doc_id' => $result['id']]
+                );
+            }
+            echo json_encode($result);
+            exit;
+        }
 
         if ($action === 'clear') {
             $ids = json_decode($_POST['selected_ids'] ?? '[]', true) ?: [];
@@ -160,14 +209,11 @@
                     $mm = $desc ? ($desc . ($mem ? ' | ' . $mem : '')) : $mem;
 
                     if ($tx_id > 0) {
-                        // Edit / Update existing (prevent if cleared)
-                        $chk = $db->prepare("SELECT status FROM transaction_details WHERE id = ?");
-                        $chk->bind_param('i', $tx_id);
-                        $chk->execute();
-                        $crow = $chk->get_result()->fetch_assoc();
-                        $chk->close();
-                        if ($crow && $crow['status'] === 'cleared') {
-                            $error = "Cannot edit a cleared transaction.";
+                        $existing = ledgerFetchTransaction($db, $tx_id);
+                        if (!$existing) {
+                            $error = "Transaction not found.";
+                        } elseif (!ledgerIsEditable($existing)) {
+                            $error = "This transaction is read-only (cleared, reconciled, or workflow-finalized).";
                         } else {
                             $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, memo=? WHERE id=?");
                             $upd->bind_param("sssssi", $d, $c, $p, $ref, $mm, $tx_id);
@@ -186,6 +232,15 @@
                                     $lins->execute();
                                 }
                                 $lins->close();
+                                ledgerLogEvent(
+                                    $db,
+                                    $tx_id,
+                                    'updated',
+                                    $actor ? (int)$actor['id'] : null,
+                                    $actor['username'] ?? 'system',
+                                    'Manual transaction updated.',
+                                    ['debits' => $dt, 'credits' => $ct]
+                                );
                                 $success = "Transaction #$tx_id updated. Debits $" . number_format($dt, 2) . " = Credits $" . number_format($ct, 2);
                             } else {
                                 $error = "Update failed: " . $db->error;
@@ -193,25 +248,36 @@
                             }
                         }
                     } else {
-                        // New transaction
-                        $ins = $db->prepare("INSERT INTO transaction_details(transaction_date,check_number,pay_to,reference_number,memo,status) VALUES(?,?,?,?,?,'pending')");
-                        $ins->bind_param("sssss", $d, $c, $p, $ref, $mm);
-                        if ($ins->execute()) {
-                            $tid = $db->insert_id;
-                            $ins->close();
+                        $createdBy = $actor ? (int)$actor['id'] : null;
+                        $tid = ledgerCreateHeader($db, $d, $p, $ref, $mm, 'manual', 'finalized', $createdBy);
+                        $chk = $db->prepare('UPDATE transaction_details SET check_number = ? WHERE id = ?');
+                        $chk->bind_param('si', $c, $tid);
+                        $chk->execute();
+                        $chk->close();
 
-                            $ed = '';
-                            $lins = $db->prepare("INSERT INTO transaction_lines(transaction_detail_id,account_id,fund_id,amount,type,natural_category_id,functional_category_id,description) VALUES(?,?,?,?,?,?,?,?)");
-                            foreach ($vlines as $v) {
-                                $lins->bind_param("iiidsiis", $tid, $v['aid'], $v['fid'], $v['am'], $v['t'], $v['nid'], $v['fid2'], $ed);
-                                $lins->execute();
-                            }
-                            $lins->close();
-                            $success = "Transaction #$tid saved. Debits $" . number_format($dt, 2) . " = Credits $" . number_format($ct, 2);
-                        } else {
-                            $error = "Save failed: " . $db->error;
-                            $ins->close();
+                        $lineRows = [];
+                        foreach ($vlines as $v) {
+                            $lineRows[] = [
+                                'account_id' => $v['aid'],
+                                'fund_id' => $v['fid'],
+                                'amount' => $v['am'],
+                                'type' => $v['t'],
+                                'natural_category_id' => $v['nid'],
+                                'functional_category_id' => $v['fid2'],
+                                'description' => '',
+                            ];
                         }
+                        ledgerReplaceLines($db, $tid, $lineRows);
+                        ledgerLogEvent(
+                            $db,
+                            $tid,
+                            'created',
+                            $createdBy,
+                            $actor['username'] ?? 'system',
+                            'Manual transaction created.',
+                            ['debits' => $dt, 'credits' => $ct]
+                        );
+                        $success = "Transaction #$tid saved. Debits $" . number_format($dt, 2) . " = Credits $" . number_format($ct, 2);
                     }
                 }
             }
@@ -351,6 +417,7 @@
 
     $tx_stmt = $db->prepare("
         SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.memo, td.status, td.cleared_date,
+               td.source, td.entry_status, td.workflow_instance_id, td.validated_by_user_id, td.validated_at,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
                COALESCE((SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS num_lines
         FROM transaction_details td
@@ -475,6 +542,7 @@
                                 <th>Memo</th>
                                 <th class="text-end">Amount</th>
                                 <th>Status</th>
+                                <th>Source</th>
                                 <th class="text-center">Lines</th>
                             </tr>
                         </thead>
@@ -485,13 +553,16 @@
                                         $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
                                         $statusBadge = 'bg-secondary';
                                         $statusText = 'Pending';
-                                        if ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
+                                        if (($r['entry_status'] ?? '') === 'draft') { $statusBadge = 'bg-warning'; $statusText = 'Draft'; }
+                                        elseif ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
                                         elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
+                                        $sourceText = ($r['source'] ?? 'manual') === 'workflow' ? 'Workflow' : 'Manual';
+                                        $sourceBadge = ($r['source'] ?? 'manual') === 'workflow' ? 'bg-primary' : 'bg-light text-dark border';
                                         $raw_amt = (float)($r['total_amount'] ?? 0);
                                         $disp_amt = isset($acct_amounts[$r['id']]) ? $acct_amounts[$r['id']] : $raw_amt;
                                         $amt_display = ($disp_amt < 0 ? '-$' : '$') . number_format(abs($disp_amt), 2);
                                     ?>
-                                    <tr data-id="<?= (int)$r['id'] ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>">
+                                    <tr data-id="<?= (int)$r['id'] ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-entry-status="<?= htmlspecialchars($r['entry_status'] ?? 'finalized') ?>" data-source="<?= htmlspecialchars($r['source'] ?? 'manual') ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= (int)$r['id'] ?>"></td>
                                         <td><?= htmlspecialchars($r['transaction_date']) ?></td>
                                         <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
@@ -500,12 +571,13 @@
                                         <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
                                         <td class="text-end fw-semibold<?= ($filter_account_id > 0 && $disp_amt < 0) ? ' text-danger' : '' ?>"><?= $amt_display ?></td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
+                                        <td><span class="badge <?= $sourceBadge ?>"><?= $sourceText ?></span></td>
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="9" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
+                                    <td colspan="10" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -591,6 +663,19 @@
                             <div><strong>Diff:</strong> <span id="diff" class="fw-bold">0.00</span></div>
                             <div id="balanceStatus" class="text-muted"></div>
                         </div>
+                    </div>
+
+                    <div id="txMetaSection" class="mt-3 d-none">
+                        <div class="row g-2 small mb-2" id="txMetaBadges"></div>
+                        <div id="txContributionData" class="d-none mb-2"></div>
+                        <h6 class="small mb-1">Documents</h6>
+                        <ul id="txDocumentsList" class="small mb-2 text-muted"></ul>
+                        <form id="txDocUploadForm" class="d-flex gap-2 align-items-center mb-3 d-none">
+                            <input type="file" class="form-control form-control-sm" name="document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+                            <button type="submit" class="btn btn-outline-secondary btn-sm">Upload</button>
+                        </form>
+                        <h6 class="small mb-1">Audit Trail</h6>
+                        <ul id="txEventsList" class="small mb-0"></ul>
                     </div>
 
                     <div class="mt-2">
@@ -754,6 +839,95 @@
         });
     }
 
+    function escHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s ?? '';
+        return d.innerHTML;
+    }
+
+    function fmtMoney(n) {
+        return '$' + (parseFloat(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function renderContributionSummary(data) {
+        if (!data || data.type !== 'contribution') return '';
+        const totals = data.totals || {};
+        let checks = '';
+        if ((data.checks || []).length) {
+            checks = '<ul class="mb-1">' + data.checks.map(c =>
+                `<li>${escHtml(c.payor || '')} #${escHtml(c.check_number || '')} — ${fmtMoney(c.amount)}</li>`
+            ).join('') + '</ul>';
+        } else {
+            checks = '<span class="text-muted">No checks</span>';
+        }
+        return `<div class="card card-body py-2 bg-light border-0">
+            <h6 class="small text-muted mb-1">Contribution Details</h6>
+            <div class="row g-2">
+                <div class="col-md-3"><span class="text-muted">Service date:</span> ${escHtml(data.service_date || '')}</div>
+                <div class="col-md-3"><span class="text-muted">Cash:</span> ${fmtMoney(totals.cash)}</div>
+                <div class="col-md-3"><span class="text-muted">Checks:</span> ${fmtMoney(totals.checks)}</div>
+                <div class="col-md-3"><span class="text-muted">Grand:</span> <strong>${fmtMoney(totals.grand)}</strong></div>
+            </div>
+            <div class="mt-1 small">${checks}</div>
+        </div>`;
+    }
+
+    function renderMetaSection(data) {
+        const section = document.getElementById('txMetaSection');
+        if (!section) return;
+        if (!data || !data.id) {
+            section.classList.add('d-none');
+            return;
+        }
+        section.classList.remove('d-none');
+
+        const badges = document.getElementById('txMetaBadges');
+        const source = data.source === 'workflow' ? 'Workflow' : 'Manual';
+        const entry = data.entry_status === 'draft' ? 'Draft' : 'Finalized';
+        let validated = '';
+        if (data.validated_by) {
+            validated = `<div class="col-auto"><span class="badge bg-success">Validated by ${escHtml(data.validated_by.display_name)}</span></div>`;
+        }
+        if (data.created_by) {
+            validated += `<div class="col-auto"><span class="badge bg-light text-dark border">Created by ${escHtml(data.created_by.display_name)}</span></div>`;
+        }
+        if (data.workflow_instance_id) {
+            validated += `<div class="col-auto"><span class="badge bg-info text-dark">Workflow #${data.workflow_instance_id}</span></div>`;
+        }
+        badges.innerHTML = `
+            <div class="col-auto"><span class="badge bg-secondary">${escHtml(source)}</span></div>
+            <div class="col-auto"><span class="badge ${data.entry_status === 'draft' ? 'bg-warning text-dark' : 'bg-light text-dark border'}">${escHtml(entry)}</span></div>
+            ${validated}`;
+
+        const contribEl = document.getElementById('txContributionData');
+        const contribHtml = renderContributionSummary(data.transaction_data);
+        if (contribHtml) {
+            contribEl.innerHTML = contribHtml;
+            contribEl.classList.remove('d-none');
+        } else {
+            contribEl.classList.add('d-none');
+            contribEl.innerHTML = '';
+        }
+
+        const docsEl = document.getElementById('txDocumentsList');
+        const docs = data.documents || [];
+        docsEl.innerHTML = docs.length
+            ? docs.map(d => `<li><a href="pages/ledger.php?download_document=${d.id}" target="_blank">${escHtml(d.original_filename)}</a> <span class="text-muted">(${escHtml(d.created_at)})</span></li>`).join('')
+            : '<li class="text-muted">No documents attached.</li>';
+
+        const docForm = document.getElementById('txDocUploadForm');
+        if (docForm) {
+            if (data.is_editable) docForm.classList.remove('d-none');
+            else docForm.classList.add('d-none');
+        }
+
+        const eventsEl = document.getElementById('txEventsList');
+        const events = data.events || [];
+        eventsEl.innerHTML = events.length
+            ? events.map(e => `<li><span class="text-muted">${escHtml(e.created_at)}</span> — <strong>${escHtml(e.username)}</strong>: ${escHtml(e.summary)}</li>`).join('')
+            : '<li class="text-muted">No audit events recorded.</li>';
+    }
+
     function updateModeBadge(mode) {
         const b = document.getElementById('formModeBadge');
         if (!b) return;
@@ -778,6 +952,7 @@
         currentViewData = null;
         form.reset();
         linesBody.innerHTML = '';
+        renderMetaSection(null);
         setMainFieldsReadOnly(true);
         formTitle.textContent = 'Transaction Details';
         updateModeBadge('blank');
@@ -811,6 +986,7 @@
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
         if (saveBtn) saveBtn.style.display = 'none';
         if (cancelBtn2) cancelBtn2.style.display = 'none';
+        renderMetaSection(data);
     }
 
     function populateEditable(data) {
@@ -842,6 +1018,7 @@
         if (resetLinesBtn) resetLinesBtn.style.display = '';
         if (saveBtn) saveBtn.style.display = '';
         if (cancelBtn2) cancelBtn2.style.display = '';
+        renderMetaSection(data);
         recalcTotals();
     }
 
@@ -894,9 +1071,16 @@
             if (row && row.dataset.cleared === '1') hasCleared = true;
         });
         const multi = count > 1;
+        let readOnlyWorkflow = false;
+        checked.forEach(cb => {
+            const row = cb.closest('tr');
+            if (row && row.dataset.source === 'workflow' && row.dataset.entryStatus === 'finalized') {
+                readOnlyWorkflow = true;
+            }
+        });
 
         addTxBtn.disabled = multi;
-        editTxBtn.disabled = (count !== 1 || hasCleared);
+        editTxBtn.disabled = (count !== 1 || hasCleared || readOnlyWorkflow);
         clearTxBtn.disabled = (count === 0);
         reconcileTxBtn.disabled = (count === 0);
     }
@@ -1237,6 +1421,28 @@
             }
             syncSelectAllState();
             afterSelectionChanged();
+        });
+    }
+
+    const docUploadForm = document.getElementById('txDocUploadForm');
+    if (docUploadForm) {
+        docUploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const id = txIdField.value;
+            if (!id) return;
+            const fd = new FormData(docUploadForm);
+            fd.append('action', 'upload_document');
+            fd.append('tx_id', id);
+            fetch('pages/ledger.php', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.error) showToast(res.error, 'danger');
+                    else {
+                        showToast('Document uploaded.', 'success');
+                        loadView(parseInt(id, 10));
+                    }
+                })
+                .catch(() => showToast('Upload failed.', 'danger'));
         });
     }
 

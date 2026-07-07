@@ -3,16 +3,11 @@
         require_once __DIR__ . '/../config.php';
         $db = getDbConnection();
     }
-    require_once __DIR__ . '/../includes/workflow_engine.php';
+    require_once __DIR__ . '/../includes/workflow_bootstrap.php';
     require_once __DIR__ . '/../includes/workflows/contribution_workflow.php';
 
     workflowRequireTables($db);
-
-    $actor = getCurrentUserWithRole($db);
-    if (!$actor) {
-        echo '<div class="alert alert-warning">Not authenticated.</div>';
-        exit;
-    }
+    $actor = workflowRequireActor($db, 'workflow.view');
 
     $actorJson = [
         'id' => (int)$actor['id'],
@@ -44,6 +39,7 @@
                 echo json_encode(['error' => 'Not found']);
                 exit;
             }
+            $instance = contribEnrichInstance($db, $instance);
             $instance['status_label'] = contribStatusLabel($instance['status']);
             echo json_encode(['instance' => $instance, 'actor' => $actorJson]);
             exit;
@@ -119,18 +115,43 @@
                 exit;
             }
             $wf = workflowFetchInstance($db, $id);
-            $stepId = $wf ? workflowGetStepId($db, $id, $wf['current_step']) : null;
-            $result = workflowStoreDocument(
+            $txId = (int)($wf['transaction_detail_id'] ?? 0);
+            if (!$wf || $txId <= 0) {
+                echo json_encode(['error' => 'Ledger entry not found for this workflow.']);
+                exit;
+            }
+            require_once __DIR__ . '/../includes/ledger_engine.php';
+            $stepKey = $wf['current_step'] ?? null;
+            $result = ledgerStoreDocument(
                 $db,
-                $id,
-                $stepId,
+                $txId,
                 (int)$actor['id'],
                 $_FILES['document']['name'],
                 $_FILES['document']['tmp_name'],
-                $_FILES['document']['type'] ?? 'application/octet-stream'
+                $_FILES['document']['type'] ?? 'application/octet-stream',
+                $stepKey
             );
             if (!empty($result['success'])) {
-                workflowLogEvent($db, $id, $stepId, 'document_uploaded', (int)$actor['id'], $actor['username'], 'Document uploaded: ' . $_FILES['document']['name'], ['doc_id' => $result['id']]);
+                $stepId = workflowGetStepId($db, $id, $wf['current_step']);
+                ledgerLogEvent(
+                    $db,
+                    $txId,
+                    'document_uploaded',
+                    (int)$actor['id'],
+                    $actor['username'],
+                    'Document uploaded: ' . $_FILES['document']['name'],
+                    ['doc_id' => $result['id'], 'workflow_instance_id' => $id]
+                );
+                workflowLogEvent(
+                    $db,
+                    $id,
+                    $stepId,
+                    'document_uploaded',
+                    (int)$actor['id'],
+                    $actor['username'],
+                    'Document attached to ledger #' . $txId . ': ' . $_FILES['document']['name'],
+                    ['doc_id' => $result['id'], 'transaction_detail_id' => $txId]
+                );
             }
             echo json_encode($result);
             exit;
@@ -306,8 +327,9 @@
             } else if (inst.status === 'dual_count_complete_pending_official' && CFG.actor.can_official) {
                 actionHtml = renderOfficialForm(inst);
             } else if (inst.status === 'deposited') {
+                const txId = inst.transaction_detail_id || p.deposit_transaction_id || '—';
                 actionHtml = `<div class="alert alert-success py-2 small">
-                    Deposited. Ledger transaction #${p.deposit_transaction_id || inst.transaction_detail_id || '—'} (read-only in ledger).
+                    Deposited. <a href="javascript:void(0)" onclick="loadPage('ledger')">Ledger transaction #${txId}</a> (read-only — view documents and audit trail there).
                 </div>`;
             }
 
@@ -315,9 +337,10 @@
                 `<li class="small"><span class="text-muted">${e.created_at}</span> — <strong>${esc(e.username)}</strong>: ${esc(e.summary)}</li>`
             ).join('');
 
+            const txId = inst.transaction_detail_id || '';
             const docs = (inst.documents || []).map(doc =>
-                `<li class="small">${esc(doc.original_filename)} <span class="text-muted">(${doc.created_at})</span></li>`
-            ).join('') || '<li class="small text-muted">No documents attached.</li>';
+                `<li class="small"><a href="pages/ledger.php?download_document=${doc.id}" target="_blank">${esc(doc.original_filename)}</a> <span class="text-muted">(${doc.created_at})</span></li>`
+            ).join('') || '<li class="small text-muted">No documents attached (stored on ledger).</li>';
 
             el.innerHTML = `
                 <div class="card-header d-flex justify-content-between align-items-center py-2">
@@ -344,8 +367,9 @@
                         <input type="file" class="form-control form-control-sm" name="document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
                         <button type="submit" class="btn btn-outline-secondary btn-sm">Upload</button>
                     </form>` : ''}
-                    <h6 class="small mt-3">Audit Trail</h6>
-                    <ul class="mb-0">${events || '<li class="small text-muted">No events.</li>'}</ul>
+                    <h6 class="small mt-3">Workflow Audit Trail</h6>
+                    <ul class="mb-2">${events || '<li class="small text-muted">No workflow events.</li>'}</ul>
+                    ${txId ? `<p class="small text-muted mb-0">Full transaction data, documents, and ledger audit trail: <a href="javascript:void(0)" onclick="loadPage('ledger')">Ledger #${txId}</a></p>` : ''}
                 </div>`;
 
             const docForm = document.getElementById('docUploadForm');

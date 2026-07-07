@@ -7,7 +7,6 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/audit.php';
-require_once __DIR__ . '/storage_paths.php';
 
 /**
  * Verify workflow tables exist. Does not create or modify schema —
@@ -22,7 +21,6 @@ function workflowRequireTables(mysqli $db): void {
     $required = [
         'workflow_instances',
         'workflow_steps',
-        'workflow_documents',
         'workflow_events',
     ];
 
@@ -83,15 +81,24 @@ function workflowCreateInstance(
     int $createdByUserId,
     array $payload,
     array $stepDefs,
-    array $actor
+    array $actor,
+    ?int $transactionDetailId = null
 ): int {
     workflowRequireTables($db);
     $payloadJson = json_encode($payload);
-    $stmt = $db->prepare(
-        'INSERT INTO workflow_instances (workflow_type, title, status, current_step, created_by_user_id, payload)
-         VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    $stmt->bind_param('ssssis', $type, $title, $status, $currentStep, $createdByUserId, $payloadJson);
+    if ($transactionDetailId !== null) {
+        $stmt = $db->prepare(
+            'INSERT INTO workflow_instances (workflow_type, title, status, current_step, created_by_user_id, payload, transaction_detail_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->bind_param('ssssisi', $type, $title, $status, $currentStep, $createdByUserId, $payloadJson, $transactionDetailId);
+    } else {
+        $stmt = $db->prepare(
+            'INSERT INTO workflow_instances (workflow_type, title, status, current_step, created_by_user_id, payload)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->bind_param('ssssis', $type, $title, $status, $currentStep, $createdByUserId, $payloadJson);
+    }
     $stmt->execute();
     $instanceId = (int)$stmt->insert_id;
     $stmt->close();
@@ -118,7 +125,7 @@ function workflowCreateInstance(
         (int)$actor['id'],
         $actor['username'] ?? 'system',
         'Workflow created: ' . $title,
-        ['workflow_type' => $type, 'status' => $status]
+        ['workflow_type' => $type, 'status' => $status, 'transaction_detail_id' => $transactionDetailId]
     );
 
     return $instanceId;
@@ -136,7 +143,6 @@ function workflowFetchInstance(mysqli $db, int $instanceId): ?array {
     }
     $row['payload'] = json_decode($row['payload'] ?? '{}', true) ?: [];
     $row['steps'] = workflowFetchSteps($db, $instanceId);
-    $row['documents'] = workflowFetchDocuments($db, $instanceId);
     $row['events'] = workflowFetchEvents($db, $instanceId, 20);
     return $row;
 }
@@ -155,22 +161,6 @@ function workflowFetchSteps(mysqli $db, int $instanceId): array {
     }
     $stmt->close();
     return $steps;
-}
-
-function workflowFetchDocuments(mysqli $db, int $instanceId): array {
-    $docs = [];
-    $stmt = $db->prepare(
-        'SELECT id, workflow_step_id, stored_filename, original_filename, mime_type, file_size, uploaded_by_user_id, created_at
-         FROM workflow_documents WHERE workflow_instance_id = ? ORDER BY created_at DESC'
-    );
-    $stmt->bind_param('i', $instanceId);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $docs[] = $row;
-    }
-    $stmt->close();
-    return $docs;
 }
 
 function workflowFetchEvents(mysqli $db, int $instanceId, int $limit = 50): array {
@@ -242,42 +232,6 @@ function workflowGetStepId(mysqli $db, int $instanceId, string $stepKey): ?int {
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     return $row ? (int)$row['id'] : null;
-}
-
-function workflowStoreDocument(
-    mysqli $db,
-    int $instanceId,
-    ?int $stepId,
-    int $userId,
-    string $originalName,
-    string $tmpPath,
-    string $mimeType
-): array {
-    $dir = getWorkflowDocumentsDir() . '/' . $instanceId;
-    if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
-        return ['success' => false, 'error' => 'Could not create workflow document directory.'];
-    }
-
-    $ext = pathinfo($originalName, PATHINFO_EXTENSION);
-    $safeExt = preg_replace('/[^a-zA-Z0-9]/', '', $ext);
-    $stored = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . ($safeExt ? '.' . $safeExt : '');
-    $dest = $dir . '/' . $stored;
-
-    if (!@move_uploaded_file($tmpPath, $dest) && !@rename($tmpPath, $dest)) {
-        return ['success' => false, 'error' => 'Failed to save uploaded document.'];
-    }
-
-    $size = (int)filesize($dest);
-    $stmt = $db->prepare(
-        'INSERT INTO workflow_documents (workflow_instance_id, workflow_step_id, stored_filename, original_filename, mime_type, file_size, uploaded_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)'
-    );
-    $stmt->bind_param('iisssii', $instanceId, $stepId, $stored, $originalName, $mimeType, $size, $userId);
-    $stmt->execute();
-    $docId = (int)$stmt->insert_id;
-    $stmt->close();
-
-    return ['success' => true, 'id' => $docId, 'stored_filename' => $stored];
 }
 
 function workflowListInstances(mysqli $db, ?string $type = null, int $limit = 100): array {

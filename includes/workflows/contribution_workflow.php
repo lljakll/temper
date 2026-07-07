@@ -6,6 +6,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 }
 
 require_once __DIR__ . '/../workflow_engine.php';
+require_once __DIR__ . '/../ledger_engine.php';
 
 const CONTRIB_STATUS_DRAFT = 'draft_pending_second_count';
 const CONTRIB_STATUS_DUAL_COMPLETE = 'dual_count_complete_pending_official';
@@ -87,8 +88,9 @@ function contribValidatePayload(array $payload): array {
     ];
 }
 
-function contribDefaultPayload(int $firstTellerId, string $serviceDate = ''): array {
+function contribDefaultTransactionData(int $firstTellerId, string $serviceDate = ''): array {
     return [
+        'type' => 'contribution',
         'service_date' => $serviceDate ?: date('Y-m-d'),
         'description' => 'Sunday Offering',
         'cash_denominations' => contribEmptyDenominations(),
@@ -110,12 +112,64 @@ function contribDefaultPayload(int $firstTellerId, string $serviceDate = ''): ar
     ];
 }
 
+/** @deprecated Use contribDefaultTransactionData() */
+function contribDefaultPayload(int $firstTellerId, string $serviceDate = ''): array {
+    return contribDefaultTransactionData($firstTellerId, $serviceDate);
+}
+
 function contribStepDefinitions(): array {
     return [
         ['key' => CONTRIB_STEP_TELLER, 'order' => 1, 'status' => 'pending', 'role' => 'Teller'],
         ['key' => CONTRIB_STEP_SECOND, 'order' => 2, 'status' => 'pending', 'role' => 'Second Teller'],
         ['key' => CONTRIB_STEP_OFFICIAL, 'order' => 3, 'status' => 'pending', 'role' => 'Official'],
     ];
+}
+
+function contribOrchestrationPayload(int $transactionId): array {
+    return [
+        'schema_version' => 2,
+        'transaction_detail_id' => $transactionId,
+    ];
+}
+
+function contribMergeInputIntoTransactionData(array $input, array $base, int $firstTellerId): array {
+    $data = $base;
+    $data['service_date'] = $input['service_date'] ?? $data['service_date'];
+    $data['description'] = $input['description'] ?? $data['description'];
+    $data['cash_denominations'] = $input['cash_denominations'] ?? $data['cash_denominations'];
+    $data['checks'] = $input['checks'] ?? $data['checks'];
+    $data['fund_allocations'] = $input['fund_allocations'] ?? $data['fund_allocations'];
+    $data['first_teller_id'] = $firstTellerId;
+    $data['first_teller_at'] = date('c');
+    return $data;
+}
+
+function contribFetchLedgerData(mysqli $db, ?int $transactionId): array {
+    if (!$transactionId) {
+        return [];
+    }
+    $tx = ledgerFetchTransaction($db, $transactionId);
+    return $tx['transaction_data'] ?? [];
+}
+
+function contribEnrichInstance(mysqli $db, array $instance): array {
+    $txId = (int)($instance['transaction_detail_id'] ?? 0);
+    if ($txId > 0) {
+        $ledger = ledgerFetchTransaction($db, $txId);
+        if ($ledger) {
+            $instance['ledger'] = $ledger;
+            $instance['payload'] = array_merge(
+                $instance['payload'] ?? [],
+                $ledger['transaction_data'] ?? []
+            );
+            $instance['documents'] = $ledger['documents'] ?? [];
+            $instance['ledger_events'] = $ledger['events'] ?? [];
+        }
+    } else {
+        $instance['documents'] = [];
+        $instance['ledger_events'] = [];
+    }
+    return $instance;
 }
 
 function contribCreate(mysqli $db, array $payload, array $actor): array {
@@ -128,43 +182,84 @@ function contribCreate(mysqli $db, array $payload, array $actor): array {
         return ['error' => $validation['error']];
     }
 
-    $payload['totals'] = [
+    $transactionData = contribMergeInputIntoTransactionData(
+        $payload,
+        contribDefaultTransactionData((int)$actor['id']),
+        (int)$actor['id']
+    );
+    $transactionData['totals'] = [
         'cash' => $validation['cash_total'],
         'checks' => $validation['check_total'],
         'grand' => $validation['grand_total'],
     ];
-    $payload['first_teller_id'] = (int)$actor['id'];
-    $payload['first_teller_at'] = date('c');
 
-    $title = ($payload['description'] ?? 'Contribution') . ' — ' . ($payload['service_date'] ?? date('Y-m-d'));
-    $instanceId = workflowCreateInstance(
-        $db,
-        'contribution',
-        $title,
-        CONTRIB_STATUS_DRAFT,
-        CONTRIB_STEP_SECOND,
-        (int)$actor['id'],
-        $payload,
-        contribStepDefinitions(),
-        $actor
-    );
+    $serviceDate = $transactionData['service_date'];
+    $description = $transactionData['description'] ?? 'Contribution';
+    $title = $description . ' — ' . $serviceDate;
+    $ref = 'WF-CONTRIB-DRAFT-' . date('YmdHis');
+    $memo = 'Contribution workflow draft | Pending dual count';
 
-    workflowCompleteStep($db, $instanceId, CONTRIB_STEP_TELLER, (int)$actor['id'], $actor['username'], [
-        'totals' => $payload['totals'],
-    ], 'First teller count recorded.');
+    $db->begin_transaction();
+    try {
+        $txId = ledgerCreateHeader(
+            $db,
+            $serviceDate,
+            'Contribution Deposit',
+            $ref,
+            $memo,
+            'workflow',
+            'draft',
+            (int)$actor['id'],
+            $transactionData
+        );
 
-    workflowLogEvent(
-        $db,
-        $instanceId,
-        workflowGetStepId($db, $instanceId, CONTRIB_STEP_TELLER),
-        'step_completed',
-        (int)$actor['id'],
-        $actor['username'],
-        'Teller count saved; pending second teller verification.',
-        ['status' => CONTRIB_STATUS_DRAFT, 'grand_total' => $validation['grand_total']]
-    );
+        ledgerLogEvent(
+            $db,
+            $txId,
+            'draft_created',
+            (int)$actor['id'],
+            $actor['username'] ?? 'system',
+            'Contribution draft created by first teller.',
+            ['grand_total' => $validation['grand_total']]
+        );
 
-    return ['success' => true, 'id' => $instanceId];
+        $instanceId = workflowCreateInstance(
+            $db,
+            'contribution',
+            $title,
+            CONTRIB_STATUS_DRAFT,
+            CONTRIB_STEP_SECOND,
+            (int)$actor['id'],
+            contribOrchestrationPayload($txId),
+            contribStepDefinitions(),
+            $actor,
+            $txId
+        );
+
+        ledgerUpdateHeader($db, $txId, null, null, 'WF-CONTRIB-' . $instanceId, null, null, $instanceId);
+
+        workflowCompleteStep($db, $instanceId, CONTRIB_STEP_TELLER, (int)$actor['id'], $actor['username'], [
+            'transaction_detail_id' => $txId,
+            'totals' => $transactionData['totals'],
+        ], 'First teller count recorded.');
+
+        workflowLogEvent(
+            $db,
+            $instanceId,
+            workflowGetStepId($db, $instanceId, CONTRIB_STEP_TELLER),
+            'step_completed',
+            (int)$actor['id'],
+            $actor['username'],
+            'Teller count saved; pending second teller verification.',
+            ['status' => CONTRIB_STATUS_DRAFT, 'transaction_detail_id' => $txId]
+        );
+
+        $db->commit();
+        return ['success' => true, 'id' => $instanceId, 'transaction_id' => $txId];
+    } catch (Throwable $e) {
+        $db->rollback();
+        return ['error' => 'Failed to create contribution: ' . $e->getMessage()];
+    }
 }
 
 function contribSecondTellerSign(mysqli $db, int $instanceId, int $signerId, string $password, array $verifyDenoms, array $actor): array {
@@ -183,26 +278,42 @@ function contribSecondTellerSign(mysqli $db, int $instanceId, int $signerId, str
         return ['error' => 'This contribution is not awaiting second teller verification.'];
     }
 
-    $payload = $instance['payload'];
-    $firstId = (int)($payload['first_teller_id'] ?? 0);
+    $txId = (int)($instance['transaction_detail_id'] ?? 0);
+    if ($txId <= 0) {
+        return ['error' => 'Ledger draft not found for this contribution.'];
+    }
+
+    $transactionData = contribFetchLedgerData($db, $txId);
+    $firstId = (int)($transactionData['first_teller_id'] ?? 0);
     if ($signerId === $firstId) {
         return ['error' => 'Second teller must be a different person than the first teller.'];
     }
 
-    $firstCash = contribSumDenominations($payload['cash_denominations'] ?? []);
+    $firstCash = contribSumDenominations($transactionData['cash_denominations'] ?? []);
     $verifyCash = contribSumDenominations($verifyDenoms);
     if (abs($firstCash - $verifyCash) > 0.005) {
         return ['error' => 'Second teller cash count ($' . number_format($verifyCash, 2) . ') does not match first count ($' . number_format($firstCash, 2) . ').'];
     }
 
-    $payload['second_teller_id'] = $signerId;
-    $payload['second_teller_at'] = date('c');
-    $payload['second_verify_denominations'] = $verifyDenoms;
+    $transactionData['second_teller_id'] = $signerId;
+    $transactionData['second_teller_at'] = date('c');
+    $transactionData['second_verify_denominations'] = $verifyDenoms;
 
     $signer = getUserWithRole($db, $signerId);
     $signerName = $signer['username'] ?? ($actor['username'] ?? '');
 
-    workflowUpdateInstance($db, $instanceId, CONTRIB_STATUS_DUAL_COMPLETE, CONTRIB_STEP_OFFICIAL, $payload);
+    ledgerUpdateHeader($db, $txId, null, null, null, null, $transactionData);
+    ledgerLogEvent(
+        $db,
+        $txId,
+        'second_teller_signed',
+        $signerId,
+        $signerName,
+        'Second teller signed off on dual count.',
+        ['second_teller_id' => $signerId, 'verify_cash_total' => $verifyCash]
+    );
+
+    workflowUpdateInstance($db, $instanceId, CONTRIB_STATUS_DUAL_COMPLETE, CONTRIB_STEP_OFFICIAL, $instance['payload']);
     workflowCompleteStep($db, $instanceId, CONTRIB_STEP_SECOND, $signerId, $signerName, [
         'verify_cash_total' => $verifyCash,
     ], 'Second teller dual count verified.');
@@ -215,10 +326,10 @@ function contribSecondTellerSign(mysqli $db, int $instanceId, int $signerId, str
         $signerId,
         $signerName,
         'Second teller signed off on dual count.',
-        ['second_teller_id' => $signerId]
+        ['second_teller_id' => $signerId, 'transaction_detail_id' => $txId]
     );
 
-    return ['success' => true];
+    return ['success' => true, 'transaction_id' => $txId];
 }
 
 function contribLookupAccountId(mysqli $db, string $name): ?int {
@@ -239,7 +350,7 @@ function contribLookupCategoryId(mysqli $db, string $name): ?int {
     return $row ? (int)$row['id'] : null;
 }
 
-function contribCreateDepositTransaction(mysqli $db, array $payload, int $instanceId): array {
+function contribBuildDepositLines(mysqli $db, array $transactionData): array {
     $bankId = contribLookupAccountId($db, 'Bank Account') ?? contribLookupAccountId($db, 'Cash');
     $contribId = contribLookupAccountId($db, 'Contributions');
     $naturalId = contribLookupCategoryId($db, 'Contributions');
@@ -248,55 +359,35 @@ function contribCreateDepositTransaction(mysqli $db, array $payload, int $instan
         return ['error' => 'Required accounts (Bank Account/Cash and Contributions) not found in chart of accounts.'];
     }
 
-    $allocations = $payload['fund_allocations'] ?? [];
-    $grand = (float)($payload['totals']['grand'] ?? 0);
+    $allocations = $transactionData['fund_allocations'] ?? [];
+    $grand = (float)($transactionData['totals']['grand'] ?? 0);
     if ($grand <= 0) {
         return ['error' => 'Cannot create deposit with zero amount.'];
     }
 
-    $serviceDate = $payload['service_date'] ?? date('Y-m-d');
-    $desc = $payload['description'] ?? 'Contribution Deposit';
-    $ref = 'WF-CONTRIB-' . $instanceId;
-    $memo = 'Workflow contribution deposit | Instance #' . $instanceId;
+    $lines = [
+        [
+            'account_id' => $bankId,
+            'fund_id' => null,
+            'amount' => $grand,
+            'type' => 'debit',
+            'natural_category_id' => $naturalId,
+            'description' => 'Deposit to bank',
+        ],
+    ];
 
-    $db->begin_transaction();
-    try {
-        $ins = $db->prepare(
-            "INSERT INTO transaction_details (transaction_date, pay_to, reference_number, memo, status)
-             VALUES (?, ?, ?, ?, 'pending')"
-        );
-        $payTo = 'Contribution Deposit';
-        $ins->bind_param('ssss', $serviceDate, $payTo, $ref, $memo);
-        $ins->execute();
-        $txId = (int)$ins->insert_id;
-        $ins->close();
-
-        $lineStmt = $db->prepare(
-            'INSERT INTO transaction_lines (transaction_detail_id, account_id, fund_id, amount, type, natural_category_id, description)
-             VALUES (?, ?, NULL, ?, ?, ?, ?)'
-        );
-
-        $debitType = 'debit';
-        $lineDesc = 'Deposit to bank';
-        $lineStmt->bind_param('iidsis', $txId, $bankId, $grand, $debitType, $naturalId, $lineDesc);
-        $lineStmt->execute();
-
-        foreach ($allocations as $alloc) {
-            $fundId = (int)$alloc['fund_id'];
-            $amt = (float)$alloc['amount'];
-            $creditType = 'credit';
-            $lineDesc = 'Contribution allocation';
-            $lineStmt->bind_param('iiidsis', $txId, $contribId, $fundId, $amt, $creditType, $naturalId, $lineDesc);
-            $lineStmt->execute();
-        }
-        $lineStmt->close();
-
-        $db->commit();
-        return ['success' => true, 'transaction_id' => $txId];
-    } catch (Throwable $e) {
-        $db->rollback();
-        return ['error' => 'Failed to create ledger deposit: ' . $e->getMessage()];
+    foreach ($allocations as $alloc) {
+        $lines[] = [
+            'account_id' => $contribId,
+            'fund_id' => (int)$alloc['fund_id'],
+            'amount' => (float)$alloc['amount'],
+            'type' => 'credit',
+            'natural_category_id' => $naturalId,
+            'description' => 'Contribution allocation',
+        ];
     }
+
+    return ['success' => true, 'lines' => $lines];
 }
 
 function contribOfficialValidate(
@@ -326,42 +417,81 @@ function contribOfficialValidate(
         return ['error' => 'Official must verify denominations, checks, and fund allocations.'];
     }
 
-    $payload = $instance['payload'];
-    $deposit = contribCreateDepositTransaction($db, $payload, $instanceId);
-    if (!empty($deposit['error'])) {
-        return $deposit;
+    $txId = (int)($instance['transaction_detail_id'] ?? 0);
+    if ($txId <= 0) {
+        return ['error' => 'Ledger draft not found for this contribution.'];
     }
 
-    $payload['official_id'] = $officialId;
-    $payload['official_at'] = date('c');
-    $payload['official_verified'] = $verifiedFlags;
-    $payload['deposit_transaction_id'] = $deposit['transaction_id'];
+    $transactionData = contribFetchLedgerData($db, $txId);
+    $linesResult = contribBuildDepositLines($db, $transactionData);
+    if (!empty($linesResult['error'])) {
+        return $linesResult;
+    }
 
-    workflowUpdateInstance(
-        $db,
-        $instanceId,
-        CONTRIB_STATUS_DEPOSITED,
-        'complete',
-        $payload,
-        $deposit['transaction_id']
-    );
-    workflowCompleteStep($db, $instanceId, CONTRIB_STEP_OFFICIAL, $officialId, $actor['username'] ?? '', [
-        'transaction_id' => $deposit['transaction_id'],
-        'verified' => $verifiedFlags,
-    ], 'Official validation and deposit creation.');
+    $transactionData['official_id'] = $officialId;
+    $transactionData['official_at'] = date('c');
+    $transactionData['official_verified'] = $verifiedFlags;
 
-    workflowLogEvent(
-        $db,
-        $instanceId,
-        workflowGetStepId($db, $instanceId, CONTRIB_STEP_OFFICIAL),
-        'deposit_created',
-        $officialId,
-        $actor['username'] ?? '',
-        'Ledger deposit #' . $deposit['transaction_id'] . ' created from contribution workflow.',
-        ['transaction_id' => $deposit['transaction_id'], 'amount' => $payload['totals']['grand'] ?? 0]
-    );
+    $db->begin_transaction();
+    try {
+        ledgerReplaceLines($db, $txId, $linesResult['lines']);
+        ledgerUpdateHeader(
+            $db,
+            $txId,
+            null,
+            null,
+            null,
+            'Workflow contribution deposit | Instance #' . $instanceId,
+            $transactionData
+        );
+        ledgerSetValidated(
+            $db,
+            $txId,
+            $officialId,
+            $officialId,
+            $actor['username'] ?? ''
+        );
 
-    return ['success' => true, 'transaction_id' => $deposit['transaction_id']];
+        ledgerLogEvent(
+            $db,
+            $txId,
+            'deposit_finalized',
+            $officialId,
+            $actor['username'] ?? '',
+            'Contribution deposit finalized with ledger lines.',
+            ['workflow_instance_id' => $instanceId, 'amount' => $transactionData['totals']['grand'] ?? 0]
+        );
+
+        workflowUpdateInstance(
+            $db,
+            $instanceId,
+            CONTRIB_STATUS_DEPOSITED,
+            'complete',
+            $instance['payload'],
+            $txId
+        );
+        workflowCompleteStep($db, $instanceId, CONTRIB_STEP_OFFICIAL, $officialId, $actor['username'] ?? '', [
+            'transaction_id' => $txId,
+            'verified' => $verifiedFlags,
+        ], 'Official validation and deposit creation.');
+
+        workflowLogEvent(
+            $db,
+            $instanceId,
+            workflowGetStepId($db, $instanceId, CONTRIB_STEP_OFFICIAL),
+            'deposit_created',
+            $officialId,
+            $actor['username'] ?? '',
+            'Ledger deposit #' . $txId . ' finalized from contribution workflow.',
+            ['transaction_id' => $txId, 'amount' => $transactionData['totals']['grand'] ?? 0]
+        );
+
+        $db->commit();
+        return ['success' => true, 'transaction_id' => $txId];
+    } catch (Throwable $e) {
+        $db->rollback();
+        return ['error' => 'Failed to finalize deposit: ' . $e->getMessage()];
+    }
 }
 
 function contribStatusLabel(string $status): string {
@@ -372,4 +502,43 @@ function contribStatusLabel(string $status): string {
         CONTRIB_STATUS_CANCELLED => 'Cancelled',
         default => $status,
     };
+}
+
+/**
+ * Hub-page stats for the contribution workflow type (orchestration only).
+ *
+ * @return array{total: int, active: int, badges: list<array{label: string, class: string}>}
+ */
+function contribWorkflowHubStats(mysqli $db): array {
+    $rows = workflowListInstances($db, 'contribution', 200);
+    $pendingSecond = 0;
+    $pendingOfficial = 0;
+
+    foreach ($rows as $row) {
+        if ($row['status'] === CONTRIB_STATUS_DRAFT) {
+            $pendingSecond++;
+        } elseif ($row['status'] === CONTRIB_STATUS_DUAL_COMPLETE) {
+            $pendingOfficial++;
+        }
+    }
+
+    $badges = [];
+    if ($pendingSecond > 0) {
+        $badges[] = [
+            'label' => $pendingSecond . ' pending 2nd count',
+            'class' => 'bg-warning text-dark',
+        ];
+    }
+    if ($pendingOfficial > 0) {
+        $badges[] = [
+            'label' => $pendingOfficial . ' pending official',
+            'class' => 'bg-info text-dark',
+        ];
+    }
+
+    return [
+        'total' => count($rows),
+        'active' => $pendingSecond + $pendingOfficial,
+        'badges' => $badges,
+    ];
 }

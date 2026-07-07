@@ -18,9 +18,10 @@ $setupFiles = [
 
 $dropQueries = [
     'workflow_events',
-    'workflow_documents',
     'workflow_steps',
     'workflow_instances',
+    'transaction_documents',
+    'transaction_events',
     'transaction_lines',
     'tasks',
     'budget_lines',

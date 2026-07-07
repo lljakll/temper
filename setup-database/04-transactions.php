@@ -18,8 +18,38 @@ function setupSchemaTransactions(): array
     reference_number VARCHAR(50),
     status ENUM('pending', 'cleared', 'reconciled') DEFAULT 'pending',
     date_reconciled DATE NULL,
+    source ENUM('manual', 'workflow') NOT NULL DEFAULT 'manual',
+    entry_status ENUM('draft', 'finalized') NOT NULL DEFAULT 'finalized',
+    workflow_instance_id INT NULL,
+    created_by_user_id INT NULL,
+    validated_by_user_id INT NULL,
+    validated_at DATETIME NULL,
+    transaction_data JSON NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)",
+            'transaction_documents' => "CREATE TABLE IF NOT EXISTS transaction_documents (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    transaction_detail_id INT NOT NULL,
+    stored_filename VARCHAR(255) NOT NULL,
+    original_filename VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(120) NULL,
+    file_size INT NOT NULL DEFAULT 0,
+    uploaded_by_user_id INT NOT NULL,
+    workflow_step_key VARCHAR(80) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (transaction_detail_id) REFERENCES transaction_details(id) ON DELETE CASCADE
+)",
+            'transaction_events' => "CREATE TABLE IF NOT EXISTS transaction_events (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    transaction_detail_id INT NOT NULL,
+    event_type VARCHAR(80) NOT NULL,
+    user_id INT NULL,
+    username VARCHAR(50) NOT NULL,
+    summary VARCHAR(255) NOT NULL,
+    details JSON NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (transaction_detail_id) REFERENCES transaction_details(id) ON DELETE CASCADE
 )",
             'transaction_lines' => "CREATE TABLE IF NOT EXISTS transaction_lines (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -56,27 +86,28 @@ $db = getDbConnection();
 
 $schema = setupSchemaTransactions()['tables'];
 
-if ($db->query($schema['transaction_details']) === TRUE) {
-    echo "Table 'transaction_details' created successfully\n";
-} else {
-    echo "Error creating table 'transaction_details': " . $db->error . "\n";
-    exit(1);
-}
-
-if ($db->query($schema['transaction_lines']) === TRUE) {
-    echo "Table 'transaction_lines' created successfully\n";
-} else {
-    echo "Error creating table 'transaction_lines': " . $db->error . "\n";
-    exit(1);
+foreach (['transaction_details', 'transaction_documents', 'transaction_events', 'transaction_lines'] as $tableName) {
+    if ($db->query($schema[$tableName]) === TRUE) {
+        echo "Table '{$tableName}' created successfully\n";
+    } else {
+        echo "Error creating table '{$tableName}': " . $db->error . "\n";
+        exit(1);
+    }
 }
 
 // Create indexes
-$db->query("CREATE INDEX idx_transaction_details_date ON transaction_details(transaction_date)");
-$db->query("CREATE INDEX idx_transaction_details_status ON transaction_details(status)");
-$db->query("CREATE INDEX idx_transaction_lines_account_id ON transaction_lines(account_id)");
-$db->query("CREATE INDEX idx_transaction_lines_fund_id ON transaction_lines(fund_id)");
-$db->query("CREATE INDEX idx_transaction_lines_amount ON transaction_lines(amount)");
-$db->query("CREATE INDEX idx_transaction_lines_type ON transaction_lines(type)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_date ON transaction_details(transaction_date)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_status ON transaction_details(status)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_source ON transaction_details(source)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_entry_status ON transaction_details(entry_status)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_workflow ON transaction_details(workflow_instance_id)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_documents_tx ON transaction_documents(transaction_detail_id)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_events_tx ON transaction_events(transaction_detail_id)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_events_type ON transaction_events(event_type)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_lines_account_id ON transaction_lines(account_id)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_lines_fund_id ON transaction_lines(fund_id)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_lines_amount ON transaction_lines(amount)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_lines_type ON transaction_lines(type)");
 
 // Insert seed data: realistic church transactions (donations, expenses, transfers)
 // At least 30 transactions, each with balanced debit/credit lines (dr == cr)

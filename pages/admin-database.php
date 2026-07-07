@@ -22,12 +22,14 @@
     $exportDir = getExportsDir();
 
     $clearActionTables = [
-        'clear_transactions' => ['transaction_lines', 'transaction_details'],
+        'clear_transactions' => ['transaction_documents', 'transaction_events', 'transaction_lines', 'transaction_details'],
         'clear_tasks' => ['tasks'],
         'clear_budgets' => ['budget_lines', 'budgets'],
         'clear_accounts_funds' => ['accounts', 'funds'],
         'clear_categories' => ['functional_categories', 'natural_categories'],
         'clear_all_financial' => [
+            'transaction_documents',
+            'transaction_events',
             'transaction_lines',
             'transaction_details',
             'budget_lines',

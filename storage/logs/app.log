@@ -374,3 +374,22 @@ Stack trace:
 [06-Jul-2026 12:18:56 UTC] [AUDIT] user=admin action=clear_all_financial_completed details={"transaction_lines":"truncated","transaction_details":"truncated","budget_lines":"truncated","budgets":"truncated","tasks":"truncated","accounts":"truncated","funds":"truncated","functional_categories":"truncated","natural_categories":"truncated","repopulated":{"natural_categories":13,"functional_categories":10}} ip=::1
 [06-Jul-2026 13:06:48 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from /var/www/temper/setup_db.php on line 54) in /var/www/temper/auth.php on line 3
 [06-Jul-2026 13:06:58 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from /var/www/temper/setup_db.php on line 54) in /var/www/temper/auth.php on line 3
+[07-Jul-2026 10:29:22 UTC] [AUDIT] user=admin action=ledger.draft_created details=transaction=35 Contribution draft created by first teller. {"grand_total":40} ip=unknown
+[07-Jul-2026 10:29:22 UTC] [AUDIT] user=admin action=workflow.created details=instance=1 Workflow created: Refactor Test Offering — 2026-07-07 {"workflow_type":"contribution","status":"draft_pending_second_count","transaction_detail_id":35} ip=unknown
+[07-Jul-2026 10:29:22 UTC] [AUDIT] user=admin action=workflow.step_completed details=instance=1 Teller count saved; pending second teller verification. {"status":"draft_pending_second_count","transaction_detail_id":35} ip=unknown
+[07-Jul-2026 10:38:37 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function getCurrentUserWithRole() in /var/www/temper/pages/workflows.php:11
+Stack trace:
+#0 {main}
+  thrown in /var/www/temper/pages/workflows.php on line 11
+[07-Jul-2026 10:39:25 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function getCurrentUserWithRole() in /var/www/temper/pages/workflows.php:11
+Stack trace:
+#0 {main}
+  thrown in /var/www/temper/pages/workflows.php on line 11
+[07-Jul-2026 11:23:09 UTC] [AUDIT] user=admin action=ledger.draft_created details=transaction=36 Contribution draft created by first teller. {"grand_total":186} ip=::1
+[07-Jul-2026 11:23:09 UTC] [AUDIT] user=admin action=workflow.created details=instance=2 Workflow created: Sunday Offering — 2026-07-07 {"workflow_type":"contribution","status":"draft_pending_second_count","transaction_detail_id":36} ip=::1
+[07-Jul-2026 11:23:09 UTC] [AUDIT] user=admin action=workflow.step_completed details=instance=2 Teller count saved; pending second teller verification. {"status":"draft_pending_second_count","transaction_detail_id":36} ip=::1
+[07-Jul-2026 11:23:56 UTC] [AUDIT] user=finance action=ledger.second_teller_signed details=transaction=36 Second teller signed off on dual count. {"second_teller_id":2,"verify_cash_total":186} ip=::1
+[07-Jul-2026 11:23:56 UTC] [AUDIT] user=finance action=workflow.signed details=instance=2 Second teller signed off on dual count. {"second_teller_id":2,"transaction_detail_id":36} ip=::1
+[07-Jul-2026 11:24:27 UTC] [AUDIT] user=admin action=ledger.validated details=transaction=36 Transaction validated and finalized. {"validated_by_user_id":1} ip=::1
+[07-Jul-2026 11:24:27 UTC] [AUDIT] user=admin action=ledger.deposit_finalized details=transaction=36 Contribution deposit finalized with ledger lines. {"workflow_instance_id":2,"amount":186} ip=::1
+[07-Jul-2026 11:24:27 UTC] [AUDIT] user=admin action=workflow.deposit_created details=instance=2 Ledger deposit #36 finalized from contribution workflow. {"transaction_id":36,"amount":186} ip=::1
