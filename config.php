@@ -13,9 +13,9 @@ if (basename($_SERVER['PHP_SELF']) === basename(__FILE__)) {
 define('APP_NAME', 'Hope Baptist Treasurer');
 define('APP_VERSION', '1.0.0');
 define('DB_HOST', '127.0.0.1');
-define('DB_NAME', 'treasurer_db');
-define('DB_USER', 'treasurer_user');
-define('DB_PASS', 'treasurer_password');
+define('DB_NAME', 'temper_db');
+define('DB_USER', 'temper_user');
+define('DB_PASS', 'temper_password');
 
 require_once __DIR__ . '/includes/storage_paths.php';
 

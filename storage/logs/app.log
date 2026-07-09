@@ -393,3 +393,9 @@ Stack trace:
 [07-Jul-2026 11:24:27 UTC] [AUDIT] user=admin action=ledger.validated details=transaction=36 Transaction validated and finalized. {"validated_by_user_id":1} ip=::1
 [07-Jul-2026 11:24:27 UTC] [AUDIT] user=admin action=ledger.deposit_finalized details=transaction=36 Contribution deposit finalized with ledger lines. {"workflow_instance_id":2,"amount":186} ip=::1
 [07-Jul-2026 11:24:27 UTC] [AUDIT] user=admin action=workflow.deposit_created details=instance=2 Ledger deposit #36 finalized from contribution workflow. {"transaction_id":36,"amount":186} ip=::1
+[08-Jul-2026 22:32:30 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Access denied for user 'treasurer_user'@'localhost' in /var/www/hopeserver02/temper/config.php:24
+Stack trace:
+#0 /var/www/hopeserver02/temper/config.php(24): mysqli->__construct()
+#1 /var/www/hopeserver02/temper/setup_db.php(119): getDbConnection()
+#2 {main}
+  thrown in /var/www/hopeserver02/temper/config.php on line 24
