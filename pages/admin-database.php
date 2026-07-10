@@ -1,21 +1,9 @@
 <?php
     // Admin Database Maintenance - Inner content only for AJAX loading
-
-    require_once __DIR__ . '/../config.php';
-    require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../includes/page_bootstrap.php';
     require_once __DIR__ . '/../includes/audit.php';
 
-    if (!isLoggedIn()) {
-        header('HTTP/1.1 403 Forbidden');
-        echo 'Unauthorized';
-        exit;
-    }
-
-    if (!isset($db)) {
-        $db = getDbConnection();
-    }
-
-    define('MAINTENANCE_PIN', '464546');
+define('MAINTENANCE_PIN', '464546');
     define('DEFAULT_ADMIN_PASSWORD_HASH', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute');
 
     $backupDir = getBackupDir();

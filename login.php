@@ -47,6 +47,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 You have been logged out successfully.
                             </div>
                         <?php endif; ?>
+                        <?php if (isset($_GET['expired'])): ?>
+                            <div class="alert alert-warning text-center">
+                                Your session has expired. Please log in again.
+                            </div>
+                        <?php endif; ?>
                         <?php if ($error): ?>
                             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
                         <?php endif; ?>

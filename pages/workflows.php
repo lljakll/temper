@@ -1,9 +1,6 @@
 <?php
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-    require_once __DIR__ . '/../includes/workflow_bootstrap.php';
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/workflow_bootstrap.php';
     require_once __DIR__ . '/../includes/workflows/registry.php';
 
     workflowRequireTables($db);

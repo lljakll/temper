@@ -1,11 +1,8 @@
 <?php
     // Reports - Inner content only for AJAX loading
 
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-    require_once __DIR__ . '/../includes/budget_utils.php';
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/budget_utils.php';
 
     $today = date('Y-m-d');
     $yearStart = date('Y') . '-01-01';
@@ -143,6 +140,8 @@
 
                 $sql = "SELECT td.id, td.transaction_date, td.pay_to, td.reference_number,
                                td.check_number, td.status,
+                               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id AND type = 'debit'), 0) AS total_debits,
+                               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id AND type = 'credit'), 0) AS total_credits,
                                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id), 0) AS total_amount,
                                (SELECT GROUP_CONCAT(DISTINCT f.name ORDER BY f.name SEPARATOR ', ')
                                 FROM transaction_lines tl2
@@ -169,6 +168,8 @@
                         'pay_to'     => $r['pay_to'] ?? '',
                         'fund'       => $r['fund_names'] ?? '—',
                         'category'   => $r['category_names'] ?? '—',
+                        'debit'      => (float)$r['total_debits'],
+                        'credit'     => (float)$r['total_credits'],
                         'amount'     => (float)$r['total_amount'],
                         'status'     => $r['status'],
                     ];
@@ -870,16 +871,36 @@
         }
 
         if (key === 'transaction-listing') {
+            const cellAmt = (n) => {
+                const v = parseFloat(n) || 0;
+                return Math.abs(v) < 0.005 ? '' : fmtMoney(Math.abs(v));
+            };
             let rows = '';
+            let sumDeb = 0, sumCred = 0;
             data.rows.forEach(r => {
-                rows += '<tr><td>' + r.date + '</td><td>' + r.ref + '</td><td>' + (r.pay_to || '—') + '</td><td>' + r.fund + '</td><td class="small">' + r.category + '</td><td class="text-end">' + fmtMoney(r.amount) + '</td><td>' + statusBadge(r.status) + '</td></tr>';
+                const d = r.debit != null ? r.debit : r.amount;
+                const c = r.credit != null ? r.credit : 0;
+                sumDeb += parseFloat(d) || 0;
+                sumCred += parseFloat(c) || 0;
+                rows += '<tr><td>' + r.date + '</td><td>' + r.ref + '</td><td>' + (r.pay_to || '—') + '</td><td>' + r.fund
+                    + '</td><td class="small">' + r.category
+                    + '</td><td class="text-end font-monospace text-primary fw-semibold">' + cellAmt(d)
+                    + '</td><td class="text-end font-monospace text-success fw-semibold">' + cellAmt(c)
+                    + '</td><td>' + statusBadge(r.status) + '</td></tr>';
             });
-            if (!data.rows.length) rows = '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the selected filters.</td></tr>';
+            if (!data.rows.length) {
+                rows = '<tr><td colspan="8" class="text-center text-muted py-3">No transactions match the selected filters.</td></tr>';
+            } else {
+                rows += '<tr class="table-light fw-semibold"><td colspan="5" class="text-end">Totals</td>'
+                    + '<td class="text-end font-monospace text-primary">' + cellAmt(sumDeb) + '</td>'
+                    + '<td class="text-end font-monospace text-success">' + cellAmt(sumCred) + '</td>'
+                    + '<td></td></tr>';
+            }
             return `
                 <div class="small text-muted mb-2">Generated ${data.generated} &bull; ${data.count} transaction${data.count === 1 ? '' : 's'}</div>
                 <div class="table-responsive">
                     <table class="table table-sm table-hover align-middle mb-0">
-                        <thead class="table-dark"><tr><th>Date</th><th>Ref #</th><th>Pay To</th><th>Fund</th><th>Category</th><th class="text-end">Amount</th><th>Status</th></tr></thead>
+                        <thead class="table-dark"><tr><th>Date</th><th>Ref #</th><th>Pay To</th><th>Fund</th><th>Category</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th>Status</th></tr></thead>
                         <tbody>${rows}</tbody>
                     </table>
                 </div>`;

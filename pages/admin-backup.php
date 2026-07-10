@@ -1,21 +1,9 @@
 <?php
-    // Admin Backup & Restore - Inner content only for AJAX loading
+// Admin Backup & Restore - Inner content only for AJAX loading
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/backup_utils.php';
 
-    require_once __DIR__ . '/../config.php';
-    require_once __DIR__ . '/../includes/backup_utils.php';
-    require_once __DIR__ . '/../auth.php';
-
-    if (!isLoggedIn()) {
-        header('HTTP/1.1 403 Forbidden');
-        echo 'Unauthorized';
-        exit;
-    }
-
-    if (!isset($db)) {
-        $db = getDbConnection();
-    }
-
-    @ini_set('pcre.jit', '0');
+@ini_set('pcre.jit', '0');
 
     $backupDirInfo = ensureStorageSubdir('backups');
     $backupDir = $backupDirInfo['path'];

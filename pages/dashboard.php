@@ -2,12 +2,8 @@
 
     // Security and DB connection already handled by index.php
     // Light fallback in case
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-
-    $today = date('Y-m-d');
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+$today = date('Y-m-d');
     $recent_limit = 6;
 
     $fundBalanceSql = "
@@ -73,11 +69,12 @@
     $cash_total = (float)($cashStmt->get_result()->fetch_assoc()['balance'] ?? 0);
     $cashStmt->close();
 
-    // Recent transactions
+    // Recent transactions (debit / credit totals for traditional two-column display)
     $recent_tx = [];
     $txStmt = $db->prepare("
         SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.status,
-               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id), 0) AS total_amount
+               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id AND type = 'debit'), 0) AS total_debits,
+               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id AND type = 'credit'), 0) AS total_credits
         FROM transaction_details td
         ORDER BY td.transaction_date DESC, td.id DESC
         LIMIT ?
@@ -92,6 +89,14 @@
         $txRes->close();
     }
     $txStmt->close();
+
+    $fmtLedgerAmt = static function ($amount): string {
+        $a = (float)$amount;
+        if (abs($a) < 0.005) {
+            return '';
+        }
+        return '$' . number_format(abs($a), 2);
+    };
 ?>
 
 <div class="row mb-4">
@@ -197,7 +202,8 @@
                                 <th>Date</th>
                                 <th>Pay To</th>
                                 <th>Ref #</th>
-                                <th class="text-end">Amount</th>
+                                <th class="text-end text-nowrap">Debit</th>
+                                <th class="text-end text-nowrap">Credit</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
@@ -214,17 +220,20 @@
                                             $statusBadge = 'bg-info';
                                             $statusText = 'Reconciled';
                                         }
+                                        $deb = $fmtLedgerAmt($tx['total_debits'] ?? 0);
+                                        $cred = $fmtLedgerAmt($tx['total_credits'] ?? 0);
                                     ?>
                                     <tr>
                                         <td><?= htmlspecialchars($tx['transaction_date']) ?></td>
                                         <td><?= htmlspecialchars($tx['pay_to'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($tx['reference_number'] ?? '-') ?></td>
-                                        <td class="text-end">$<?= number_format((float)$tx['total_amount'], 2) ?></td>
+                                        <td class="text-end font-monospace text-primary fw-semibold"><?= $deb !== '' ? htmlspecialchars($deb) : '' ?></td>
+                                        <td class="text-end font-monospace text-success fw-semibold"><?= $cred !== '' ? htmlspecialchars($cred) : '' ?></td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="5" class="text-center py-4">No transactions recorded yet.</td></tr>
+                                <tr><td colspan="6" class="text-center py-4">No transactions recorded yet.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>

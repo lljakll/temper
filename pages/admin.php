@@ -1,14 +1,9 @@
 <?php
     // Admin - Inner content only for AJAX loading
-
-    require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../includes/page_bootstrap.php';
     require_once __DIR__ . '/../includes/backup_utils.php';
 
-    if (!isset($db)) {
-        $db = getDbConnection();
-    }
-
-    $lookupLinks = [
+$lookupLinks = [
         ['page' => 'setup_funds', 'title' => 'Funds', 'icon' => 'bi-wallet2'],
         ['page' => 'setup_accounts', 'title' => 'Accounts', 'icon' => 'bi-credit-card'],
         ['page' => 'setup_naturalclasses', 'title' => 'Natural Classes', 'icon' => 'bi-tag'],

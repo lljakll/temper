@@ -182,12 +182,21 @@ function getLogsDir(): string {
     return ensureStorageSubdir('logs')['path'];
 }
 
+/**
+ * Directory for ledger/workflow file attachments.
+ * Preferred path: storage/attachments/ (legacy: storage/transaction_documents/).
+ */
 function getTransactionDocumentsDir(): string {
-    return ensureStorageSubdir('transaction_documents')['path'];
+    return ensureStorageSubdir('attachments')['path'];
 }
 
 /** @deprecated Use getTransactionDocumentsDir() */
 function getWorkflowDocumentsDir(): string {
+    return getTransactionDocumentsDir();
+}
+
+/** Alias for clarity in newer call sites. */
+function getAttachmentsDir(): string {
     return getTransactionDocumentsDir();
 }
 

@@ -13,7 +13,6 @@ require_once __DIR__ . '/workflow_engine.php';
  */
 function workflowDenyAndExit(mysqli $db, string $message): void {
     echo '<div class="alert alert-warning">' . htmlspecialchars($message) . '</div>';
-    $db->close();
     exit;
 }
 
@@ -23,9 +22,12 @@ function workflowDenyAndExit(mysqli $db, string $message): void {
  * @return array Authenticated user row from getCurrentUserWithRole()
  */
 function workflowRequireActor(mysqli $db, string $capability = 'workflow.view'): array {
+    // Central session gate (401 / redirect on expiry)
+    requireLogin($db);
+
     $actor = getCurrentUserWithRole($db);
     if (!$actor) {
-        workflowDenyAndExit($db, 'Not authenticated.');
+        denyUnauthenticatedAccess();
     }
     if (!userHasWorkflowCapability($db, (int)$actor['id'], $capability)) {
         workflowDenyAndExit($db, 'You do not have permission to access workflows.');

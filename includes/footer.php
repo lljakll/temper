@@ -3,11 +3,8 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../auth.php';
 
-// Redirect if not logged in
-if (!isLoggedIn()) {
-    header('Location: ../login.php');
-    exit;
-}
+// Central session check (shell footer)
+requireLogin();
 
 // Get current user info
 $user = getCurrentUser();
@@ -37,6 +34,21 @@ if (!isset($db)) {
         }
 
         window.showToast = function(message, type = 'info', delay = 4500) {
+            // Never surface toasts while redirecting to login after session expiry
+            if (window.__temperAuthRedirecting) return null;
+            if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(message)) {
+                if (typeof window.redirectToLoginExpired === 'function') {
+                    window.redirectToLoginExpired();
+                }
+                return null;
+            }
+            const msg = String(message || '');
+            if (/session has expired|auth_required|AUTH_REQUIRED|please log in again/i.test(msg)) {
+                if (typeof window.redirectToLoginExpired === 'function') {
+                    window.redirectToLoginExpired();
+                }
+                return null;
+            }
             const container = document.getElementById('appToastContainer');
             const variant = TOAST_VARIANTS[type] || type || 'info';
             if (!container || typeof bootstrap === 'undefined' || !bootstrap.Toast) {
@@ -55,9 +67,16 @@ if (!isset($db)) {
         };
 
         window.showActionResponse = function(text) {
+            if (window.__temperAuthRedirecting) return;
             if (!text || typeof text !== 'string') return;
             const trimmed = text.trim();
             if (!trimmed) return;
+            if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(trimmed)) {
+                if (typeof window.redirectToLoginExpired === 'function') {
+                    window.redirectToLoginExpired();
+                }
+                return;
+            }
             const htmlIdx = trimmed.search(/<[!do]/i);
             const prefix = (htmlIdx > 0 ? trimmed.slice(0, htmlIdx) : trimmed).trim();
             const line = prefix.split('\n').map(function(l) { return l.trim(); }).find(function(l) { return l.length > 0; });
@@ -73,6 +92,7 @@ if (!isset($db)) {
         };
 
         window.consumePageFlash = function(id) {
+            if (window.__temperAuthRedirecting) return;
             const el = document.getElementById(id || 'page-flash');
             if (!el) return;
             try {
@@ -88,20 +108,39 @@ if (!isset($db)) {
             return fetch(postUrl, { method: 'POST', body: formData })
                 .then(function(r) { return r.text(); })
                 .then(function(text) {
+                    if (window.__temperAuthRedirecting) return null;
+                    if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(text)) {
+                        window.redirectToLoginExpired();
+                        return null;
+                    }
                     showActionResponse(text);
                     return fetch(reloadUrl);
                 })
-                .then(function(r) { return r.text(); })
+                .then(function(r) {
+                    if (!r || window.__temperAuthRedirecting) return null;
+                    return r.text();
+                })
                 .then(function(html) {
+                    if (html == null || window.__temperAuthRedirecting) return;
+                    if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(html)) {
+                        window.redirectToLoginExpired();
+                        return;
+                    }
                     document.getElementById('main-content').innerHTML = html;
                 })
                 .catch(function(err) {
+                    if (window.__temperAuthRedirecting) return;
                     console.error(err);
                     showToast('Request failed. Please try again.', 'danger');
                 });
         };
 
         window.applyMainContent = function(html) {
+            if (window.__temperAuthRedirecting) return;
+            if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(html)) {
+                window.redirectToLoginExpired();
+                return;
+            }
             document.getElementById('main-content').innerHTML = html;
             consumePageFlash('page-flash');
             consumePageFlash('ledger-flash');

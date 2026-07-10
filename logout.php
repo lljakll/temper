@@ -1,13 +1,9 @@
 <?php
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/auth.php';
 
-// Destroy all session data
-session_destroy();
+logout();
 
 // Redirect back to login with success message
-header("Location: login.php?logout=1");
+header('Location: login.php?logout=1');
 exit;
-?>

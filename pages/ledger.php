@@ -1,17 +1,15 @@
 <?php
     // Ledger - Inner content only for AJAX loading
 
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-    require_once __DIR__ . '/../includes/ledger_engine.php';
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/ledger_engine.php';
 
     $success = null;
     $error = null;
 
-    if (isset($_GET['download_document'])) {
-        $docId = (int)$_GET['download_document'];
+    if (isset($_GET['download_document']) || isset($_GET['preview_document'])) {
+        $isPreview = isset($_GET['preview_document']);
+        $docId = (int)($isPreview ? $_GET['preview_document'] : $_GET['download_document']);
         $doc = ledgerFetchDocument($db, $docId);
         if (!$doc) {
             http_response_code(404);
@@ -24,10 +22,40 @@
             echo 'File not found.';
             exit;
         }
-        header('Content-Type: ' . ($doc['mime_type'] ?: 'application/octet-stream'));
-        header('Content-Disposition: attachment; filename="' . basename($doc['original_filename']) . '"');
+        $mime = $doc['mime_type'] ?: 'application/octet-stream';
+        $filename = basename($doc['original_filename']);
+        $safeName = str_replace(['"', "\r", "\n"], '', $filename);
+        header('Content-Type: ' . $mime);
+        if ($isPreview) {
+            header('Content-Disposition: inline; filename="' . $safeName . '"');
+            header('X-Content-Type-Options: nosniff');
+        } else {
+            header('Content-Disposition: attachment; filename="' . $safeName . '"');
+        }
         header('Content-Length: ' . filesize($path));
         readfile($path);
+        exit;
+    }
+
+    if (isset($_GET['document_meta'])) {
+        header('Content-Type: application/json');
+        $docId = (int)$_GET['document_meta'];
+        $doc = ledgerFetchDocument($db, $docId);
+        if (!$doc) {
+            echo json_encode(['success' => false, 'error' => 'Document not found.']);
+            exit;
+        }
+        $kind = ledgerDocumentPreviewKind($doc['mime_type'] ?? null, $doc['original_filename'] ?? '');
+        echo json_encode([
+            'success' => true,
+            'id' => (int)$doc['id'],
+            'original_filename' => $doc['original_filename'],
+            'mime_type' => $doc['mime_type'],
+            'file_size' => (int)$doc['file_size'],
+            'preview_kind' => $kind,
+            'preview_url' => 'pages/ledger.php?preview_document=' . (int)$doc['id'],
+            'download_url' => 'pages/ledger.php?download_document=' . (int)$doc['id'],
+        ]);
         exit;
     }
 
@@ -74,38 +102,177 @@
         $actor = getCurrentUserWithRole($db);
 
         if ($action === 'upload_document') {
-            header('Content-Type: application/json');
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
             $txId = (int)($_POST['tx_id'] ?? 0);
-            if ($txId <= 0 || empty($_FILES['document']['tmp_name'])) {
-                echo json_encode(['error' => 'Transaction ID and document are required.']);
+            if ($txId <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Transaction ID is required.']);
+                exit;
+            }
+            if (empty($_FILES['document']) || (int)($_FILES['document']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                echo json_encode(['success' => false, 'error' => 'Please select a file to upload.']);
                 exit;
             }
             $tx = ledgerFetchTransaction($db, $txId);
             if (!$tx) {
-                echo json_encode(['error' => 'Transaction not found.']);
+                echo json_encode(['success' => false, 'error' => 'Transaction not found.']);
                 exit;
             }
-            $userId = $actor ? (int)$actor['id'] : 0;
-            $result = ledgerStoreDocument(
+            if (empty($tx['is_editable'])) {
+                echo json_encode(['success' => false, 'error' => 'This transaction is read-only; documents cannot be uploaded.']);
+                exit;
+            }
+            if (!$actor) {
+                echo json_encode(['success' => false, 'error' => 'You must be signed in to upload documents.']);
+                exit;
+            }
+            $userId = (int)$actor['id'];
+            $result = ledgerStoreDocumentFromUpload(
                 $db,
                 $txId,
                 $userId,
-                $_FILES['document']['name'],
-                $_FILES['document']['tmp_name'],
-                $_FILES['document']['type'] ?? 'application/octet-stream'
+                $_FILES['document']
             );
             if (!empty($result['success'])) {
-                ledgerLogEvent(
-                    $db,
-                    $txId,
-                    'document_uploaded',
-                    $userId,
-                    $actor['username'] ?? 'system',
-                    'Document uploaded: ' . $_FILES['document']['name'],
-                    ['doc_id' => $result['id']]
-                );
+                $origName = basename((string)($_FILES['document']['name'] ?? 'file'));
+                try {
+                    ledgerLogEvent(
+                        $db,
+                        $txId,
+                        'document_uploaded',
+                        $userId,
+                        $actor['username'] ?? 'system',
+                        'Attachment "' . $origName . '" added.',
+                        ['doc_id' => $result['id'], 'original_filename' => $origName]
+                    );
+                } catch (Throwable $e) {
+                    // File is stored; do not fail the client response for audit logging issues.
+                    error_log('ledger upload audit failed: ' . $e->getMessage());
+                }
+                $result['success'] = true;
+                $result['message'] = 'Upload Successful';
+                $docs = ledgerFetchDocuments($db, $txId);
+                $result['documents'] = $docs;
+            } else {
+                $result['success'] = false;
+                if (empty($result['error'])) {
+                    $result['error'] = 'Upload failed.';
+                }
             }
-            echo json_encode($result);
+            echo json_encode($result, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($action === 'delete_document' || $action === 'delete_documents') {
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            if (!$actor) {
+                echo json_encode(['success' => false, 'error' => 'You must be signed in to delete documents.']);
+                exit;
+            }
+
+            $docIds = [];
+            if ($action === 'delete_documents') {
+                $raw = json_decode($_POST['doc_ids'] ?? '[]', true);
+                if (is_array($raw)) {
+                    foreach ($raw as $v) {
+                        $id = (int)$v;
+                        if ($id > 0) {
+                            $docIds[] = $id;
+                        }
+                    }
+                }
+            } else {
+                $one = (int)($_POST['doc_id'] ?? 0);
+                if ($one > 0) {
+                    $docIds[] = $one;
+                }
+            }
+            $docIds = array_values(array_unique($docIds));
+            if ($docIds === []) {
+                echo json_encode(['success' => false, 'error' => 'Document ID is required.']);
+                exit;
+            }
+
+            $txId = 0;
+            $deleted = [];
+            $errors = [];
+            foreach ($docIds as $docId) {
+                $doc = ledgerFetchDocument($db, $docId);
+                if (!$doc) {
+                    $errors[] = "Document #$docId not found.";
+                    continue;
+                }
+                $docTxId = (int)$doc['transaction_detail_id'];
+                if ($txId === 0) {
+                    $txId = $docTxId;
+                    $tx = ledgerFetchTransaction($db, $txId);
+                    if (!$tx) {
+                        echo json_encode(['success' => false, 'error' => 'Transaction not found.']);
+                        exit;
+                    }
+                    if (empty($tx['is_editable'])) {
+                        echo json_encode(['success' => false, 'error' => 'This transaction is read-only; documents cannot be deleted.']);
+                        exit;
+                    }
+                } elseif ($docTxId !== $txId) {
+                    $errors[] = "Document #$docId belongs to a different transaction.";
+                    continue;
+                }
+
+                $del = ledgerDeleteDocument($db, $docId);
+                if (empty($del['success'])) {
+                    $errors[] = $del['error'] ?? ("Failed to delete document #$docId.");
+                    continue;
+                }
+                $deleted[] = [
+                    'id' => $docId,
+                    'original_filename' => $doc['original_filename'] ?? '',
+                ];
+                $delName = basename((string)($doc['original_filename'] ?? 'file'));
+                try {
+                    ledgerLogEvent(
+                        $db,
+                        $txId,
+                        'document_deleted',
+                        (int)$actor['id'],
+                        $actor['username'] ?? 'system',
+                        'Attachment "' . $delName . '" removed.',
+                        ['doc_id' => $docId, 'original_filename' => $delName]
+                    );
+                } catch (Throwable $e) {
+                    error_log('ledger delete audit failed: ' . $e->getMessage());
+                }
+            }
+
+            $count = count($deleted);
+            if ($count === 0) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => $errors[0] ?? 'Delete failed.',
+                    'errors' => $errors,
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $names = array_map(static fn($d) => $d['original_filename'] ?: ('#' . $d['id']), $deleted);
+            $msg = $count === 1
+                ? ('Deleted attachment: ' . $names[0])
+                : ('Deleted ' . $count . ' attachments: ' . implode(', ', $names));
+
+            echo json_encode([
+                'success' => true,
+                'message' => $msg,
+                'deleted' => $deleted,
+                'deleted_count' => $count,
+                'errors' => $errors,
+                'documents' => $txId > 0 ? ledgerFetchDocuments($db, $txId) : [],
+                'transaction_detail_id' => $txId,
+            ], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -219,6 +386,20 @@
                             $upd->bind_param("sssssi", $d, $c, $p, $ref, $mm, $tx_id);
                             if ($upd->execute()) {
                                 $upd->close();
+
+                                $describe = ledgerDescribeTransactionUpdate(
+                                    $db,
+                                    $existing,
+                                    [
+                                        'transaction_date' => $d,
+                                        'pay_to' => $p,
+                                        'reference_number' => $ref,
+                                        'check_number' => $c,
+                                        'memo' => $mm,
+                                    ],
+                                    $vlines
+                                );
+
                                 // Replace lines
                                 $del = $db->prepare("DELETE FROM transaction_lines WHERE transaction_detail_id=?");
                                 $del->bind_param('i', $tx_id);
@@ -238,8 +419,12 @@
                                     'updated',
                                     $actor ? (int)$actor['id'] : null,
                                     $actor['username'] ?? 'system',
-                                    'Manual transaction updated.',
-                                    ['debits' => $dt, 'credits' => $ct]
+                                    $describe['summary'],
+                                    [
+                                        'debits' => $dt,
+                                        'credits' => $ct,
+                                        'changes' => $describe['changes'],
+                                    ]
                                 );
                                 $success = "Transaction #$tx_id updated. Debits $" . number_format($dt, 2) . " = Credits $" . number_format($ct, 2);
                             } else {
@@ -268,14 +453,19 @@
                             ];
                         }
                         ledgerReplaceLines($db, $tid, $lineRows);
+                        $describe = ledgerDescribeTransactionCreate($db, $p, $vlines);
                         ledgerLogEvent(
                             $db,
                             $tid,
                             'created',
                             $createdBy,
                             $actor['username'] ?? 'system',
-                            'Manual transaction created.',
-                            ['debits' => $dt, 'credits' => $ct]
+                            $describe['summary'],
+                            [
+                                'debits' => $dt,
+                                'credits' => $ct,
+                                'changes' => $describe['changes'],
+                            ]
                         );
                         $success = "Transaction #$tid saved. Debits $" . number_format($dt, 2) . " = Credits $" . number_format($ct, 2);
                     }
@@ -418,6 +608,8 @@
     $tx_stmt = $db->prepare("
         SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.memo, td.status, td.cleared_date,
                td.source, td.entry_status, td.workflow_instance_id, td.validated_by_user_id, td.validated_at,
+               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0) AS total_debits,
+               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
                COALESCE((SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS num_lines
         FROM transaction_details td
@@ -440,30 +632,44 @@
         $tx_result->close();
     }
 
-    // When an account is selected, compute signed amount (delta) from that account's perspective
-    // +amount if line.type matches the account's normal_balance, else -amount
-    $acct_amounts = [];
-    if ($filter_account_id > 0 && $view_normal && count($tx_rows) > 0) {
+    // When an account is selected, show Debit/Credit totals for that account only
+    $acct_debits = [];
+    $acct_credits = [];
+    if ($filter_account_id > 0 && count($tx_rows) > 0) {
         $ids = [];
         foreach ($tx_rows as $r) { $ids[] = (int)$r['id']; }
         $in = implode(',', array_fill(0, count($ids), '?'));
         $dq = $db->prepare("
             SELECT transaction_detail_id,
-                   SUM(CASE WHEN type = ? THEN amount ELSE -amount END) AS delta
+                   COALESCE(SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END), 0) AS debits,
+                   COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END), 0) AS credits
             FROM transaction_lines
             WHERE transaction_detail_id IN ($in) AND account_id = ?
             GROUP BY transaction_detail_id
         ");
-        $dtypes = 's' . str_repeat('i', count($ids)) . 'i';
-        $dparams = array_merge([$view_normal], $ids, [$filter_account_id]);
+        $dtypes = str_repeat('i', count($ids)) . 'i';
+        $dparams = array_merge($ids, [$filter_account_id]);
         $dq->bind_param($dtypes, ...$dparams);
         $dq->execute();
         $dres = $dq->get_result();
         while ($dm = $dres->fetch_assoc()) {
-            $acct_amounts[(int)$dm['transaction_detail_id']] = (float)$dm['delta'];
+            $tid = (int)$dm['transaction_detail_id'];
+            $acct_debits[$tid] = (float)$dm['debits'];
+            $acct_credits[$tid] = (float)$dm['credits'];
         }
         $dq->close();
     }
+
+    /**
+     * Format a ledger money cell: blank when zero, otherwise positive $x.xx (right-aligned by CSS).
+     */
+    $fmtLedgerAmt = static function ($amount): string {
+        $a = (float)$amount;
+        if (abs($a) < 0.005) {
+            return '';
+        }
+        return '$' . number_format(abs($a), 2);
+    };
 ?>
 <div class="container-fluid">
 <?php if ($success || $error): ?>
@@ -540,7 +746,8 @@
                                 <th>Ref #</th>
                                 <th>Check #</th>
                                 <th>Memo</th>
-                                <th class="text-end">Amount</th>
+                                <th class="text-end text-nowrap" style="min-width:5.5rem" title="Debit amounts">Debit</th>
+                                <th class="text-end text-nowrap" style="min-width:5.5rem" title="Credit amounts">Credit</th>
                                 <th>Status</th>
                                 <th>Source</th>
                                 <th class="text-center">Lines</th>
@@ -558,18 +765,26 @@
                                         elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
                                         $sourceText = ($r['source'] ?? 'manual') === 'workflow' ? 'Workflow' : 'Manual';
                                         $sourceBadge = ($r['source'] ?? 'manual') === 'workflow' ? 'bg-primary' : 'bg-light text-dark border';
-                                        $raw_amt = (float)($r['total_amount'] ?? 0);
-                                        $disp_amt = isset($acct_amounts[$r['id']]) ? $acct_amounts[$r['id']] : $raw_amt;
-                                        $amt_display = ($disp_amt < 0 ? '-$' : '$') . number_format(abs($disp_amt), 2);
+                                        $tid = (int)$r['id'];
+                                        if ($filter_account_id > 0) {
+                                            $debAmt = $acct_debits[$tid] ?? 0.0;
+                                            $credAmt = $acct_credits[$tid] ?? 0.0;
+                                        } else {
+                                            $debAmt = (float)($r['total_debits'] ?? 0);
+                                            $credAmt = (float)($r['total_credits'] ?? 0);
+                                        }
+                                        $debDisplay = $fmtLedgerAmt($debAmt);
+                                        $credDisplay = $fmtLedgerAmt($credAmt);
                                     ?>
-                                    <tr data-id="<?= (int)$r['id'] ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-entry-status="<?= htmlspecialchars($r['entry_status'] ?? 'finalized') ?>" data-source="<?= htmlspecialchars($r['source'] ?? 'manual') ?>">
-                                        <td><input type="checkbox" class="form-check-input tx-cb" value="<?= (int)$r['id'] ?>"></td>
+                                    <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-entry-status="<?= htmlspecialchars($r['entry_status'] ?? 'finalized') ?>" data-source="<?= htmlspecialchars($r['source'] ?? 'manual') ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>">
+                                        <td><input type="checkbox" class="form-check-input tx-cb" value="<?= $tid ?>"></td>
                                         <td><?= htmlspecialchars($r['transaction_date']) ?></td>
                                         <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
                                         <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
-                                        <td class="text-end fw-semibold<?= ($filter_account_id > 0 && $disp_amt < 0) ? ' text-danger' : '' ?>"><?= $amt_display ?></td>
+                                        <td class="text-end font-monospace text-primary fw-semibold ledger-debit-col"><?= $debDisplay !== '' ? htmlspecialchars($debDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
+                                        <td class="text-end font-monospace text-success fw-semibold ledger-credit-col"><?= $credDisplay !== '' ? htmlspecialchars($credDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
                                         <td><span class="badge <?= $sourceBadge ?>"><?= $sourceText ?></span></td>
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
@@ -577,7 +792,7 @@
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="10" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
+                                    <td colspan="11" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -648,8 +863,8 @@
                                         <th>Fund</th>
                                         <th>Natural</th>
                                         <th>Functional</th>
-                                        <th class="text-end" style="width:110px">Amount</th>
-                                        <th style="width:70px">Type</th>
+                                        <th class="text-end text-primary" style="width:100px">Debit</th>
+                                        <th class="text-end text-success" style="width:100px">Credit</th>
                                         <th style="width:30px"></th>
                                     </tr>
                                 </thead>
@@ -669,13 +884,29 @@
                         <div class="row g-2 small mb-2" id="txMetaBadges"></div>
                         <div id="txContributionData" class="d-none mb-2"></div>
                         <h6 class="small mb-1">Documents</h6>
-                        <ul id="txDocumentsList" class="small mb-2 text-muted"></ul>
-                        <form id="txDocUploadForm" class="d-flex gap-2 align-items-center mb-3 d-none">
-                            <input type="file" class="form-control form-control-sm" name="document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
-                            <button type="submit" class="btn btn-outline-secondary btn-sm">Upload</button>
-                        </form>
-                        <h6 class="small mb-1">Audit Trail</h6>
-                        <ul id="txEventsList" class="small mb-0"></ul>
+                        <ul id="txDocumentsList" class="list-unstyled small mb-2"></ul>
+                        <!-- Not a nested <form> (invalid inside #txForm); button-driven upload -->
+                        <div id="txDocUploadForm" class="d-flex gap-2 align-items-center mb-3 d-none">
+                            <input type="file" id="txDocFile" class="form-control form-control-sm" name="document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+                            <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm" disabled>Upload</button>
+                        </div>
+                        <div class="accordion accordion-flush border rounded" id="txAuditAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="txAuditHeading">
+                                    <button class="accordion-button collapsed py-2 px-3 small fw-semibold" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#txAuditCollapse"
+                                            aria-expanded="false" aria-controls="txAuditCollapse" id="txAuditToggle">
+                                        Audit Trail
+                                    </button>
+                                </h2>
+                                <div id="txAuditCollapse" class="accordion-collapse collapse"
+                                     aria-labelledby="txAuditHeading" data-bs-parent="#txAuditAccordion">
+                                    <div class="accordion-body p-2">
+                                        <ul id="txEventsList" class="small mb-0 list-unstyled"></ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="mt-2">
@@ -684,6 +915,47 @@
                         <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary ms-2">Cancel</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Document preview modal (Bootstrap) -->
+<div class="modal fade" id="txDocPreviewModal" tabindex="-1" aria-labelledby="txDocPreviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title text-truncate" id="txDocPreviewTitle">Document</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="txDocPreviewBody" style="min-height: 50vh;">
+                <div class="text-center text-muted py-5">Loading…</div>
+            </div>
+            <div class="modal-footer py-2">
+                <a href="#" id="txDocPreviewDownload" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">Download</a>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Queue delete confirmation modal -->
+<div class="modal fade" id="txQueueDeleteModal" tabindex="-1" aria-labelledby="txQueueDeleteTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title" id="txQueueDeleteTitle">Queue file for deletion?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cancel"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2" id="txQueueDeleteMessage">
+                    This file will be queued for deletion. It will be removed only when you save the transaction.
+                </p>
+                <p class="small text-muted mb-0">File: <strong id="txQueueDeleteFileName"></strong></p>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" id="txQueueDeleteCancel">Cancel</button>
+                <button type="button" class="btn btn-sm btn-danger" id="txQueueDeleteConfirm">Queue Delete</button>
             </div>
         </div>
     </div>
@@ -737,14 +1009,27 @@
         return s ? '?' + s : '';
     }
 
+    function getLineAmountAndType(row) {
+        const debIn = row.querySelector('.line-debit-amt');
+        const credIn = row.querySelector('.line-credit-amt');
+        const deb = parseFloat(debIn?.value || '0') || 0;
+        const cred = parseFloat(credIn?.value || '0') || 0;
+        // Prefer the column that has a value; account type guides which is active
+        const typeHint = row.dataset.lineType || '';
+        if (typeHint === 'credit' && cred > 0) return { amount: cred, type: 'credit' };
+        if (typeHint === 'debit' && deb > 0) return { amount: deb, type: 'debit' };
+        if (cred > 0 && deb <= 0) return { amount: cred, type: 'credit' };
+        if (deb > 0) return { amount: deb, type: 'debit' };
+        return { amount: 0, type: typeHint || '' };
+    }
+
     function recalcTotals() {
         let deb = 0, cred = 0;
         linesBody.querySelectorAll('tr').forEach(row => {
-            const amt = parseFloat(row.querySelector('.line-amount')?.value || 0);
-            if (!amt) return;
-            const type = row.querySelector('.line-type')?.dataset.type || '';
-            if (type === 'debit') deb += amt;
-            else if (type === 'credit') cred += amt;
+            const { amount, type } = getLineAmountAndType(row);
+            if (!amount) return;
+            if (type === 'debit') deb += amount;
+            else if (type === 'credit') cred += amount;
         });
         const diff = deb - cred;
 
@@ -767,43 +1052,74 @@
         if (row.dataset.attached === '1') return;
         row.dataset.attached = '1';
         const accSel = row.querySelector('.line-account');
-        const amtIn = row.querySelector('.line-amount');
-        const typeBadge = row.querySelector('.line-type');
+        const debIn = row.querySelector('.line-debit-amt');
+        const credIn = row.querySelector('.line-credit-amt');
         const remBtn = row.querySelector('.remove-line');
 
-        function updateType() {
-            const opt = accSel.selectedOptions[0];
-            const nb = opt ? opt.dataset.normalBalance : '';
-            typeBadge.textContent = nb ? (nb.charAt(0).toUpperCase() + nb.slice(1)) : '—';
-            typeBadge.dataset.type = nb || '';
-            typeBadge.className = 'badge line-type ' + (nb === 'debit' ? 'bg-primary' : nb === 'credit' ? 'bg-success' : 'bg-secondary');
+        function syncAmountColumns() {
+            const opt = accSel ? accSel.selectedOptions[0] : null;
+            const nb = opt ? (opt.dataset.normalBalance || '') : '';
+            row.dataset.lineType = nb || '';
+            const isDebit = nb === 'debit' || nb === '';
+            const isCredit = nb === 'credit';
+            if (debIn) {
+                debIn.disabled = debIn.readOnly || (nb !== '' && !isDebit);
+                debIn.classList.toggle('bg-light', debIn.disabled);
+                if (nb === 'credit' && debIn.value) {
+                    // Move amount to the correct column when account type changes
+                    if (credIn && !credIn.value) credIn.value = debIn.value;
+                    debIn.value = '';
+                }
+            }
+            if (credIn) {
+                credIn.disabled = credIn.readOnly || (nb !== '' && !isCredit);
+                credIn.classList.toggle('bg-light', credIn.disabled);
+                if (nb === 'debit' && credIn.value) {
+                    if (debIn && !debIn.value) debIn.value = credIn.value;
+                    credIn.value = '';
+                }
+            }
             recalcTotals();
         }
 
-        if (accSel) accSel.addEventListener('change', updateType);
-        if (amtIn) amtIn.addEventListener('input', recalcTotals);
+        if (accSel) accSel.addEventListener('change', syncAmountColumns);
+        if (debIn) debIn.addEventListener('input', () => {
+            if (credIn && parseFloat(debIn.value || '0') > 0) credIn.value = '';
+            recalcTotals();
+        });
+        if (credIn) credIn.addEventListener('input', () => {
+            if (debIn && parseFloat(credIn.value || '0') > 0) debIn.value = '';
+            recalcTotals();
+        });
         if (remBtn) remBtn.addEventListener('click', () => {
             row.remove();
             recalcTotals();
         });
 
         // initial
-        updateType();
+        syncAmountColumns();
     }
 
     function createLineRow(prefill = null, readonly = false) {
         const ro = readonly ? ' disabled' : '';
         const remStyle = readonly ? ' style="display:none"' : '';
         const row = document.createElement('tr');
+        // Debit / Credit columns: amount is entered in the column matching the account type
         row.innerHTML = `
             <td><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
             <td><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
             <td><select class="form-select form-select-sm line-nat"${ro}>${natOpts}</select></td>
             <td><select class="form-select form-select-sm line-func"${ro}>${funcOpts}</select></td>
-            <td><input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount text-end" required${ro}></td>
-            <td><span class="badge line-type bg-secondary">—</span></td>
+            <td>
+                <input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder=""${ro}>
+            </td>
+            <td>
+                <input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount line-credit-amt text-end font-monospace" placeholder=""${ro}>
+            </td>
             <td><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
         `;
+        // Hidden type marker for totals/save
+        row.dataset.lineType = '';
         if (prefill) {
             const acc = row.querySelector('.line-account');
             if (prefill.account_id) acc.value = prefill.account_id;
@@ -813,8 +1129,15 @@
             if (prefill.natural_category_id !== undefined && prefill.natural_category_id !== '') nat.value = prefill.natural_category_id;
             const func = row.querySelector('.line-func');
             if (prefill.functional_category_id !== undefined && prefill.functional_category_id !== '') func.value = prefill.functional_category_id;
-            const amt = row.querySelector('.line-amount');
-            if (prefill.amount !== undefined) amt.value = prefill.amount;
+            // Place amount in debit or credit column from account normal balance when known
+            const opt = acc.selectedOptions[0];
+            const nb = opt ? (opt.dataset.normalBalance || '') : '';
+            const debIn = row.querySelector('.line-debit-amt');
+            const credIn = row.querySelector('.line-credit-amt');
+            if (prefill.amount !== undefined && prefill.amount !== '') {
+                if (nb === 'credit') credIn.value = prefill.amount;
+                else debIn.value = prefill.amount; // default debit column
+            }
         }
         if (readonly) {
             row.querySelectorAll('select, input').forEach(el => el.classList.add('bg-light'));
@@ -909,23 +1232,431 @@
             contribEl.innerHTML = '';
         }
 
-        const docsEl = document.getElementById('txDocumentsList');
-        const docs = data.documents || [];
-        docsEl.innerHTML = docs.length
-            ? docs.map(d => `<li><a href="pages/ledger.php?download_document=${d.id}" target="_blank">${escHtml(d.original_filename)}</a> <span class="text-muted">(${escHtml(d.created_at)})</span></li>`).join('')
-            : '<li class="text-muted">No documents attached.</li>';
+        const inEdit = isTxEditMode();
+        const canEditDocs = !!(data.is_editable && inEdit);
+        renderDocumentsList(data.documents || [], canEditDocs);
 
-        const docForm = document.getElementById('txDocUploadForm');
-        if (docForm) {
-            if (data.is_editable) docForm.classList.remove('d-none');
-            else docForm.classList.add('d-none');
+        // Do not toggle upload visibility here — callers control edit-mode UI.
+
+        renderAuditTrail(data.events || []);
+    }
+
+    function formatAuditEventHtml(e) {
+        const when = escHtml(e.created_at || '');
+        const who = escHtml(e.username || 'system');
+        const summary = escHtml(humanizeAuditSummary(e));
+        const details = e.details && typeof e.details === 'object' ? e.details : {};
+        const changes = Array.isArray(details.changes) ? details.changes : [];
+        let extra = '';
+        if (changes.length > 1 || (changes.length === 1 && changes[0] !== e.summary)) {
+            extra = '<ul class="mb-0 mt-1 ps-3 text-muted">'
+                + changes.map(c => '<li>' + escHtml(c) + '</li>').join('')
+                + '</ul>';
         }
+        return `<li class="mb-2 border-bottom pb-1">
+            <div><span class="text-muted">${when}</span> — <strong>${who}</strong></div>
+            <div>${summary}</div>
+            ${extra}
+        </li>`;
+    }
 
+    function humanizeAuditSummary(e) {
+        const type = e.event_type || '';
+        const details = e.details && typeof e.details === 'object' ? e.details : {};
+        const summary = (e.summary || '').trim();
+
+        // Prefer already-improved summaries; rewrite known generic ones
+        if (type === 'document_uploaded') {
+            const name = details.original_filename || (summary.match(/:\s*(.+)$/) || [])[1];
+            if (name) return 'Attachment "' + name + '" added.';
+        }
+        if (type === 'document_deleted') {
+            const name = details.original_filename || (summary.match(/:\s*(.+)$/) || [])[1];
+            if (name) return 'Attachment "' + name + '" removed.';
+        }
+        if (type === 'validated') {
+            if (details.validated_by_name) {
+                return 'Transaction validated by ' + details.validated_by_name + '.';
+            }
+            if (summary && summary !== 'Transaction validated and finalized.') return summary;
+        }
+        if (type === 'updated' && (summary === 'Manual transaction updated.' || summary === '')) {
+            if (Array.isArray(details.changes) && details.changes.length) {
+                return details.changes.length === 1
+                    ? details.changes[0]
+                    : ('Transaction updated (' + details.changes.length + ' changes).');
+            }
+            if (details.debits != null && details.credits != null) {
+                return 'Transaction updated (balanced at $'
+                    + Number(details.debits).toFixed(2) + ').';
+            }
+        }
+        if (type === 'created' && (summary === 'Manual transaction created.' || summary === '')) {
+            if (details.debits != null) {
+                return 'Transaction created totaling $' + Number(details.debits).toFixed(2) + '.';
+            }
+        }
+        return summary || type || 'Event recorded.';
+    }
+
+    function renderAuditTrail(events) {
         const eventsEl = document.getElementById('txEventsList');
-        const events = data.events || [];
-        eventsEl.innerHTML = events.length
-            ? events.map(e => `<li><span class="text-muted">${escHtml(e.created_at)}</span> — <strong>${escHtml(e.username)}</strong>: ${escHtml(e.summary)}</li>`).join('')
+        const toggle = document.getElementById('txAuditToggle');
+        if (!eventsEl) return;
+        const list = events || [];
+        if (toggle) {
+            toggle.textContent = list.length
+                ? ('Audit Trail (' + list.length + ' event' + (list.length === 1 ? '' : 's') + ')')
+                : 'Audit Trail';
+        }
+        eventsEl.innerHTML = list.length
+            ? list.map(formatAuditEventHtml).join('')
             : '<li class="text-muted">No audit events recorded.</li>';
+    }
+
+    function isTxEditMode() {
+        return txIdField.value !== '' && !document.getElementById('transaction_date').readOnly;
+    }
+
+    function parseJsonResponse(r) {
+        return r.text().then(text => {
+            const trimmed = (text || '').trim();
+            if (!trimmed) throw new Error('Empty response');
+            try {
+                return JSON.parse(trimmed);
+            } catch (e) {
+                // Tolerate accidental PHP notices before JSON
+                const start = trimmed.indexOf('{');
+                const end = trimmed.lastIndexOf('}');
+                if (start >= 0 && end > start) {
+                    return JSON.parse(trimmed.slice(start, end + 1));
+                }
+                throw e;
+            }
+        });
+    }
+
+    function isApiSuccess(res) {
+        if (!res || typeof res !== 'object') return false;
+        if (res.error) return false;
+        if (res.success === false || res.success === 0 || res.success === '0') return false;
+        if (res.success === true || res.success === 1 || res.success === '1') return true;
+        // Fallback: presence of new document id after upload
+        return !!(res.id && !res.error);
+    }
+
+    function docPreviewKind(doc) {
+        const mime = String(doc.mime_type || '').toLowerCase();
+        const name = String(doc.original_filename || '');
+        const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+        if (mime.startsWith('image/') || ['jpg','jpeg','png','gif','webp'].includes(ext)) return 'image';
+        if (mime === 'application/pdf' || ext === 'pdf') return 'pdf';
+        if (mime.startsWith('text/') || ['txt','csv','log','md'].includes(ext)) return 'text';
+        return 'other';
+    }
+
+    /** @type {Object.<string,{id:number,name:string}>} */
+    let pendingDocDeletes = {};
+
+    const PENDING_DOC_STORAGE_KEY = 'temperLedgerPendingDocDeletes';
+
+    function clearPendingDocDeletes(clearStorage = true) {
+        pendingDocDeletes = {};
+        if (clearStorage) {
+            try { sessionStorage.removeItem(PENDING_DOC_STORAGE_KEY); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function getPendingDocDeleteList() {
+        return Object.keys(pendingDocDeletes).map(k => pendingDocDeletes[k]).filter(Boolean);
+    }
+
+    function isDocQueuedForDelete(docId) {
+        return !!pendingDocDeletes[String(docId)];
+    }
+
+    function queueDocForDelete(docId, name) {
+        pendingDocDeletes[String(docId)] = { id: parseInt(docId, 10), name: name || ('#' + docId) };
+        persistPendingDocDeletes();
+    }
+
+    function unqueueDocForDelete(docId) {
+        delete pendingDocDeletes[String(docId)];
+        persistPendingDocDeletes();
+    }
+
+    function persistPendingDocDeletes() {
+        try {
+            const txId = txIdField ? txIdField.value : '';
+            const items = getPendingDocDeleteList();
+            if (!txId || !items.length) {
+                sessionStorage.removeItem(PENDING_DOC_STORAGE_KEY);
+                return;
+            }
+            sessionStorage.setItem(PENDING_DOC_STORAGE_KEY, JSON.stringify({ txId: String(txId), items }));
+        } catch (e) { /* ignore */ }
+    }
+
+    function restorePendingDocDeletes(txId) {
+        try {
+            const raw = sessionStorage.getItem(PENDING_DOC_STORAGE_KEY);
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (!data || String(data.txId) !== String(txId) || !Array.isArray(data.items)) return;
+            pendingDocDeletes = {};
+            data.items.forEach(item => {
+                if (item && item.id) {
+                    pendingDocDeletes[String(item.id)] = {
+                        id: parseInt(item.id, 10),
+                        name: item.name || ('#' + item.id)
+                    };
+                }
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    function prunePendingDocDeletes(docs) {
+        const alive = new Set((docs || []).map(d => String(d.id)));
+        Object.keys(pendingDocDeletes).forEach(k => {
+            if (!alive.has(k)) delete pendingDocDeletes[k];
+        });
+        persistPendingDocDeletes();
+    }
+
+    function renderDocumentsList(docs, showDelete) {
+        const docsEl = document.getElementById('txDocumentsList');
+        if (!docsEl) return;
+        prunePendingDocDeletes(docs);
+        if (!docs || !docs.length) {
+            docsEl.innerHTML = '<li class="text-muted">No documents attached.</li>';
+            return;
+        }
+        docsEl.innerHTML = docs.map(d => {
+            const name = escHtml(d.original_filename || 'document');
+            const when = escHtml(d.created_at || '');
+            const id = parseInt(d.id, 10) || 0;
+            const queued = isDocQueuedForDelete(id);
+            const delBtn = showDelete
+                ? `<button type="button"
+                        class="btn btn-sm ${queued ? 'btn-secondary' : 'btn-danger'} fw-bold px-2 py-0 tx-doc-delete"
+                        style="font-size:1.15rem;line-height:1.2;min-width:2rem"
+                        data-doc-id="${id}"
+                        data-doc-name="${name}"
+                        title="${queued ? 'Undo delete queue' : 'Queue for deletion'}"
+                        aria-label="${queued ? 'Undo delete queue' : 'Queue for deletion'}">&times;</button>`
+                : '';
+            const nameClass = queued
+                ? 'tx-doc-preview text-decoration-line-through text-muted'
+                : 'tx-doc-preview text-decoration-none';
+            const badge = queued
+                ? '<span class="badge bg-warning text-dark">queued for deletion</span>'
+                : '';
+            return `<li class="d-flex align-items-center flex-wrap gap-2 mb-1 ${queued ? 'opacity-75' : ''}" data-doc-id="${id}">
+                ${delBtn}
+                <a href="#" class="${nameClass}" data-doc-id="${id}" data-doc-name="${name}">${name}</a>
+                <span class="text-muted">(${when})</span>
+                ${badge}
+            </li>`;
+        }).join('');
+    }
+
+    function refreshDocumentsFromServer(txId, keepEditUi) {
+        const id = parseInt(txId, 10);
+        if (!id) return Promise.resolve();
+        return fetch('pages/ledger.php?get_transaction=' + id)
+            .then(parseJsonResponse)
+            .then(data => {
+                if (data.error) {
+                    showToast(data.error, 'danger');
+                    return data;
+                }
+                // Preserve edit-mode field values; only refresh meta/docs/events
+                if (currentViewData) {
+                    currentViewData.documents = data.documents || [];
+                    currentViewData.events = data.events || [];
+                    currentViewData.is_editable = data.is_editable;
+                } else {
+                    currentViewData = data;
+                }
+                const canEditDocs = !!(data.is_editable && (keepEditUi || isTxEditMode()));
+                renderDocumentsList(data.documents || [], canEditDocs);
+                const eventsEl = document.getElementById('txEventsList');
+                if (eventsEl) {
+                    renderAuditTrail(data.events || []);
+                }
+                if (keepEditUi && data.is_editable) {
+                    setDocUploadVisible(true);
+                }
+                return data;
+            });
+    }
+
+    function openDocumentPreview(docId, fallbackName) {
+        const modalEl = document.getElementById('txDocPreviewModal');
+        const titleEl = document.getElementById('txDocPreviewTitle');
+        const bodyEl = document.getElementById('txDocPreviewBody');
+        const dlEl = document.getElementById('txDocPreviewDownload');
+        if (!modalEl || !bodyEl) return;
+
+        titleEl.textContent = fallbackName || 'Document';
+        bodyEl.innerHTML = '<div class="text-center text-muted py-5">Loading…</div>';
+        dlEl.href = 'pages/ledger.php?download_document=' + docId;
+        dlEl.classList.remove('d-none');
+
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+
+        fetch('pages/ledger.php?document_meta=' + docId)
+            .then(parseJsonResponse)
+            .then(meta => {
+                if (!isApiSuccess(meta)) {
+                    bodyEl.innerHTML = '<div class="alert alert-danger m-3">' + escHtml(meta.error || 'Unable to load document.') + '</div>';
+                    return;
+                }
+                titleEl.textContent = meta.original_filename || fallbackName || 'Document';
+                dlEl.href = meta.download_url || ('pages/ledger.php?download_document=' + docId);
+                const kind = meta.preview_kind || 'other';
+                const url = meta.preview_url || ('pages/ledger.php?preview_document=' + docId);
+
+                if (kind === 'image') {
+                    bodyEl.innerHTML = `<div class="text-center p-2"><img src="${url}" alt="${escHtml(meta.original_filename || '')}" class="img-fluid" style="max-height:70vh"></div>`;
+                } else if (kind === 'pdf') {
+                    bodyEl.innerHTML = `<iframe src="${url}" title="PDF preview" class="w-100 border-0" style="height:70vh"></iframe>`;
+                } else if (kind === 'text') {
+                    fetch(url).then(r => r.text()).then(txt => {
+                        bodyEl.innerHTML = `<pre class="small bg-light border rounded p-3 m-0" style="max-height:70vh;overflow:auto;white-space:pre-wrap">${escHtml(txt)}</pre>`;
+                    }).catch(() => {
+                        bodyEl.innerHTML = '<div class="alert alert-warning m-3">Could not load text preview. Use Download instead.</div>';
+                    });
+                } else {
+                    bodyEl.innerHTML = `<div class="p-4 text-center">
+                        <p class="mb-2">Preview is not available for this file type (<code>${escHtml(meta.mime_type || 'unknown')}</code>).</p>
+                        <a class="btn btn-sm btn-primary" href="${dlEl.href}" target="_blank" rel="noopener">Download file</a>
+                    </div>`;
+                }
+            })
+            .catch(() => {
+                bodyEl.innerHTML = '<div class="alert alert-danger m-3">Failed to load document preview.</div>';
+            });
+    }
+
+    /**
+     * Bootstrap modal confirm for queueing a file delete.
+     * Resolves true on "Queue Delete", false on Cancel/dismiss.
+     */
+    function confirmQueueDelete(fileName) {
+        return new Promise(resolve => {
+            const modalEl = document.getElementById('txQueueDeleteModal');
+            const nameEl = document.getElementById('txQueueDeleteFileName');
+            const confirmBtn = document.getElementById('txQueueDeleteConfirm');
+            if (!modalEl || !confirmBtn || typeof bootstrap === 'undefined') {
+                // Fallback if modal/bootstrap unavailable
+                resolve(window.confirm(
+                    'This file will be queued for deletion. It will be removed only when you save the transaction.\n\nFile: '
+                    + fileName
+                ));
+                return;
+            }
+            if (nameEl) nameEl.textContent = fileName || 'selected file';
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                confirmBtn.removeEventListener('click', onConfirm);
+                modalEl.removeEventListener('hidden.bs.modal', onHidden);
+                resolve(value);
+            };
+            const onConfirm = () => {
+                finish(true);
+                modal.hide();
+            };
+            const onHidden = () => finish(false);
+            confirmBtn.addEventListener('click', onConfirm);
+            modalEl.addEventListener('hidden.bs.modal', onHidden);
+            modal.show();
+        });
+    }
+
+    function bindDocumentListActions() {
+        const docsEl = document.getElementById('txDocumentsList');
+        if (!docsEl || docsEl.dataset.bound === '1') return;
+        docsEl.dataset.bound = '1';
+        docsEl.addEventListener('click', function(e) {
+            const preview = e.target.closest('.tx-doc-preview');
+            if (preview) {
+                e.preventDefault();
+                const id = parseInt(preview.dataset.docId, 10);
+                if (id) openDocumentPreview(id, preview.dataset.docName || preview.textContent);
+                return;
+            }
+            const del = e.target.closest('.tx-doc-delete');
+            if (del) {
+                e.preventDefault();
+                if (!isTxEditMode()) {
+                    showToast('Enter edit mode to queue document deletions.', 'warning');
+                    return;
+                }
+                const id = parseInt(del.dataset.docId, 10);
+                const name = del.dataset.docName || 'this file';
+                if (!id) return;
+
+                if (isDocQueuedForDelete(id)) {
+                    unqueueDocForDelete(id);
+                    showToast('Removed “' + name + '” from deletion queue.', 'info');
+                    const docs = (currentViewData && currentViewData.documents) || [];
+                    renderDocumentsList(docs, true);
+                    return;
+                }
+
+                confirmQueueDelete(name).then(ok => {
+                    if (!ok) {
+                        // Cancel — leave queue and edit mode untouched
+                        return;
+                    }
+                    queueDocForDelete(id, name);
+                    showToast('Queued “' + name + '” for deletion on save.', 'warning');
+                    const docs = (currentViewData && currentViewData.documents) || [];
+                    renderDocumentsList(docs, true);
+                });
+            }
+        });
+    }
+
+    function confirmQueuedDocumentDeletion() {
+        const pending = getPendingDocDeleteList();
+        if (!pending.length) {
+            return { confirmed: true, pending: [] };
+        }
+        const lines = pending.map(p => '• ' + p.name).join('\n');
+        const msg = 'The following file(s) are queued for deletion and will be permanently removed:\n\n'
+            + lines
+            + '\n\nDelete these file(s) and continue saving?';
+        if (!confirm(msg)) {
+            return { confirmed: false, pending };
+        }
+        return { confirmed: true, pending };
+    }
+
+    function executeQueuedDocumentDeletion(pending) {
+        if (!pending || !pending.length) {
+            return Promise.resolve({ skipped: true, deleted_count: 0, message: '' });
+        }
+        const fd = new FormData();
+        fd.append('action', 'delete_documents');
+        fd.append('doc_ids', JSON.stringify(pending.map(p => p.id)));
+        return fetch('pages/ledger.php', { method: 'POST', body: fd })
+            .then(parseJsonResponse)
+            .then(res => {
+                if (!isApiSuccess(res)) {
+                    throw new Error(res.error || 'Failed to delete queued attachments.');
+                }
+                clearPendingDocDeletes();
+                if (currentViewData && Array.isArray(res.documents)) {
+                    currentViewData.documents = res.documents;
+                }
+                return res;
+            });
     }
 
     function updateModeBadge(mode) {
@@ -947,12 +1678,26 @@
         }
     }
 
+    function setDocUploadVisible(show) {
+        const docForm = document.getElementById('txDocUploadForm');
+        if (!docForm) return;
+        if (show) docForm.classList.remove('d-none');
+        else docForm.classList.add('d-none');
+        const fileInput = document.getElementById('txDocFile');
+        const btn = document.getElementById('txDocUploadBtn');
+        if (fileInput) fileInput.value = '';
+        if (btn) btn.disabled = true;
+    }
+
     function showBlankForm() {
         txIdField.value = '';
         currentViewData = null;
+        // Keep sessionStorage queue so a failed save can re-open the same tx and restore it
+        clearPendingDocDeletes(false);
         form.reset();
         linesBody.innerHTML = '';
         renderMetaSection(null);
+        setDocUploadVisible(false);
         setMainFieldsReadOnly(true);
         formTitle.textContent = 'Transaction Details';
         updateModeBadge('blank');
@@ -963,6 +1708,18 @@
     }
 
     function populateView(data) {
+        // Discard queue when viewing a different transaction; keep stored queue for same tx
+        try {
+            const raw = sessionStorage.getItem(PENDING_DOC_STORAGE_KEY);
+            const stored = raw ? JSON.parse(raw) : null;
+            if (!stored || String(stored.txId) !== String(data.id)) {
+                clearPendingDocDeletes(true);
+            } else {
+                clearPendingDocDeletes(false);
+            }
+        } catch (e) {
+            clearPendingDocDeletes(true);
+        }
         txIdField.value = data.id || '';
         currentViewData = data;
         document.getElementById('transaction_date').value = data.transaction_date || '';
@@ -987,11 +1744,16 @@
         if (saveBtn) saveBtn.style.display = 'none';
         if (cancelBtn2) cancelBtn2.style.display = 'none';
         renderMetaSection(data);
+        setDocUploadVisible(false);
+        // Re-render docs without delete buttons in view mode
+        renderDocumentsList((data && data.documents) || [], false);
     }
 
     function populateEditable(data) {
         txIdField.value = data.id;
         currentViewData = data;
+        // Restore any queue persisted across a failed save reload
+        restorePendingDocDeletes(data.id);
         document.getElementById('transaction_date').value = data.transaction_date || '';
         document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('reference_number').value = data.reference_number || '';
@@ -1019,12 +1781,15 @@
         if (saveBtn) saveBtn.style.display = '';
         if (cancelBtn2) cancelBtn2.style.display = '';
         renderMetaSection(data);
+        setDocUploadVisible(!!data.is_editable);
+        renderDocumentsList(data.documents || [], !!data.is_editable);
         recalcTotals();
     }
 
     function enableEditFromView() {
         const id = txIdField.value;
         if (!id) return;
+        restorePendingDocDeletes(id);
         setMainFieldsReadOnly(false);
         formTitle.textContent = 'Edit Transaction #' + id;
         updateModeBadge('edit');
@@ -1041,6 +1806,9 @@
             if (rem) rem.style.display = '';
             attachLineListeners(row);
         });
+        const canEdit = !!(currentViewData && currentViewData.is_editable);
+        setDocUploadVisible(canEdit);
+        renderDocumentsList((currentViewData && currentViewData.documents) || [], canEdit);
         recalcTotals();
     }
 
@@ -1059,6 +1827,8 @@
         if (resetLinesBtn) resetLinesBtn.style.display = '';
         if (saveBtn) saveBtn.style.display = '';
         if (cancelBtn2) cancelBtn2.style.display = '';
+        renderMetaSection(null);
+        setDocUploadVisible(false);
         recalcTotals();
     }
 
@@ -1133,7 +1903,8 @@
                 const da = ta ? Date.parse(ta) : 0;
                 const db = tb ? Date.parse(tb) : 0;
                 return (da - db) * dir;
-            } else if (colIdx === 3 || colIdx === 4 || colIdx === 6) { // Ref #, Check #, Amount - numeric
+            } else if (colIdx === 3 || colIdx === 4 || colIdx === 6 || colIdx === 7) {
+                // Ref #, Check #, Debit, Credit — numeric
                 const na = parseFloat(ta.replace(/[^0-9.-]/g, '')) || 0;
                 const nb = parseFloat(tb.replace(/[^0-9.-]/g, '')) || 0;
                 return (na - nb) * dir;
@@ -1165,9 +1936,8 @@
         const table = txTableBody.closest('table');
         if (!table) return;
         const ths = table.querySelectorAll('thead th');
-        // column indices after ref column added:
-        // 1=Date, 2=Pay To, 3=Ref #, 4=Check #, 6=Amount, 7=Status
-        const sortable = [1, 2, 3, 4, 6, 7];
+        // 1=Date, 2=Pay To, 3=Ref #, 4=Check #, 6=Debit, 7=Credit, 8=Status
+        const sortable = [1, 2, 3, 4, 6, 7, 8];
         ths.forEach((th, idx) => {
             if (sortable.includes(idx)) {
                 th.style.cursor = 'pointer';
@@ -1261,8 +2031,9 @@
             });
     });
 
-    // Cancel form (revert edit->view or deselect+blank)
+    // Cancel form (revert edit->view or deselect+blank) — discard queued deletions
     function cancelFormAction() {
+        clearPendingDocDeletes(true);
         const curId = txIdField.value;
         if (curId && currentViewData && String(currentViewData.id) === String(curId)) {
             populateView(currentViewData);
@@ -1291,7 +2062,7 @@
         addLineBtn.addEventListener('click', addLine);
     }
 
-    // Form submit (Add or Edit)
+    // Form submit (Add or Edit) — process queued attachment deletions after confirm
     if (form) {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
@@ -1299,8 +2070,7 @@
             const lines = [];
             linesBody.querySelectorAll('tr').forEach(row => {
                 const acc = row.querySelector('.line-account')?.value;
-                const amtEl = row.querySelector('.line-amount');
-                const amt = amtEl ? parseFloat(amtEl.value) : 0;
+                const { amount: amt } = getLineAmountAndType(row);
                 if (!acc || !amt) return;
 
                 lines.push({
@@ -1319,18 +2089,57 @@
 
             linesJson.value = JSON.stringify(lines);
 
+            const confirmDel = confirmQueuedDocumentDeletion();
+            if (!confirmDel.confirmed) {
+                showToast('Save cancelled. Queued files were not deleted.', 'info');
+                return;
+            }
+            const pendingDeletes = confirmDel.pending.slice();
+
+            // Save transaction first; only then permanently delete queued attachments
             fetch('pages/ledger.php' + buildQueryString(true), {
                 method: 'POST',
                 body: new FormData(form)
             })
-            .then(r => r.text())
-            .then(html => {
-                applyMainContent(html);
-            })
-            .catch(err => {
-                console.error(err);
-                showToast('Save failed. See console.', 'danger');
-            });
+                .then(r => r.text())
+                .then(html => {
+                    const flashMatch = html.match(/id=["']ledger-flash["'][^>]*>([\s\S]*?)<\/script>/i);
+                    let flash = null;
+                    if (flashMatch) {
+                        try { flash = JSON.parse(flashMatch[1].trim()); } catch (e) { flash = null; }
+                    }
+                    const saveOk = !!(flash && flash.type === 'success');
+
+                    if (!pendingDeletes.length) {
+                        applyMainContent(html);
+                        return null;
+                    }
+                    if (!saveOk) {
+                        // Keep deletion queue so user can fix validation and save again
+                        applyMainContent(html);
+                        showToast('Transaction was not saved; queued attachments were not deleted.', 'warning', 6000);
+                        return null;
+                    }
+                    return executeQueuedDocumentDeletion(pendingDeletes)
+                        .then(delRes => {
+                            applyMainContent(html);
+                            const delMsg = delRes.message || ((delRes.deleted_count || pendingDeletes.length) + ' attachment(s) deleted.');
+                            showToast('Transaction saved. ' + delMsg, 'success', 6000);
+                        })
+                        .catch(delErr => {
+                            applyMainContent(html);
+                            showToast(
+                                'Transaction saved, but attachment deletion failed: '
+                                    + ((delErr && delErr.message) || 'unknown error'),
+                                'warning',
+                                7000
+                            );
+                        });
+                })
+                .catch(err => {
+                    console.error(err);
+                    showToast('Save failed. See console.', 'danger');
+                });
         });
     }
 
@@ -1424,27 +2233,63 @@
         });
     }
 
-    const docUploadForm = document.getElementById('txDocUploadForm');
-    if (docUploadForm) {
-        docUploadForm.addEventListener('submit', function(e) {
-            e.preventDefault();
+    const docFileInput = document.getElementById('txDocFile');
+    const docUploadBtn = document.getElementById('txDocUploadBtn');
+    function syncDocUploadBtn() {
+        if (!docUploadBtn || !docFileInput) return;
+        const inEdit = isTxEditMode();
+        const hasFile = docFileInput.files && docFileInput.files.length > 0;
+        docUploadBtn.disabled = !(inEdit && hasFile);
+    }
+    if (docFileInput) {
+        docFileInput.addEventListener('change', syncDocUploadBtn);
+    }
+    if (docUploadBtn) {
+        docUploadBtn.addEventListener('click', function() {
             const id = txIdField.value;
-            if (!id) return;
-            const fd = new FormData(docUploadForm);
+            if (!isTxEditMode()) {
+                showToast('Enter edit mode to upload documents.', 'warning');
+                return;
+            }
+            if (!docFileInput || !docFileInput.files || docFileInput.files.length === 0) {
+                showToast('Please select a file to upload.', 'warning');
+                return;
+            }
+            const fd = new FormData();
             fd.append('action', 'upload_document');
             fd.append('tx_id', id);
+            fd.append('document', docFileInput.files[0]);
+            docUploadBtn.disabled = true;
             fetch('pages/ledger.php', { method: 'POST', body: fd })
-                .then(r => r.json())
+                .then(parseJsonResponse)
                 .then(res => {
-                    if (res.error) showToast(res.error, 'danger');
-                    else {
-                        showToast('Document uploaded.', 'success');
-                        loadView(parseInt(id, 10));
+                    if (!isApiSuccess(res)) {
+                        showToast(res.error || 'Upload failed.', 'danger');
+                        syncDocUploadBtn();
+                        return;
+                    }
+                    showToast(res.message || 'Upload Successful', 'success');
+                    // Prefer server-returned documents list for instant refresh (preserve delete queue)
+                    if (Array.isArray(res.documents)) {
+                        if (currentViewData) currentViewData.documents = res.documents;
+                        renderDocumentsList(res.documents, true);
+                        setDocUploadVisible(true);
+                        syncDocUploadBtn();
+                    } else {
+                        refreshDocumentsFromServer(id, true)
+                            .catch(() => showToast('Uploaded, but failed to refresh document list.', 'warning'))
+                            .finally(() => syncDocUploadBtn());
                     }
                 })
-                .catch(() => showToast('Upload failed.', 'danger'));
+                .catch(err => {
+                    console.error(err);
+                    showToast('Upload failed.', 'danger');
+                    syncDocUploadBtn();
+                });
         });
     }
+
+    bindDocumentListActions();
 
     // Initial state
     updateButtonStates();

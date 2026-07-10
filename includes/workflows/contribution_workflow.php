@@ -213,14 +213,15 @@ function contribCreate(mysqli $db, array $payload, array $actor): array {
             $transactionData
         );
 
+        $grand = (float)($validation['grand_total'] ?? 0);
         ledgerLogEvent(
             $db,
             $txId,
             'draft_created',
             (int)$actor['id'],
             $actor['username'] ?? 'system',
-            'Contribution draft created by first teller.',
-            ['grand_total' => $validation['grand_total']]
+            'Contribution draft created by first teller totaling $' . number_format($grand, 2) . '.',
+            ['grand_total' => $grand]
         );
 
         $instanceId = workflowCreateInstance(
@@ -303,14 +304,15 @@ function contribSecondTellerSign(mysqli $db, int $instanceId, int $signerId, str
     $signerName = $signer['username'] ?? ($actor['username'] ?? '');
 
     ledgerUpdateHeader($db, $txId, null, null, null, null, $transactionData);
+    $signerDisplay = $signer['display_name'] ?? $signerName;
     ledgerLogEvent(
         $db,
         $txId,
         'second_teller_signed',
         $signerId,
         $signerName,
-        'Second teller signed off on dual count.',
-        ['second_teller_id' => $signerId, 'verify_cash_total' => $verifyCash]
+        'Second teller ' . $signerDisplay . ' signed off on dual count ($' . number_format($verifyCash, 2) . ' cash verified).',
+        ['second_teller_id' => $signerId, 'second_teller_name' => $signerDisplay, 'verify_cash_total' => $verifyCash]
     );
 
     workflowUpdateInstance($db, $instanceId, CONTRIB_STATUS_DUAL_COMPLETE, CONTRIB_STEP_OFFICIAL, $instance['payload']);
@@ -452,14 +454,17 @@ function contribOfficialValidate(
             $actor['username'] ?? ''
         );
 
+        $depositAmt = (float)($transactionData['totals']['grand'] ?? 0);
+        $officialUser = getUserWithRole($db, $officialId);
+        $officialName = $officialUser['display_name'] ?? ($actor['username'] ?? 'official');
         ledgerLogEvent(
             $db,
             $txId,
             'deposit_finalized',
             $officialId,
             $actor['username'] ?? '',
-            'Contribution deposit finalized with ledger lines.',
-            ['workflow_instance_id' => $instanceId, 'amount' => $transactionData['totals']['grand'] ?? 0]
+            'Contribution deposit of $' . number_format($depositAmt, 2) . ' finalized by ' . $officialName . '.',
+            ['workflow_instance_id' => $instanceId, 'amount' => $depositAmt, 'finalized_by' => $officialName]
         );
 
         workflowUpdateInstance(

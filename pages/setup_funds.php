@@ -3,12 +3,8 @@
 
     // Security and DB connection already handled by index.php
     // Light fallback in case
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-
-    // Handle form submissions
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+// Handle form submissions
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $action = $_POST['action'];
 

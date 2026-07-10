@@ -399,3 +399,39 @@ Stack trace:
 #1 /var/www/hopeserver02/temper/setup_db.php(119): getDbConnection()
 #2 {main}
   thrown in /var/www/hopeserver02/temper/config.php on line 24
+[10-Jul-2026 11:12:34 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=34 Manual transaction updated. {"debits":58.75,"credits":58.75} ip=::1
+[10-Jul-2026 11:13:05 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=34 Manual transaction updated. {"debits":58.75,"credits":58.75} ip=::1
+[10-Jul-2026 11:13:13 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=34 Manual transaction updated. {"debits":58.75,"credits":58.75} ip=::1
+[10-Jul-2026 11:16:43 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=34 Manual transaction updated. {"debits":58.75,"credits":58.75} ip=::1
+[10-Jul-2026 11:18:37 UTC] PHP Fatal error:  Cannot redeclare function getAppRoot() (previously declared in /var/www/temper/includes/storage_paths.php:8) in /var/www/temper/includes/storage_paths.php on line 8
+Stack trace:
+#0 {main}
+[10-Jul-2026 11:21:16 UTC] PHP Deprecated:  Function finfo_close() is deprecated since 8.5, as finfo objects are freed automatically in /var/www/temper/includes/ledger_engine.php on line 416
+[10-Jul-2026 11:25:24 UTC] PHP Warning:  readfile(/var/www/temper/storage/attachments/34/doc_20260710_112110_1b091b87.pdf): Failed to open stream: Permission denied in /var/www/temper/pages/ledger.php on line 30
+[10-Jul-2026 11:26:07 UTC] PHP Warning:  preg_replace(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/ledger_engine.php on line 498
+[10-Jul-2026 11:26:07 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=34 Document uploaded: CityOfNashville.receipt.pdf {"doc_id":5} ip=::1
+[10-Jul-2026 11:27:17 UTC] [AUDIT] user=admin action=ledger.created details=transaction=35 Manual transaction created. {"debits":23,"credits":23} ip=::1
+[10-Jul-2026 11:27:31 UTC] PHP Warning:  preg_replace(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/ledger_engine.php on line 498
+[10-Jul-2026 11:27:31 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=35 Document uploaded: CityOfNashville.receipt.pdf {"doc_id":6} ip=::1
+[10-Jul-2026 11:34:30 UTC] PHP Warning:  preg_replace(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/ledger_engine.php on line 498
+[10-Jul-2026 11:34:30 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=35 Document uploaded: image-1.jpg {"doc_id":7} ip=::1
+[10-Jul-2026 11:34:50 UTC] PHP Warning:  preg_replace(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/ledger_engine.php on line 498
+[10-Jul-2026 11:34:50 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=34 Document uploaded: image-4.jpg {"doc_id":8} ip=::1
+[10-Jul-2026 11:56:48 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=35 Document deleted: image-1.jpg {"doc_id":7} ip=::1
+[10-Jul-2026 12:03:41 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=35 Document uploaded: image-1.jpg {"doc_id":10} ip=::1
+[10-Jul-2026 12:03:46 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=35 Manual transaction updated. {"debits":23,"credits":23} ip=::1
+[10-Jul-2026 12:04:00 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=35 Manual transaction updated. {"debits":24,"credits":24} ip=::1
+[10-Jul-2026 17:43:21 UTC] [AUDIT] user=system action=ledger.updated details=transaction=35 Transaction saved with no field changes (re-saved). {"debits":24,"credits":24,"changes":[]} ip=::1
+[10-Jul-2026 17:44:00 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=35 Transaction saved with no field changes (re-saved). {"debits":24,"credits":24,"changes":[]} ip=::1
+[10-Jul-2026 17:44:00 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=35 Attachment "image-1.jpg" removed. {"doc_id":10,"original_filename":"image-1.jpg"} ip=::1
+[10-Jul-2026 20:58:46 UTC] [AUDIT] user=admin action=ledger.draft_created details=transaction=36 Contribution draft created by first teller totaling $100.00. {"grand_total":100} ip=::1
+[10-Jul-2026 20:58:46 UTC] [AUDIT] user=admin action=workflow.created details=instance=1 Workflow created: Sunday Offering — 2026-07-10 {"workflow_type":"contribution","status":"draft_pending_second_count","transaction_detail_id":36} ip=::1
+[10-Jul-2026 20:58:46 UTC] [AUDIT] user=admin action=workflow.step_completed details=instance=1 Teller count saved; pending second teller verification. {"status":"draft_pending_second_count","transaction_detail_id":36} ip=::1
+[10-Jul-2026 20:58:58 UTC] PHP Warning:  preg_replace(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/ledger_engine.php on line 722
+[10-Jul-2026 20:58:58 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=36 Attachment "image-3.jpg" added. {"doc_id":11,"workflow_instance_id":1,"original_filename":"image-3.jpg"} ip=::1
+[10-Jul-2026 20:58:58 UTC] [AUDIT] user=admin action=workflow.document_uploaded details=instance=1 Attachment "image-3.jpg" added to ledger #36. {"doc_id":11,"transaction_detail_id":36,"original_filename":"image-3.jpg"} ip=::1
+[10-Jul-2026 20:59:58 UTC] [AUDIT] user=finance action=ledger.second_teller_signed details=transaction=36 Second teller Finance Manager signed off on dual count ($100.00 cash verified). {"second_teller_id":2,"second_teller_name":"Finance Manager","verify_cash_total":100} ip=::1
+[10-Jul-2026 20:59:58 UTC] [AUDIT] user=finance action=workflow.signed details=instance=1 Second teller signed off on dual count. {"second_teller_id":2,"transaction_detail_id":36} ip=::1
+[10-Jul-2026 21:00:41 UTC] [AUDIT] user=admin action=ledger.validated details=transaction=36 Transaction validated by Admin User. {"validated_by_user_id":1,"validated_by_name":"Admin User"} ip=::1
+[10-Jul-2026 21:00:41 UTC] [AUDIT] user=admin action=ledger.deposit_finalized details=transaction=36 Contribution deposit of $100.00 finalized by Admin User. {"workflow_instance_id":1,"amount":100,"finalized_by":"Admin User"} ip=::1
+[10-Jul-2026 21:00:41 UTC] [AUDIT] user=admin action=workflow.deposit_created details=instance=1 Ledger deposit #36 finalized from contribution workflow. {"transaction_id":36,"amount":100} ip=::1

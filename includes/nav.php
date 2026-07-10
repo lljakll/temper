@@ -3,17 +3,14 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../auth.php';
 
-// Redirect if not logged in
-if (!isLoggedIn()) {
-    header('Location: ../login.php');
-    exit;
-}
+// Central session check (shell nav)
+requireLogin();
 
 // Get current user info
 $user = getCurrentUser();
-$db = getDbConnection();
-$tellerLimited = $user ? isTellerLimitedUser($db, (int)$user['id']) : false;
-$db->close();
+$navDb = getDbConnection();
+$tellerLimited = $user ? isTellerLimitedUser($navDb, (int)$user['id']) : false;
+$navDb->close();
 ?>
 
 <div class="row g-2">

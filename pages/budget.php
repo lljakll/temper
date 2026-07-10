@@ -1,11 +1,8 @@
 <?php
     // Budget Page - Inner content only for AJAX loading
 
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-    require_once __DIR__ . '/../includes/budget_utils.php';
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/budget_utils.php';
 
     if (isset($_GET['get_budget'])) {
         $id = (int)$_GET['get_budget'];

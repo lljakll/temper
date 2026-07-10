@@ -1,12 +1,8 @@
 <?php
     // Tasks / Reminders - Inner content only for AJAX loading
 
-    if (!isset($db)) {
-        require_once __DIR__ . '/../config.php';
-        $db = getDbConnection();
-    }
-
-    $db->query("CREATE TABLE IF NOT EXISTS tasks (
+require_once __DIR__ . '/../includes/page_bootstrap.php';
+$db->query("CREATE TABLE IF NOT EXISTS tasks (
         id INT AUTO_INCREMENT PRIMARY KEY,
         title VARCHAR(200) NOT NULL,
         description TEXT,
