@@ -11,9 +11,9 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
     $registry = workflowTypeRegistry();
 ?>
 
-<div class="container-fluid mt-2">
-    <div class="mb-4">
-        <h2 class="mb-1">Workflows</h2>
+<div class="container-fluid mt-2 px-0 px-sm-2">
+    <div class="mb-3 mb-md-4">
+        <h2 class="mb-1 h3">Workflows</h2>
         <p class="text-muted small mb-0">
             Guided, multi-person processes with approvals and full audit logging.
             Transactional data lives in the ledger; workflows orchestrate steps and sign-offs.
@@ -34,11 +34,11 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
     </div>
     <?php endif; ?>
 
-    <div class="row g-3">
+    <div class="row g-2 g-md-3">
 <?php foreach ($registry as $type => $def): ?>
 <?php if (empty($def['enabled'])) continue; ?>
 <?php $stats = $typeStats[$type] ?? ['total' => 0, 'active' => 0, 'badges' => []]; ?>
-        <div class="col-md-6 col-xl-4">
+        <div class="col-12 col-sm-6 col-xl-4">
             <div class="card h-100 shadow-sm border-<?= htmlspecialchars($def['border_color']) ?> border-opacity-25">
                 <div class="card-body">
                     <div class="d-flex align-items-start">
@@ -66,7 +66,7 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
         </div>
 <?php endforeach; ?>
 
-        <div class="col-md-6 col-xl-4">
+        <div class="col-12 col-sm-6 col-xl-4">
             <div class="card h-100 shadow-sm border-secondary border-opacity-25">
                 <div class="card-body">
                     <div class="d-flex align-items-start">

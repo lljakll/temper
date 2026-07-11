@@ -317,7 +317,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
 <?php if (!empty($pageFlash)): ?>
 <script type="application/json" id="page-flash"><?= json_encode($pageFlash) ?></script>
 <?php endif; ?>
-<div class="container mt-4">
+<div class="container-fluid mt-2 mt-md-4 px-0 px-sm-2">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
         <div>
             <h2 class="mb-1">Budget</h2>
@@ -343,9 +343,9 @@ require_once __DIR__ . '/../includes/budget_utils.php';
     <?php endif; ?>
 
     <div class="row mb-3">
-        <div class="col text-end">
-            <button type="button" id="cycleBtn" class="btn btn-outline-primary me-2"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
-            <button id="addBtn" class="btn btn-primary me-2">New Budget</button>
+        <div class="col d-flex flex-wrap gap-2 justify-content-md-end">
+            <button type="button" id="cycleBtn" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
+            <button id="addBtn" class="btn btn-primary">New Budget</button>
             <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
         </div>
     </div>
@@ -397,16 +397,16 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                 <input type="hidden" name="budget_id" id="budgetId">
                 <input type="hidden" name="lines_json" id="linesJson">
 
-                <div class="row g-3 mb-3">
-                    <div class="col-md-2">
+                <div class="row g-2 g-md-3 mb-3">
+                    <div class="col-6 col-md-2">
                         <label class="form-label">Year</label>
                         <input type="number" class="form-control budget-field" name="fiscal_year" id="fiscalYear" required min="2000" max="2100">
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-12 col-md-4">
                         <label class="form-label">Name</label>
                         <input type="text" class="form-control budget-field" name="name" id="budgetName" required>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label">Status</label>
                         <select class="form-select budget-field" name="status" id="budgetStatus">
                             <option value="draft">Draft</option>
@@ -414,25 +414,25 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                         </select>
                         <input type="text" class="form-control d-none" id="budgetStatusDisplay" readonly disabled>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-12 col-md-4">
                         <label class="form-label">Reference # <span class="text-danger">*</span></label>
                         <input type="text" class="form-control budget-field" name="reference_number" id="referenceNumber">
                         <div class="invalid-feedback">Required. Should identify the business meeting minutes where this budget was approved.</div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-6 col-md-3">
                         <label class="form-label">Start Date</label>
                         <input type="date" class="form-control budget-field" name="start_date" id="startDate" required>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-6 col-md-3">
                         <label class="form-label">End Date</label>
                         <input type="date" class="form-control budget-field" name="end_date" id="endDate" required>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-6 col-md-3">
                         <label class="form-label">Approved Date <span class="text-danger">*</span></label>
                         <input type="date" class="form-control budget-field" name="approved_date" id="approvedDate">
                         <div class="invalid-feedback">Required when approving a budget.</div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-12 col-md-3">
                         <label class="form-label">Description</label>
                         <input type="text" class="form-control budget-field" name="description" id="budgetDesc">
                     </div>

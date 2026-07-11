@@ -296,14 +296,14 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
 
 <div class="container-fluid mt-2" id="contribApp">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-        <div>
-            <h2 class="mb-1">Contribution Workflow</h2>
+        <div class="min-w-0 flex-grow-1">
+            <h2 class="mb-1 h3">Contribution Workflow</h2>
             <p class="text-muted small mb-0">
                 <a href="javascript:void(0)" onclick="loadPage('workflows')" class="text-decoration-none">&larr; All Workflows</a>
-                &nbsp;·&nbsp; Dual count → official validation → ledger deposit
+                <span class="d-none d-sm-inline">&nbsp;·&nbsp; Dual count → official validation → ledger deposit</span>
             </p>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex flex-wrap gap-2">
             <?php if ($actorJson['can_create']): ?>
             <button type="button" class="btn btn-success btn-sm" id="btnNewContrib"><i class="bi bi-plus-lg"></i> New Contribution</button>
             <?php endif; ?>
@@ -901,9 +901,9 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
                 <p class="small text-muted">Re-enter denomination counts to verify the first teller count.</p>
                 <div class="row g-2 mb-3">${denoms}</div>
                 <div class="row g-2 align-items-end">
-                    <div class="col-md-5"><label class="form-label small">Second Teller</label><select class="form-select form-select-sm" id="secondSigner"></select></div>
-                    <div class="col-md-4"><label class="form-label small">Password</label><input type="password" class="form-control form-control-sm" id="secondPassword"></div>
-                    <div class="col-md-3"><button type="button" class="btn btn-warning btn-sm w-100" id="btnSecondSign">Sign &amp; Verify</button></div>
+                    <div class="col-12 col-md-5"><label class="form-label small">Second Teller</label><select class="form-select form-select-sm" id="secondSigner"></select></div>
+                    <div class="col-12 col-md-4"><label class="form-label small">Password</label><input type="password" class="form-control form-control-sm" id="secondPassword" autocomplete="current-password"></div>
+                    <div class="col-12 col-md-3"><button type="button" class="btn btn-warning btn-sm w-100" id="btnSecondSign">Sign &amp; Verify</button></div>
                 </div>
             </div></div>`;
     }
@@ -915,8 +915,8 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
                 <div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="offChecks"><label class="form-check-label small" for="offChecks">Checks verified</label></div>
                 <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="offFunds"><label class="form-check-label small" for="offFunds">Fund allocations verified</label></div>
                 <div class="row g-2 align-items-end">
-                    <div class="col-md-4"><label class="form-label small">Password</label><input type="password" class="form-control form-control-sm" id="officialPassword"></div>
-                    <div class="col-md-4"><button type="button" class="btn btn-primary btn-sm" id="btnOfficial">Sign &amp; Create Deposit</button></div>
+                    <div class="col-12 col-md-4"><label class="form-label small">Password</label><input type="password" class="form-control form-control-sm" id="officialPassword" autocomplete="current-password"></div>
+                    <div class="col-12 col-md-4"><button type="button" class="btn btn-primary btn-sm w-100" id="btnOfficial">Sign &amp; Create Deposit</button></div>
                 </div>
             </div></div>`;
     }
@@ -1000,12 +1000,12 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
         const div = document.createElement('div');
         div.className = 'row g-2 mb-2 nc-check-row';
         div.innerHTML = `
-            <div class="col-md-3"><input class="form-control form-control-sm" placeholder="Payor" data-field="payor"></div>
-            <div class="col-md-2"><input class="form-control form-control-sm" placeholder="Check #" data-field="check_number"></div>
-            <div class="col-md-2"><input type="date" class="form-control form-control-sm" data-field="check_date"></div>
-            <div class="col-md-2"><input type="number" step="0.01" min="0" class="form-control form-control-sm nc-check-amt" placeholder="Amount"></div>
-            <div class="col-md-2"><input class="form-control form-control-sm" placeholder="Notes" data-field="notes"></div>
-            <div class="col-md-1"><button type="button" class="btn btn-outline-danger btn-sm rm-check">&times;</button></div>`;
+            <div class="col-12 col-sm-6 col-md-3"><input class="form-control form-control-sm" placeholder="Payor" data-field="payor"></div>
+            <div class="col-6 col-sm-3 col-md-2"><input class="form-control form-control-sm" placeholder="Check #" data-field="check_number"></div>
+            <div class="col-6 col-sm-3 col-md-2"><input type="date" class="form-control form-control-sm" data-field="check_date"></div>
+            <div class="col-6 col-sm-4 col-md-2"><input type="number" step="0.01" min="0" class="form-control form-control-sm nc-check-amt" placeholder="Amount"></div>
+            <div class="col-6 col-sm-6 col-md-2"><input class="form-control form-control-sm" placeholder="Notes" data-field="notes"></div>
+            <div class="col-12 col-sm-2 col-md-1"><button type="button" class="btn btn-outline-danger btn-sm w-100 rm-check">&times;</button></div>`;
         div.querySelector('.rm-check').addEventListener('click', () => { div.remove(); updateNewTotals(); });
         div.querySelector('.nc-check-amt').addEventListener('input', updateNewTotals);
         document.getElementById('ncChecks').appendChild(div);
@@ -1016,9 +1016,9 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
         const div = document.createElement('div');
         div.className = 'row g-2 mb-2 nc-alloc-row';
         div.innerHTML = `
-            <div class="col-md-7"><select class="form-select form-select-sm nc-alloc-fund">${opts}</select></div>
-            <div class="col-md-4"><input type="number" step="0.01" min="0" class="form-control form-control-sm nc-alloc-amt" placeholder="Amount"></div>
-            <div class="col-md-1"><button type="button" class="btn btn-outline-danger btn-sm rm-alloc">&times;</button></div>`;
+            <div class="col-12 col-md-7"><select class="form-select form-select-sm nc-alloc-fund">${opts}</select></div>
+            <div class="col-9 col-md-4"><input type="number" step="0.01" min="0" class="form-control form-control-sm nc-alloc-amt" placeholder="Amount"></div>
+            <div class="col-3 col-md-1"><button type="button" class="btn btn-outline-danger btn-sm w-100 rm-alloc">&times;</button></div>`;
         div.querySelector('.rm-alloc').addEventListener('click', () => { div.remove(); updateNewTotals(); });
         div.querySelector('.nc-alloc-amt').addEventListener('input', updateNewTotals);
         document.getElementById('ncAllocs').appendChild(div);

@@ -13,9 +13,51 @@ $user = getCurrentUser();
 if (!isset($db)) {
     $db = getDbConnection();
 }
+
+$footerDb = getDbConnection();
+$tellerLimitedFooter = $user ? isTellerLimitedUser($footerDb, (int)$user['id']) : false;
+$footerDb->close();
 ?>
 
-</div>
+</div><!-- /#main-content-col -->
+</div><!-- /.row -->
+</div><!-- /.container-fluid -->
+
+<!-- Mobile bottom navigation -->
+<nav class="mobile-bottom-nav d-md-none" aria-label="Primary">
+<?php if (!$tellerLimitedFooter): ?>
+    <a href="javascript:void(0)" onclick="loadPage('dashboard')" data-nav-page="dashboard">
+        <i class="bi bi-speedometer2"></i>
+        <span>Home</span>
+    </a>
+    <a href="javascript:void(0)" onclick="loadPage('ledger')" data-nav-page="ledger">
+        <i class="bi bi-currency-dollar"></i>
+        <span>Ledger</span>
+    </a>
+    <a href="javascript:void(0)" onclick="loadPage('workflows')" data-nav-page="workflows">
+        <i class="bi bi-diagram-3"></i>
+        <span>Workflows</span>
+    </a>
+    <a href="javascript:void(0)" onclick="loadPage('reports')" data-nav-page="reports">
+        <i class="bi bi-file-earmark-bar-graph"></i>
+        <span>Reports</span>
+    </a>
+    <a href="javascript:void(0)" onclick="loadPage('tasks')" data-nav-page="tasks">
+        <i class="bi bi-check2-square"></i>
+        <span>Tasks</span>
+    </a>
+<?php else: ?>
+    <a href="javascript:void(0)" onclick="loadPage('workflows')" data-nav-page="workflows">
+        <i class="bi bi-diagram-3"></i>
+        <span>Workflows</span>
+    </a>
+    <a href="logout.php">
+        <i class="bi bi-box-arrow-right"></i>
+        <span>Logout</span>
+    </a>
+<?php endif; ?>
+</nav>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
     (function() {

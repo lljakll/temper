@@ -99,43 +99,44 @@ $today = date('Y-m-d');
     };
 ?>
 
-<div class="row mb-4">
+<div class="row mb-3 mb-md-4 page-title-row">
     <div class="col-12">
-        <h2 class="mb-0">Financial Dashboard</h2>
-        <p class="text-muted">Stewardship & Accountability Dashboard | Based on Treasurer’s Guide Rev 1.0</p>
+        <h2 class="mb-0 h3 h-md-2">Financial Dashboard</h2>
+        <p class="text-muted small mb-0 d-none d-sm-block">Stewardship &amp; Accountability Dashboard | Based on Treasurer’s Guide Rev 1.0</p>
+        <p class="text-muted small mb-0 d-sm-none">Stewardship dashboard</p>
     </div>
 </div>
 
 <!-- Summary Cards -->
-<div class="row mb-4 g-3">
-    <div class="col-md-4">
-        <div class="card border-primary h-100">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0"><i class="bi bi-wallet"></i> Net Assets Without Donor Restrictions (WODR)</h5>
+<div class="row mb-3 mb-md-4 g-2 g-md-3">
+    <div class="col-12 col-sm-6 col-lg-4">
+        <div class="card border-primary h-100 dashboard-summary-card">
+            <div class="card-header bg-primary text-white py-2 py-md-3">
+                <h5 class="mb-0"><i class="bi bi-wallet"></i> <span class="d-none d-md-inline">Net Assets Without Donor Restrictions (WODR)</span><span class="d-md-none">WODR (Unrestricted)</span></h5>
             </div>
-            <div class="card-body">
+            <div class="card-body py-3">
                 <h3 class="text-primary mb-1">$<?= number_format($wodr_total, 2) ?></h3>
                 <p class="card-text text-muted small mb-0">Unrestricted operating resources.</p>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card border-success h-100">
-            <div class="card-header bg-success text-white">
-                <h5 class="mb-0"><i class="bi bi-wallet2"></i> Net Assets With Donor Restrictions (WDR)</h5>
+    <div class="col-12 col-sm-6 col-lg-4">
+        <div class="card border-success h-100 dashboard-summary-card">
+            <div class="card-header bg-success text-white py-2 py-md-3">
+                <h5 class="mb-0"><i class="bi bi-wallet2"></i> <span class="d-none d-md-inline">Net Assets With Donor Restrictions (WDR)</span><span class="d-md-none">WDR (Restricted)</span></h5>
             </div>
-            <div class="card-body">
+            <div class="card-body py-3">
                 <h3 class="text-success mb-1">$<?= number_format($wdr_total, 2) ?></h3>
                 <p class="card-text text-muted small mb-0">Donor-restricted resources.</p>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card border-info h-100">
-            <div class="card-header bg-info text-white">
-                <h5 class="mb-0"><i class="bi bi-bank"></i> Total Cash / Bank Balances</h5>
+    <div class="col-12 col-sm-12 col-lg-4">
+        <div class="card border-info h-100 dashboard-summary-card">
+            <div class="card-header bg-info text-white py-2 py-md-3">
+                <h5 class="mb-0"><i class="bi bi-bank"></i> <span class="d-none d-md-inline">Total Cash / Bank Balances</span><span class="d-md-none">Cash / Bank</span></h5>
             </div>
-            <div class="card-body">
+            <div class="card-body py-3">
                 <h3 class="text-info mb-1">$<?= number_format($cash_total, 2) ?></h3>
                 <p class="card-text text-muted small mb-0">Combined cash on hand and bank accounts.</p>
             </div>
@@ -190,7 +191,7 @@ $today = date('Y-m-d');
 <div class="row">
     <div class="col-12">
         <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-1">
                 <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Transactions</h5>
                 <a href="javascript:void(0)" onclick="loadPage('ledger')" class="small text-decoration-none">View all in Ledger &rarr;</a>
             </div>

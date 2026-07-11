@@ -491,24 +491,24 @@ require_once __DIR__ . '/../includes/budget_utils.php';
     ]);
 ?>
 
-<div class="container-fluid mt-2">
+<div class="container-fluid mt-2 px-0 px-sm-2">
     <div class="mb-3">
-        <h2 class="mb-1">Reports</h2>
+        <h2 class="mb-1 h3">Reports</h2>
         <p class="text-muted mb-0 small">Select a report to view details or export</p>
     </div>
 
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-        <div class="input-group input-group-sm" style="max-width: 320px;">
+        <div class="input-group input-group-sm flex-grow-1" style="max-width: 320px; min-width: min(100%, 12rem);">
             <span class="input-group-text"><i class="bi bi-search"></i></span>
             <input type="search" id="reportSearch" class="form-control" placeholder="Search reports..." oninput="filterReports()">
         </div>
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearReportSearch()">Clear</button>
-        <span class="small text-muted ms-auto" id="reportCount">4 reports available</span>
+        <span class="small text-muted ms-md-auto" id="reportCount">4 reports available</span>
     </div>
 
-    <div class="row g-3" id="reportsGrid">
+    <div class="row g-2 g-md-3" id="reportsGrid">
 
-        <div class="col-md-6 col-xl-3">
+        <div class="col-12 col-sm-6 col-xl-3">
             <div class="card h-100 shadow-sm">
                 <div class="card-body">
                     <div class="d-flex align-items-start">
@@ -530,7 +530,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
             </div>
         </div>
 
-        <div class="col-md-6 col-xl-3">
+        <div class="col-12 col-sm-6 col-xl-3">
             <div class="card h-100 shadow-sm">
                 <div class="card-body">
                     <div class="d-flex align-items-start">
@@ -552,7 +552,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
             </div>
         </div>
 
-        <div class="col-md-6 col-xl-3">
+        <div class="col-12 col-sm-6 col-xl-3">
             <div class="card h-100 shadow-sm">
                 <div class="card-body">
                     <div class="d-flex align-items-start">
@@ -574,7 +574,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
             </div>
         </div>
 
-        <div class="col-md-6 col-xl-3">
+        <div class="col-12 col-sm-6 col-xl-3">
             <div class="card h-100 shadow-sm">
                 <div class="card-body">
                     <div class="d-flex align-items-start">
@@ -600,8 +600,8 @@ require_once __DIR__ . '/../includes/budget_utils.php';
 
     <div id="reportViewer" class="mt-4 d-none">
         <div class="card border-primary shadow-sm">
-            <div class="card-header d-flex justify-content-between align-items-center py-2 bg-light">
-                <div id="viewerHeader" class="fw-semibold"></div>
+            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 bg-light">
+                <div id="viewerHeader" class="fw-semibold text-break"></div>
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeViewer()">Close</button>
             </div>
             <div class="card-body">
@@ -681,11 +681,11 @@ require_once __DIR__ . '/../includes/budget_utils.php';
         if (key === 'fund-balances') {
             return `
                 <div class="row g-2 align-items-end">
-                    <div class="col-md-3">
+                    <div class="col-6 col-md-3">
                         <label class="form-label small mb-1">As of Date</label>
                         <input type="date" id="fb-date" class="form-control form-control-sm" value="${FD.today}">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-6 col-md-3">
                         <label class="form-label small mb-1">Fund Type</label>
                         <select id="fb-type" class="form-select form-select-sm">
                             <option value="">All Types</option>
@@ -693,8 +693,8 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                             <option value="WDR">WDR - With Donor Restrictions</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
-                        <div class="form-check mt-3 mt-md-2">
+                    <div class="col-12 col-md-3">
+                        <div class="form-check mt-2">
                             <input class="form-check-input" type="checkbox" id="fb-include-archived">
                             <label class="form-check-label small" for="fb-include-archived">Include archived funds</label>
                         </div>
@@ -704,27 +704,27 @@ require_once __DIR__ . '/../includes/budget_utils.php';
         if (key === 'transaction-listing') {
             return `
                 <div class="row g-2 align-items-end">
-                    <div class="col-auto">
+                    <div class="col-6 col-md-auto">
                         <label class="form-label small mb-1">Date From</label>
                         <input type="date" id="tl-from" class="form-control form-control-sm" value="${FD.yearStart}">
                     </div>
-                    <div class="col-auto">
+                    <div class="col-6 col-md-auto">
                         <label class="form-label small mb-1">Date To</label>
                         <input type="date" id="tl-to" class="form-control form-control-sm" value="${FD.today}">
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Fund</label>
                         <select id="tl-fund" class="form-select form-select-sm">${optsFromList(FD.funds, 'All Funds')}</select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Account</label>
                         <select id="tl-account" class="form-select form-select-sm">${optsFromList(FD.accounts, 'All Accounts')}</select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Category</label>
                         <select id="tl-category" class="form-select form-select-sm">${optsFromList(FD.categories, 'All Categories')}</select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Status</label>
                         <select id="tl-status" class="form-select form-select-sm">
                             <option value="">All</option>
@@ -733,7 +733,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                             <option value="reconciled">Reconciled</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-12 col-md-3">
                         <label class="form-label small mb-1">Search</label>
                         <input type="text" id="tl-search" class="form-control form-control-sm" placeholder="Pay to, ref, memo...">
                     </div>
@@ -755,15 +755,15 @@ require_once __DIR__ . '/../includes/budget_utils.php';
             return `
                 <div class="row g-2 align-items-end">
                     ${activeNote}
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Fiscal Year</label>
                         <select id="ba-year" class="form-select form-select-sm" onchange="updateBaBudgetSelect()">${yearOpts}</select>
                     </div>
-                    <div class="col-md-4" id="ba-budget-wrap" style="display:none">
+                    <div class="col-12 col-md-4" id="ba-budget-wrap" style="display:none">
                         <label class="form-label small mb-1">Budget</label>
                         <select id="ba-budget" class="form-select form-select-sm"></select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Period</label>
                         <select id="ba-period" class="form-select form-select-sm">
                             <option value="ytd">Year to Date</option>
@@ -771,14 +771,14 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                             <option value="custom">Custom Range</option>
                         </select>
                     </div>
-                    <div class="col-auto" id="ba-custom-dates" style="display:none">
+                    <div class="col-12 col-md-auto" id="ba-custom-dates" style="display:none">
                         <label class="form-label small mb-1">From / To</label>
-                        <div class="d-flex gap-1">
+                        <div class="d-flex flex-column flex-sm-row gap-1">
                             <input type="date" id="ba-from" class="form-control form-control-sm" value="${FD.yearStart}">
                             <input type="date" id="ba-to" class="form-control form-control-sm" value="${FD.today}">
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-12 col-md-3">
                         <label class="form-label small mb-1">Group By</label>
                         <select id="ba-group" class="form-select form-select-sm">
                             <option value="natural_category">Natural Category</option>
@@ -791,20 +791,20 @@ require_once __DIR__ . '/../includes/budget_utils.php';
         if (key === 'restricted-funds') {
             return `
                 <div class="row g-2 align-items-end">
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">Period Start</label>
                         <input type="date" id="rf-period-start" class="form-control form-control-sm" value="${FD.yearStart}">
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-6 col-md-2">
                         <label class="form-label small mb-1">As of Date</label>
                         <input type="date" id="rf-date" class="form-control form-control-sm" value="${FD.today}">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-12 col-md-3">
                         <label class="form-label small mb-1">Fund</label>
                         <select id="rf-fund" class="form-select form-select-sm">${optsFromList(FD.wdrFunds, 'All Restricted Funds')}</select>
                     </div>
-                    <div class="col-md-3">
-                        <div class="form-check mt-3 mt-md-2">
+                    <div class="col-12 col-md-3">
+                        <div class="form-check mt-2">
                             <input class="form-check-input" type="checkbox" id="rf-active-only" checked>
                             <label class="form-check-label small" for="rf-active-only">Active funds only</label>
                         </div>

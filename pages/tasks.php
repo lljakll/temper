@@ -273,21 +273,21 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
     }
 </style>
 
-<div class="row mb-3 align-items-center">
-    <div class="col-md-8">
+<div class="row mb-3 align-items-center g-2">
+    <div class="col-12 col-md-8">
         <h2 class="mb-0">Tasks / Reminders</h2>
         <p class="text-muted mb-0">Manual tasks and recurring-action reminders</p>
     </div>
-    <div class="col-md-4 d-flex justify-content-md-end align-items-center gap-2 mt-2 mt-md-0">
-        <div class="btn-group" role="group" aria-label="View toggle">
+    <div class="col-12 col-md-4 d-flex flex-wrap justify-content-md-end align-items-center gap-2">
+        <div class="btn-group flex-grow-1 flex-md-grow-0" role="group" aria-label="View toggle">
             <button type="button" class="btn btn-outline-primary active" id="viewKanbanBtn">
-                <i class="bi bi-kanban"></i> Kanban
+                <i class="bi bi-kanban"></i> <span class="d-none d-sm-inline">Kanban</span>
             </button>
             <button type="button" class="btn btn-outline-primary" id="viewListBtn">
-                <i class="bi bi-list-ul"></i> List
+                <i class="bi bi-list-ul"></i> <span class="d-none d-sm-inline">List</span>
             </button>
             <button type="button" class="btn btn-outline-primary" id="viewCalendarBtn">
-                <i class="bi bi-calendar3"></i> Calendar
+                <i class="bi bi-calendar3"></i> <span class="d-none d-sm-inline">Calendar</span>
             </button>
         </div>
         <button type="button" class="btn btn-primary" id="addTaskBtn">

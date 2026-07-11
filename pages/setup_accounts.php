@@ -129,21 +129,21 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     $accounts_result = $db->query($accounts_query);
 ?>
 
-<div class="container mt-4">
-    <h2 class="mb-4">Accounts Setup</h2>
+<div class="container-fluid mt-2 mt-md-4 px-0 px-sm-2">
+    <h2 class="mb-3 mb-md-4 h3">Accounts Setup</h2>
     
     <!-- Controls -->
-    <div class="row mb-3">
-        <div class="col-md-6">
+    <div class="row mb-3 g-2">
+        <div class="col-12 col-md-4">
             <button id="showArchivedBtn" class="btn btn-outline-secondary" data-show-archived="<?= $show_archived ? '1' : '0' ?>">
                 <?= $show_archived ? 'Hide' : 'Show' ?> Archived
             </button>
         </div>
-        <div class="col-md-6 text-end">
-            <button id="addBtn" class="btn btn-primary me-2">Add</button>
-            <button id="editBtn" class="btn btn-secondary me-2" disabled>Edit</button>
-            <button id="deleteBtn" class="btn btn-danger me-2" disabled>Delete</button>
-            <button id="archiveBtn" class="btn btn-warning me-2" disabled>Archive/Unarchive</button>
+        <div class="col-12 col-md-8 d-flex flex-wrap gap-2 justify-content-md-end">
+            <button id="addBtn" class="btn btn-primary">Add</button>
+            <button id="editBtn" class="btn btn-secondary" disabled>Edit</button>
+            <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
+            <button id="archiveBtn" class="btn btn-warning" disabled>Archive/Unarchive</button>
         </div>
     </div>
     

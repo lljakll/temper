@@ -677,9 +677,9 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
 <?php endif; ?>
 
     <!-- Top Action Buttons -->
-    <div class="d-flex flex-wrap gap-2 mb-1">
+    <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar">
         <button type="button" id="addTxBtn" class="btn btn-primary">
-            <i class="bi bi-plus-lg"></i> Add Transaction
+            <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">Add Transaction</span><span class="d-sm-none">Add</span>
         </button>
         <button type="button" id="editTxBtn" class="btn btn-outline-secondary" disabled>
             <i class="bi bi-pencil"></i> Edit
@@ -688,24 +688,24 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             <i class="bi bi-check2-circle"></i> Clear
         </button>
         <button type="button" id="reconcileTxBtn" class="btn btn-outline-info" disabled>
-            <i class="bi bi-journal-check"></i> Reconcile
+            <i class="bi bi-journal-check"></i> <span class="d-none d-sm-inline">Reconcile</span><span class="d-sm-none">Rec.</span>
         </button>
     </div>
 
     <!-- Constrained viewport area: list fixed at 35%, form takes remainder and scrolls internally if long -->
-    <div class="d-flex flex-column" style="height: calc(100vh - 170px); min-height: 300px;">
+    <div class="d-flex flex-column ledger-workspace">
         <!-- Filters -->
-        <div class="mb-1 flex-shrink-0">
-            <div class="row g-2 align-items-end">
-                <div class="col-auto">
+        <div class="mb-2 flex-shrink-0">
+            <div class="row g-2 align-items-end ledger-filter-row">
+                <div class="col-6 col-md-auto">
                     <label class="form-label small mb-1">Date From</label>
                     <input type="date" id="filterDateFrom" class="form-control form-control-sm" value="<?= htmlspecialchars($date_from) ?>">
                 </div>
-                <div class="col-auto">
+                <div class="col-6 col-md-auto">
                     <label class="form-label small mb-1">Date To</label>
                     <input type="date" id="filterDateTo" class="form-control form-control-sm" value="<?= htmlspecialchars($date_to) ?>">
                 </div>
-                <div class="col-auto">
+                <div class="col-12 col-sm-6 col-md-auto">
                     <label class="form-label small mb-1">Account View</label>
                     <select id="filterAccount" class="form-select form-select-sm" style="min-width:170px;">
                         <option value="0" <?= $dropdown_selected === 0 ? 'selected' : '' ?>>All Accounts</option>
@@ -715,29 +715,30 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
 <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="col-md-3 col-sm-12">
-                    <label class="form-label small mb-1">Search (Pay To / Ref # / Check # / Memo / Amount)</label>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-1"><span class="d-none d-md-inline">Search (Pay To / Ref # / Check # / Memo / Amount)</span><span class="d-md-none">Search</span></label>
                     <input type="search" id="filterSearch" class="form-control form-control-sm" value="<?= htmlspecialchars($search) ?>" placeholder="Search transactions...">
                 </div>
-                <div class="col-auto">
-                    <button type="button" id="applyFilterBtn" class="btn btn-sm btn-primary">Apply</button>
-                    <button type="button" id="clearFilterBtn" class="btn btn-sm btn-outline-secondary">Clear</button>
+                <div class="col-12 col-md-auto d-flex flex-wrap gap-2">
+                    <button type="button" id="applyFilterBtn" class="btn btn-sm btn-primary flex-grow-1 flex-md-grow-0">Apply</button>
+                    <button type="button" id="clearFilterBtn" class="btn btn-sm btn-outline-secondary flex-grow-1 flex-md-grow-0">Clear</button>
                 </div>
-                <div class="col-auto ms-auto text-muted small align-self-center">
+                <div class="col-12 col-md-auto ms-md-auto text-muted small align-self-center">
                     <?= (int)$total ?> total
                 </div>
             </div>
         </div>
 
         <!-- Transactions List (fixed 35% height of page, internally scrollable) -->
-        <div class="card mb-2 flex-shrink-0" style="height: 35vh;">
+        <div class="card mb-2 flex-shrink-0 ledger-tx-list">
             <div class="card-header py-2">
                 <strong>Transactions</strong>
-                <small class="text-muted ms-2">(click row to view; checkbox or Ctrl/Shift+click for multi)</small>
+                <small class="text-muted ms-2 d-none d-md-inline">(click row to view; checkbox or Ctrl/Shift+click for multi)</small>
+                <small class="text-muted ms-2 d-md-none">(tap row to view)</small>
             </div>
             <div class="card-body p-0 d-flex flex-column" style="height: calc(100% - 2.25rem);">
-                <div style="flex: 1 1 auto; overflow: auto; min-height: 0;">
-                    <table class="table table-sm table-hover mb-0 align-middle">
+                <div class="table-responsive" style="flex: 1 1 auto; overflow: auto; min-height: 0;">
+                    <table class="table table-sm table-hover mb-0 align-middle" style="min-width: 720px;">
                         <thead class="table-dark" style="position: sticky; top: 0; z-index: 10;">
                             <tr>
                                 <th style="width:28px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
@@ -798,10 +799,10 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                         </tbody>
                     </table>
                 </div>
-                <div id="paginationBar" class="d-flex justify-content-between align-items-center px-2 py-1 small bg-light border-top flex-shrink-0"
+                <div id="paginationBar" class="d-flex justify-content-between align-items-center px-2 py-2 small bg-light border-top flex-shrink-0 gap-2"
                      data-current-page="<?= (int)$page ?>" data-total-pages="<?= (int)$total_pages ?>">
-                    <div>Page <?= (int)$page ?> of <?= (int)$total_pages ?></div>
-                    <div>
+                    <div class="text-nowrap">Page <?= (int)$page ?> of <?= (int)$total_pages ?></div>
+                    <div class="d-flex gap-1">
                         <button type="button" id="prevPageBtn" class="btn btn-sm btn-outline-secondary" <?= $page <= 1 ? 'disabled' : '' ?>>Prev</button>
                         <button type="button" id="nextPageBtn" class="btn btn-sm btn-outline-secondary" <?= $page >= $total_pages ? 'disabled' : '' ?>>Next</button>
                     </div>
@@ -823,27 +824,27 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                     <input type="hidden" name="lines_json" id="lines_json">
 
                     <div class="row g-2">
-                        <div class="col-md-1">
+                        <div class="col-6 col-sm-4 col-md-2 col-xl-1">
                             <label class="form-label small mb-1">Date *</label>
                             <input type="date" class="form-control form-control-sm" name="transaction_date" id="transaction_date" required>
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-6 col-sm-8 col-md-3 col-xl-2">
                             <label class="form-label small mb-1">Pay To</label>
                             <input type="text" class="form-control form-control-sm" name="pay_to" id="pay_to" placeholder="Vendor or person">
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-6 col-sm-4 col-md-2">
                             <label class="form-label small mb-1">Reference #</label>
                             <input type="text" class="form-control form-control-sm" name="reference_number" id="reference_number" placeholder="Ref #">
                         </div>
-                        <div class="col-md-1">
-                            <label class="form-label small mb-1">Check Number</label>
+                        <div class="col-6 col-sm-4 col-md-2 col-xl-1">
+                            <label class="form-label small mb-1">Check #</label>
                             <input type="text" class="form-control form-control-sm" name="check_number" id="check_number">
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-12 col-sm-4 col-md-3 col-xl-2">
                             <label class="form-label small mb-1">Description</label>
                             <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Short description">
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-12 col-md-12 col-xl-4">
                             <label class="form-label small mb-1">Memo</label>
                             <input type="text" class="form-control form-control-sm" name="memo" id="memo" placeholder="Additional notes">
                         </div>
@@ -872,7 +873,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                             </table>
                         </div>
 
-                        <div class="d-flex gap-3 align-items-center small">
+                        <div class="d-flex flex-wrap gap-2 gap-md-3 align-items-center small">
                             <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">0.00</span></div>
                             <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">0.00</span></div>
                             <div><strong>Diff:</strong> <span id="diff" class="fw-bold">0.00</span></div>
@@ -886,9 +887,9 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                         <h6 class="small mb-1">Documents</h6>
                         <ul id="txDocumentsList" class="list-unstyled small mb-2"></ul>
                         <!-- Not a nested <form> (invalid inside #txForm); button-driven upload -->
-                        <div id="txDocUploadForm" class="d-flex gap-2 align-items-center mb-3 d-none">
+                        <div id="txDocUploadForm" class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-center mb-3 d-none">
                             <input type="file" id="txDocFile" class="form-control form-control-sm" name="document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
-                            <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm" disabled>Upload</button>
+                            <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm text-nowrap" disabled>Upload</button>
                         </div>
                         <div class="accordion accordion-flush border rounded" id="txAuditAccordion">
                             <div class="accordion-item">
@@ -909,10 +910,10 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                         </div>
                     </div>
 
-                    <div class="mt-2">
+                    <div class="mt-2 d-flex flex-wrap gap-2">
                         <button type="submit" id="saveBtn" class="btn btn-sm btn-primary" disabled>Save Transaction</button>
-                        <button type="button" id="resetLinesBtn" class="btn btn-sm btn-outline-secondary ms-2">Reset to 2 Lines</button>
-                        <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary ms-2">Cancel</button>
+                        <button type="button" id="resetLinesBtn" class="btn btn-sm btn-outline-secondary">Reset to 2 Lines</button>
+                        <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary">Cancel</button>
                     </div>
                 </form>
             </div>

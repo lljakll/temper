@@ -19,8 +19,210 @@ requireLogin();
         .collapse.show {
             display: block !important;
         }
-        .sidebar {
+
+        /* ── Desktop sidebar ─────────────────────────────────────────────── */
+        .sidebar-panel {
             height: calc(100vh - 1rem);
+            max-height: calc(100vh - 1rem);
+        }
+        .sidebar-panel .nav-link {
+            border-radius: 0.375rem;
+            padding: 0.5rem 0.75rem;
+            min-height: 2.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .sidebar-panel .nav-link:hover,
+        .sidebar-panel .nav-link:focus {
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+        .sidebar-panel .nav-link.active {
+            background-color: rgba(255, 255, 255, 0.15);
+            font-weight: 600;
+        }
+
+        /* Offcanvas-md: keep dark panel styling when shown as overlay */
+        #appSidebar.offcanvas {
+            --bs-offcanvas-width: min(18rem, 85vw);
+        }
+        @media (min-width: 768px) {
+            #appSidebar.offcanvas-md {
+                position: sticky;
+                top: 0.5rem;
+                transform: none !important;
+                visibility: visible !important;
+                height: calc(100vh - 1rem);
+                background: transparent !important;
+                border: 0 !important;
+            }
+            #appSidebar .offcanvas-body {
+                height: 100%;
+            }
+        }
+
+        /* ── Main content area ───────────────────────────────────────────── */
+        #main-content-col {
+            min-width: 0; /* allow flex children to shrink / tables to scroll */
+        }
+        #main-content {
+            min-width: 0;
+        }
+
+        /* ── Mobile top bar ──────────────────────────────────────────────── */
+        .mobile-topbar {
+            z-index: 1020;
+        }
+
+        /* ── Bottom navigation (phones / small tablets) ──────────────────── */
+        .mobile-bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 1030;
+            background: #212529;
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            display: flex;
+            justify-content: space-around;
+            padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.15);
+        }
+        .mobile-bottom-nav a {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.15rem;
+            color: rgba(255, 255, 255, 0.7);
+            text-decoration: none;
+            font-size: 0.65rem;
+            padding: 0.35rem 0.15rem;
+            min-height: 3rem;
+            border-radius: 0.375rem;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mobile-bottom-nav a i {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+        .mobile-bottom-nav a:hover,
+        .mobile-bottom-nav a:focus,
+        .mobile-bottom-nav a.active {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        /* Room for fixed bottom nav on small screens */
+        @media (max-width: 767.98px) {
+            body.has-mobile-nav {
+                padding-bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+            }
+            .toast-container {
+                bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)) !important;
+                top: auto !important;
+            }
+        }
+
+        /* ── Touch-friendly forms & controls ─────────────────────────────── */
+        @media (max-width: 991.98px) {
+            .form-control,
+            .form-select {
+                min-height: 2.75rem;
+                font-size: 16px; /* prevents iOS zoom on focus */
+            }
+            .form-control-sm,
+            .form-select-sm {
+                min-height: 2.5rem;
+                font-size: 16px;
+                padding-top: 0.4rem;
+                padding-bottom: 0.4rem;
+            }
+            .btn {
+                min-height: 2.5rem;
+                padding-left: 0.85rem;
+                padding-right: 0.85rem;
+            }
+            .btn-sm {
+                min-height: 2.35rem;
+                padding: 0.35rem 0.7rem;
+            }
+            .form-check-input {
+                width: 1.25rem;
+                height: 1.25rem;
+            }
+            /* Stack tight action toolbars */
+            .btn-toolbar-mobile {
+                width: 100%;
+            }
+            .btn-toolbar-mobile > .btn {
+                flex: 1 1 auto;
+            }
+        }
+
+        /* ── Tables: horizontal scroll helpers ───────────────────────────── */
+        .table-responsive {
+            -webkit-overflow-scrolling: touch;
+        }
+        .table-responsive > .table {
+            margin-bottom: 0;
+        }
+        /* Prefer not to shrink critical money columns on small screens */
+        .table .text-nowrap {
+            white-space: nowrap;
+        }
+
+        /* ── Ledger layout ───────────────────────────────────────────────── */
+        .ledger-workspace {
+            height: calc(100vh - 170px);
+            min-height: 300px;
+        }
+        .ledger-tx-list {
+            height: 35vh;
+        }
+        @media (max-width: 767.98px) {
+            .ledger-workspace {
+                height: auto;
+                min-height: 0;
+            }
+            .ledger-tx-list {
+                height: 45vh;
+                max-height: 45vh;
+            }
+            .ledger-filter-row .col-auto {
+                flex: 1 1 45%;
+            }
+            .ledger-filter-row .col-auto .form-control,
+            .ledger-filter-row .col-auto .form-select {
+                width: 100%;
+            }
+            .ledger-action-bar .btn {
+                flex: 1 1 calc(50% - 0.25rem);
+            }
+        }
+
+        /* ── Dashboard cards ─────────────────────────────────────────────── */
+        @media (max-width: 575.98px) {
+            .dashboard-summary-card .card-header h5 {
+                font-size: 0.95rem;
+            }
+            .dashboard-summary-card .card-body h3 {
+                font-size: 1.5rem;
+            }
+        }
+
+        /* ── Modals on small screens ─────────────────────────────────────── */
+        @media (max-width: 575.98px) {
+            .modal-dialog.modal-xl,
+            .modal-dialog.modal-lg {
+                margin: 0.5rem;
+                max-width: calc(100% - 1rem);
+            }
+        }
+
+        /* ── Utility: page titles that wrap cleanly ──────────────────────── */
+        .page-title-row {
+            gap: 0.5rem;
         }
     </style>
 </head>
@@ -106,9 +308,32 @@ requireLogin();
         }
     })();
 
+    // Close mobile offcanvas after navigation
+    window.closeMobileNav = function() {
+        var el = document.getElementById('appSidebar');
+        if (!el || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) return;
+        var inst = bootstrap.Offcanvas.getInstance(el);
+        if (inst) inst.hide();
+    };
+
+    // Highlight active nav item (sidebar + bottom nav)
+    window.setActiveNav = function(page) {
+        if (!page) return;
+        document.querySelectorAll('[data-nav-page]').forEach(function(a) {
+            a.classList.toggle('active', a.getAttribute('data-nav-page') === page);
+        });
+    };
+
     // Global function to load content via AJAX
     function loadPage(page) {
         if (window.__temperAuthRedirecting) return;
+
+        if (typeof window.closeMobileNav === 'function') {
+            window.closeMobileNav();
+        }
+        if (typeof window.setActiveNav === 'function') {
+            window.setActiveNav(page);
+        }
 
         const contentArea = document.getElementById('main-content');
         
@@ -147,6 +372,6 @@ requireLogin();
         loadPage('dashboard');
     });
     </script>
-<body class="bg-light">
+<body class="bg-light has-mobile-nav">
 
 <div class="container-fluid p-2">

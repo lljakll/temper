@@ -34,14 +34,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-light">
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-md-6 col-lg-4">
-                <div class="card mt-5">
-                    <div class="card-header">
-                        <h3 class="text-center">Login</h3>
+    <div class="container px-3">
+        <div class="row justify-content-center min-vh-100 align-items-center py-4">
+            <div class="col-12 col-sm-10 col-md-6 col-lg-4">
+                <div class="card shadow-sm">
+                    <div class="card-header py-3">
+                        <h3 class="text-center mb-0 h4">Login</h3>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body p-3 p-md-4">
                         <?php if (isset($_GET['logout'])): ?>
                             <div class="alert alert-success text-center">
                                 You have been logged out successfully.
@@ -59,13 +59,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <form method="POST" action="">
                             <div class="mb-3">
                                 <label for="username" class="form-label">Username</label>
-                                <input type="text" class="form-control" id="username" name="username" required>
+                                <input type="text" class="form-control form-control-lg" id="username" name="username" autocomplete="username" required>
                             </div>
                             <div class="mb-3">
                                 <label for="password" class="form-label">Password</label>
-                                <input type="password" class="form-control" id="password" name="password" required>
+                                <input type="password" class="form-control form-control-lg" id="password" name="password" autocomplete="current-password" required>
                             </div>
-                            <button type="submit" class="btn btn-primary w-100">Login</button>
+                            <button type="submit" class="btn btn-primary btn-lg w-100">Login</button>
                         </form>
 
                         <div class="text-center mt-3">
