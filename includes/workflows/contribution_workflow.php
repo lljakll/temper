@@ -136,6 +136,9 @@ function contribMergeInputIntoTransactionData(array $input, array $base, int $fi
     $data = $base;
     $data['service_date'] = $input['service_date'] ?? $data['service_date'];
     $data['description'] = $input['description'] ?? $data['description'];
+    if (isset($input['reference_number']) || isset($input['sequence_number'])) {
+        $data['reference_number'] = ledgerNormalizeReferenceNumber($input['reference_number'] ?? $input['sequence_number'] ?? '');
+    }
     $data['cash_denominations'] = $input['cash_denominations'] ?? $data['cash_denominations'];
     $data['checks'] = $input['checks'] ?? $data['checks'];
     $data['fund_allocations'] = $input['fund_allocations'] ?? $data['fund_allocations'];
@@ -162,6 +165,12 @@ function contribEnrichInstance(mysqli $db, array $instance): array {
                 $instance['payload'] ?? [],
                 $ledger['transaction_data'] ?? []
             );
+            // Prefer authoritative column on transaction_details
+            $ref = ledgerNormalizeReferenceNumber($ledger['reference_number'] ?? null);
+            if ($ref !== '' && preg_match('/^\\d{6}$/', $ref)) {
+                $instance['reference_number'] = $ref;
+                $instance['payload']['reference_number'] = $ref;
+            }
             $instance['documents'] = $ledger['documents'] ?? [];
             $instance['ledger_events'] = $ledger['events'] ?? [];
         }
@@ -196,8 +205,30 @@ function contribCreate(mysqli $db, array $payload, array $actor): array {
     $serviceDate = $transactionData['service_date'];
     $description = $transactionData['description'] ?? 'Contribution';
     $title = $description . ' — ' . $serviceDate;
-    $ref = 'WF-CONTRIB-DRAFT-' . date('YmdHis');
     $memo = 'Contribution workflow draft | Pending dual count';
+
+    $refCheck = ledgerValidateReferenceNumber($payload['reference_number'] ?? $payload['sequence_number'] ?? null, true);
+    if (empty($refCheck['ok'])) {
+        return ['error' => $refCheck['error'] ?? 'Reference # is required (YY####).'];
+    }
+    $referenceNumber = $refCheck['value'];
+    $allowReuse = !empty($payload['allow_reference_reuse']) || !empty($payload['allow_sequence_reuse']);
+    if (!$allowReuse && ledgerReferenceNumberTaken($db, $referenceNumber)) {
+        $usage = ledgerReferenceUsage($db, $referenceNumber);
+        $hint = $usage
+            ? (' (used by #' . (int)$usage['id']
+                . (!empty($usage['transaction_date']) ? ' on ' . $usage['transaction_date'] : '')
+                . (!empty($usage['pay_to']) ? ' — ' . $usage['pay_to'] : '')
+                . ')')
+            : '';
+        return [
+            'error' => 'Reference # ' . $referenceNumber . ' is already used' . $hint
+                . '. Confirm reuse if this is intentional.',
+            'reference_taken' => true,
+            'usage' => $usage,
+        ];
+    }
+    $transactionData['reference_number'] = $referenceNumber;
 
     $db->begin_transaction();
     try {
@@ -205,7 +236,7 @@ function contribCreate(mysqli $db, array $payload, array $actor): array {
             $db,
             $serviceDate,
             'Contribution Deposit',
-            $ref,
+            (string)$referenceNumber,
             $memo,
             'workflow',
             'draft',
@@ -237,7 +268,7 @@ function contribCreate(mysqli $db, array $payload, array $actor): array {
             $txId
         );
 
-        ledgerUpdateHeader($db, $txId, null, null, 'WF-CONTRIB-' . $instanceId, null, null, $instanceId);
+        ledgerUpdateHeader($db, $txId, null, null, null, null, null, $instanceId);
 
         workflowCompleteStep($db, $instanceId, CONTRIB_STEP_TELLER, (int)$actor['id'], $actor['username'], [
             'transaction_detail_id' => $txId,

@@ -16,7 +16,12 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             echo 'Document not found.';
             exit;
         }
-        $path = ledgerResolveDocumentPath((int)$doc['transaction_detail_id'], $doc['stored_filename']);
+        $ref = ledgerNormalizeReferenceNumber($doc['reference_number'] ?? null);
+        $path = ledgerResolveDocumentPath(
+            (int)$doc['transaction_detail_id'],
+            $doc['stored_filename'],
+            preg_match('/^\d{6}$/', $ref) ? $ref : null
+        );
         if (!$path) {
             http_response_code(404);
             echo 'File not found.';
@@ -56,6 +61,64 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             'preview_url' => 'pages/ledger.php?preview_document=' . (int)$doc['id'],
             'download_url' => 'pages/ledger.php?download_document=' . (int)$doc['id'],
         ]);
+        exit;
+    }
+
+    // Reference # (YY####) helpers: shadow default, reuse check, used-list modal
+    // Accept reference_api (preferred) or sequence_api (legacy alias)
+    if (isset($_GET['reference_api']) || isset($_GET['sequence_api'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        $api = (string)($_GET['reference_api'] ?? $_GET['sequence_api'] ?? '');
+        if ($api === 'suggest') {
+            $date = trim((string)($_GET['date'] ?? ''));
+            $kind = trim((string)($_GET['kind'] ?? 'other'));
+            $range = ledgerReferenceRangeForKind($kind);
+            $suggested = ledgerSuggestNextReferenceNumber($db, $date !== '' ? $date : null, $range['kind']);
+            echo json_encode([
+                'success' => true,
+                'suggested' => $suggested,
+                'date' => $date ?: date('Y-m-d'),
+                'kind' => $range['kind'],
+                'range' => [
+                    'min' => $range['min'],
+                    'max' => $range['max'],
+                    'hint' => $range['hint'],
+                    'label' => $range['label'],
+                ],
+            ]);
+            exit;
+        }
+        if ($api === 'check') {
+            $raw = $_GET['ref'] ?? $_GET['seq'] ?? '';
+            $kind = trim((string)($_GET['kind'] ?? 'other'));
+            $refCheck = ledgerValidateReferenceNumber($raw, true);
+            if (empty($refCheck['ok'])) {
+                echo json_encode([
+                    'success' => false,
+                    'taken' => false,
+                    'error' => $refCheck['error'] ?? 'Invalid Reference #.',
+                ]);
+                exit;
+            }
+            $excludeId = (int)($_GET['exclude_id'] ?? 0);
+            $usage = ledgerReferenceUsage($db, (string)$refCheck['value'], $excludeId > 0 ? $excludeId : null);
+            $advisory = ledgerReferenceRangeAdvisory((string)$refCheck['value'], $kind);
+            echo json_encode([
+                'success' => true,
+                'taken' => $usage !== null,
+                'reference_number' => $refCheck['value'],
+                'usage' => $usage,
+                'range_advisory' => $advisory,
+                'kind' => ledgerReferenceRangeForKind($kind)['kind'],
+            ]);
+            exit;
+        }
+        if ($api === 'list') {
+            $items = ledgerListUsedReferenceNumbers($db, 2000);
+            echo json_encode(['success' => true, 'items' => $items, 'count' => count($items)]);
+            exit;
+        }
+        echo json_encode(['success' => false, 'error' => 'Unknown reference_api']);
         exit;
     }
 
@@ -326,15 +389,40 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             // Shared add / edit save handler
             $d = $_POST['transaction_date'] ?? '';
             $p = trim($_POST['pay_to'] ?? '');
-            $ref = trim($_POST['reference_number'] ?? '');
+            // Reference # is the manual YY#### field (replaces free-text ref + sequence)
+            $refRaw = $_POST['reference_number'] ?? '';
             $c = trim($_POST['check_number'] ?? '');
             $desc = trim($_POST['description'] ?? '');
             $mem = trim($_POST['memo'] ?? '');
             $tx_id = (int)($_POST['tx_id'] ?? 0);
             $lines = json_decode($_POST['lines_json'] ?? '[]', true) ?: [];
 
+            $refCheck = ledgerValidateReferenceNumber($refRaw, true);
+            $ref = $refCheck['value'] ?? null;
+            $allowRefReuse = in_array(
+                (string)($_POST['allow_reference_reuse'] ?? '0'),
+                ['1', 'true'],
+                true
+            );
+
             if (!$d) {
                 $error = "Date is required.";
+            } elseif (empty($refCheck['ok'])) {
+                $error = $refCheck['error'] ?? 'Invalid Reference #.';
+            } elseif (
+                $ref !== null
+                && !$allowRefReuse
+                && ledgerReferenceNumberTaken($db, $ref, $tx_id > 0 ? $tx_id : null)
+            ) {
+                $usage = ledgerReferenceUsage($db, $ref, $tx_id > 0 ? $tx_id : null);
+                $hint = $usage
+                    ? (' (used by #' . (int)$usage['id']
+                        . (!empty($usage['transaction_date']) ? ' on ' . $usage['transaction_date'] : '')
+                        . (!empty($usage['pay_to']) ? ' — ' . $usage['pay_to'] : '')
+                        . ')')
+                    : '';
+                $error = 'Reference # ' . $ref . ' is already used' . $hint
+                    . '. Confirm reuse in the form if this is intentional.';
             } elseif (count($lines) < 2) {
                 $error = "Every transaction must have at least 2 lines.";
             } else {
@@ -382,10 +470,18 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                         } elseif (!ledgerIsEditable($existing)) {
                             $error = "This transaction is read-only (cleared, reconciled, or workflow-finalized).";
                         } else {
+                            $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
                             $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, memo=? WHERE id=?");
                             $upd->bind_param("sssssi", $d, $c, $p, $ref, $mm, $tx_id);
                             if ($upd->execute()) {
                                 $upd->close();
+
+                                // Keep attachment files with the Reference # folder when it changes
+                                if ($oldRef !== '' && preg_match('/^\d{6}$/', $oldRef) && $ref !== null && $oldRef !== $ref) {
+                                    ledgerRelocateAttachmentFolder($oldRef, $ref);
+                                } elseif (($oldRef === '' || !preg_match('/^\d{6}$/', $oldRef)) && $ref !== null) {
+                                    ledgerRelocateAttachmentFolder((string)$tx_id, $ref);
+                                }
 
                                 $describe = ledgerDescribeTransactionUpdate(
                                     $db,
@@ -434,7 +530,16 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                         }
                     } else {
                         $createdBy = $actor ? (int)$actor['id'] : null;
-                        $tid = ledgerCreateHeader($db, $d, $p, $ref, $mm, 'manual', 'finalized', $createdBy);
+                        $tid = ledgerCreateHeader(
+                            $db,
+                            $d,
+                            $p,
+                            (string)$ref,
+                            $mm,
+                            'manual',
+                            'finalized',
+                            $createdBy
+                        );
                         $chk = $db->prepare('UPDATE transaction_details SET check_number = ? WHERE id = ?');
                         $chk->bind_param('si', $c, $tid);
                         $chk->execute();
@@ -743,8 +848,8 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                             <tr>
                                 <th style="width:28px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
                                 <th>Date</th>
-                                <th>Pay To</th>
                                 <th>Ref #</th>
+                                <th>Pay To</th>
                                 <th>Check #</th>
                                 <th>Memo</th>
                                 <th class="text-end text-nowrap" style="min-width:5.5rem" title="Debit amounts">Debit</th>
@@ -765,7 +870,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                                         elseif ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
                                         elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
                                         $sourceText = ($r['source'] ?? 'manual') === 'workflow' ? 'Workflow' : 'Manual';
-                                        $sourceBadge = ($r['source'] ?? 'manual') === 'workflow' ? 'bg-primary' : 'bg-light text-dark border';
+                                        $sourceBadge = ($r['source'] ?? 'manual') === 'workflow' ? 'bg-primary' : 'bg-body-secondary text-body border';
                                         $tid = (int)$r['id'];
                                         if ($filter_account_id > 0) {
                                             $debAmt = $acct_debits[$tid] ?? 0.0;
@@ -780,8 +885,8 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                                     <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-entry-status="<?= htmlspecialchars($r['entry_status'] ?? 'finalized') ?>" data-source="<?= htmlspecialchars($r['source'] ?? 'manual') ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= $tid ?>"></td>
                                         <td><?= htmlspecialchars($r['transaction_date']) ?></td>
+                                        <td class="font-monospace"><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
-                                        <td><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
                                         <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
                                         <td class="text-end font-monospace text-primary fw-semibold ledger-debit-col"><?= $debDisplay !== '' ? htmlspecialchars($debDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
@@ -799,7 +904,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                         </tbody>
                     </table>
                 </div>
-                <div id="paginationBar" class="d-flex justify-content-between align-items-center px-2 py-2 small bg-light border-top flex-shrink-0 gap-2"
+                <div id="paginationBar" class="d-flex justify-content-between align-items-center px-2 py-2 small bg-body-tertiary border-top flex-shrink-0 gap-2"
                      data-current-page="<?= (int)$page ?>" data-total-pages="<?= (int)$total_pages ?>">
                     <div class="text-nowrap">Page <?= (int)$page ?> of <?= (int)$total_pages ?></div>
                     <div class="d-flex gap-1">
@@ -815,7 +920,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             <div class="card-header d-flex justify-content-between align-items-center flex-shrink-0">
                 <div>
                     <strong id="formTitle">Transaction Details</strong>
-                    <span id="formModeBadge" class="badge bg-light text-dark ms-1"></span>
+                    <span id="formModeBadge" class="badge bg-body-secondary text-body ms-1"></span>
                 </div>
             </div>
             <div class="card-body flex-grow-1 overflow-auto" style="min-height: 0;">
@@ -828,13 +933,27 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                             <label class="form-label small mb-1">Date *</label>
                             <input type="date" class="form-control form-control-sm" name="transaction_date" id="transaction_date" required>
                         </div>
+                        <div class="col-6 col-sm-4 col-md-2 col-xl-1">
+                            <label class="form-label small mb-1" for="reference_number">
+                                Ref # *
+                                <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
+                                        id="referenceHelpBtn" title="List used Reference # values"
+                                        aria-label="Show used Reference numbers">(?)</button>
+                            </label>
+                            <input type="text" class="form-control form-control-sm font-monospace ref-number-input" name="reference_number" id="reference_number"
+                                   placeholder="" maxlength="6" pattern="\d{6}"
+                                   data-suggested="" data-ref-kind="other"
+                                   title="Double-click for next suggested number" required
+                                   autocomplete="off">
+                            <div class="form-text small text-muted lh-1" id="referenceSuggestHint" style="font-size:0.65rem;">
+                                Double-click for next suggested number
+                            </div>
+                            <div class="form-text small text-warning d-none" id="referenceReuseWarn" style="font-size:0.7rem;"></div>
+                            <input type="hidden" name="allow_reference_reuse" id="allow_reference_reuse" value="0">
+                        </div>
                         <div class="col-6 col-sm-8 col-md-3 col-xl-2">
                             <label class="form-label small mb-1">Pay To</label>
                             <input type="text" class="form-control form-control-sm" name="pay_to" id="pay_to" placeholder="Vendor or person">
-                        </div>
-                        <div class="col-6 col-sm-4 col-md-2">
-                            <label class="form-label small mb-1">Reference #</label>
-                            <input type="text" class="form-control form-control-sm" name="reference_number" id="reference_number" placeholder="Ref #">
                         </div>
                         <div class="col-6 col-sm-4 col-md-2 col-xl-1">
                             <label class="form-label small mb-1">Check #</label>
@@ -962,6 +1081,44 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
     </div>
 </div>
 
+<!-- Used Reference # values (scrollable) -->
+<div class="modal fade" id="referenceListModal" tabindex="-1" aria-labelledby="referenceListTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title" id="referenceListTitle">Used Reference # values</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <p class="small text-muted px-3 pt-2 mb-2">
+                    Manual <code>YY####</code> Reference # values already on the ledger (highest first).
+                    <strong>YY0001–YY0099</strong> are reserved for contributions;
+                    <strong>YY0100+</strong> for payments, reimbursements, transfers, and other entries.
+                    Double-click the Ref # field to fill the suggested next number for this form type.
+                </p>
+                <div class="table-responsive" style="max-height: 60vh;">
+                    <table class="table table-sm table-hover mb-0 align-middle">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th class="ps-3">Ref #</th>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th class="pe-3 text-end">Tx #</th>
+                            </tr>
+                        </thead>
+                        <tbody id="referenceListBody">
+                            <tr><td colspan="4" class="text-center text-muted py-4">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script type="text/plain" id="init-ledger-script">
 (function() {
     const form = document.getElementById('txForm');
@@ -970,6 +1127,12 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
     const resetLinesBtn = document.getElementById('resetLinesBtn');
     const saveBtn = document.getElementById('saveBtn');
     const linesJson = document.getElementById('lines_json');
+    const refInput = document.getElementById('reference_number');
+    const refReuseFlag = document.getElementById('allow_reference_reuse');
+    const refReuseWarn = document.getElementById('referenceReuseWarn');
+    const refSuggestHint = document.getElementById('referenceSuggestHint');
+    const refHelpBtn = document.getElementById('referenceHelpBtn');
+    let refReuseConfirmedFor = ''; // last Reference # user confirmed for reuse
     const txIdField = document.getElementById('tx_id');
     const formSection = document.getElementById('txFormSection');
     const formTitle = document.getElementById('formTitle');
@@ -1065,7 +1228,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             const isCredit = nb === 'credit';
             if (debIn) {
                 debIn.disabled = debIn.readOnly || (nb !== '' && !isDebit);
-                debIn.classList.toggle('bg-light', debIn.disabled);
+                debIn.classList.toggle('bg-body-secondary', debIn.disabled);
                 if (nb === 'credit' && debIn.value) {
                     // Move amount to the correct column when account type changes
                     if (credIn && !credIn.value) credIn.value = debIn.value;
@@ -1074,7 +1237,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             }
             if (credIn) {
                 credIn.disabled = credIn.readOnly || (nb !== '' && !isCredit);
-                credIn.classList.toggle('bg-light', credIn.disabled);
+                credIn.classList.toggle('bg-body-secondary', credIn.disabled);
                 if (nb === 'debit' && credIn.value) {
                     if (debIn && !debIn.value) debIn.value = credIn.value;
                     credIn.value = '';
@@ -1141,7 +1304,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             }
         }
         if (readonly) {
-            row.querySelectorAll('select, input').forEach(el => el.classList.add('bg-light'));
+            row.querySelectorAll('select, input').forEach(el => el.classList.add('bg-body-secondary'));
         }
         return row;
     }
@@ -1154,12 +1317,12 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
     }
 
     function setMainFieldsReadOnly(readonly) {
-        ['transaction_date', 'pay_to', 'reference_number', 'check_number', 'description', 'memo'].forEach(fid => {
+        ['transaction_date', 'reference_number', 'pay_to', 'check_number', 'description', 'memo'].forEach(fid => {
             const el = document.getElementById(fid);
             if (!el) return;
             el.readOnly = readonly;
-            if (readonly) el.classList.add('bg-light');
-            else el.classList.remove('bg-light');
+            if (readonly) el.classList.add('bg-body-secondary');
+            else el.classList.remove('bg-body-secondary');
         });
     }
 
@@ -1184,7 +1347,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         } else {
             checks = '<span class="text-muted">No checks</span>';
         }
-        return `<div class="card card-body py-2 bg-light border-0">
+        return `<div class="card card-body py-2 bg-body-tertiary border-0">
             <h6 class="small text-muted mb-1">Contribution Details</h6>
             <div class="row g-2">
                 <div class="col-md-3"><span class="text-muted">Service date:</span> ${escHtml(data.service_date || '')}</div>
@@ -1213,14 +1376,18 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             validated = `<div class="col-auto"><span class="badge bg-success">Validated by ${escHtml(data.validated_by.display_name)}</span></div>`;
         }
         if (data.created_by) {
-            validated += `<div class="col-auto"><span class="badge bg-light text-dark border">Created by ${escHtml(data.created_by.display_name)}</span></div>`;
+            validated += `<div class="col-auto"><span class="badge bg-body-secondary text-body border">Created by ${escHtml(data.created_by.display_name)}</span></div>`;
         }
         if (data.workflow_instance_id) {
             validated += `<div class="col-auto"><span class="badge bg-info text-dark">Workflow #${data.workflow_instance_id}</span></div>`;
         }
+        const refBadge = data.reference_number
+            ? `<div class="col-auto"><span class="badge bg-dark font-monospace" title="Reference #">Ref ${escHtml(data.reference_number)}</span></div>`
+            : '';
         badges.innerHTML = `
+            ${refBadge}
             <div class="col-auto"><span class="badge bg-secondary">${escHtml(source)}</span></div>
-            <div class="col-auto"><span class="badge ${data.entry_status === 'draft' ? 'bg-warning text-dark' : 'bg-light text-dark border'}">${escHtml(entry)}</span></div>
+            <div class="col-auto"><span class="badge ${data.entry_status === 'draft' ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}">${escHtml(entry)}</span></div>
             ${validated}`;
 
         const contribEl = document.getElementById('txContributionData');
@@ -1525,7 +1692,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                     bodyEl.innerHTML = `<iframe src="${url}" title="PDF preview" class="w-100 border-0" style="height:70vh"></iframe>`;
                 } else if (kind === 'text') {
                     fetch(url).then(r => r.text()).then(txt => {
-                        bodyEl.innerHTML = `<pre class="small bg-light border rounded p-3 m-0" style="max-height:70vh;overflow:auto;white-space:pre-wrap">${escHtml(txt)}</pre>`;
+                        bodyEl.innerHTML = `<pre class="small bg-body-tertiary border rounded p-3 m-0" style="max-height:70vh;overflow:auto;white-space:pre-wrap">${escHtml(txt)}</pre>`;
                     }).catch(() => {
                         bodyEl.innerHTML = '<div class="alert alert-warning m-3">Could not load text preview. Use Download instead.</div>';
                     });
@@ -1675,7 +1842,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             b.classList.add('bg-primary');
         } else {
             b.textContent = '—';
-            b.classList.add('bg-light', 'text-muted');
+            b.classList.add('bg-body-secondary', 'text-muted');
         }
     }
 
@@ -1724,11 +1891,14 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         txIdField.value = data.id || '';
         currentViewData = data;
         document.getElementById('transaction_date').value = data.transaction_date || '';
-        document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('reference_number').value = data.reference_number || '';
+        document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
         document.getElementById('memo').value = data.memo || '';
+        clearReferenceReuseState();
+        refreshReferenceSuggestion().then(updateReferenceHintVisibility);
+        updateReferenceHintVisibility();
 
         linesBody.innerHTML = '';
         const lines = data.lines || [];
@@ -1738,7 +1908,9 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             // no listeners for view
         });
         setMainFieldsReadOnly(true);
-        formTitle.textContent = 'Transaction #' + data.id;
+        formTitle.textContent = data.reference_number
+            ? ('Transaction ' + data.reference_number + ' (#' + data.id + ')')
+            : ('Transaction #' + data.id);
         updateModeBadge('view');
         if (addLineBtn) addLineBtn.style.display = 'none';
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
@@ -1756,11 +1928,14 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         // Restore any queue persisted across a failed save reload
         restorePendingDocDeletes(data.id);
         document.getElementById('transaction_date').value = data.transaction_date || '';
-        document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('reference_number').value = data.reference_number || '';
+        document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
         document.getElementById('memo').value = data.memo || '';
+        clearReferenceReuseState();
+        refreshReferenceSuggestion().then(updateReferenceHintVisibility);
+        updateReferenceHintVisibility();
 
         linesBody.innerHTML = '';
         const lines = data.lines || [];
@@ -1775,7 +1950,9 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             addLine();
         }
         setMainFieldsReadOnly(false);
-        formTitle.textContent = 'Edit Transaction #' + data.id;
+        formTitle.textContent = data.reference_number
+            ? ('Edit ' + data.reference_number + ' (#' + data.id + ')')
+            : ('Edit Transaction #' + data.id);
         updateModeBadge('edit');
         if (addLineBtn) addLineBtn.style.display = '';
         if (resetLinesBtn) resetLinesBtn.style.display = '';
@@ -1801,7 +1978,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         linesBody.querySelectorAll('tr').forEach(row => {
             row.querySelectorAll('select, input').forEach(el => {
                 el.disabled = false;
-                el.classList.remove('bg-light');
+                el.classList.remove('bg-body-secondary');
             });
             const rem = row.querySelector('.remove-line');
             if (rem) rem.style.display = '';
@@ -1818,6 +1995,8 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         currentViewData = null;
         form.reset();
         document.getElementById('transaction_date').value = new Date().toISOString().slice(0, 10);
+        if (refInput) refInput.value = '';
+        clearReferenceReuseState();
         linesBody.innerHTML = '';
         addLine();
         addLine();
@@ -1831,6 +2010,8 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         renderMetaSection(null);
         setDocUploadVisible(false);
         recalcTotals();
+        refreshReferenceSuggestion().then(updateReferenceHintVisibility);
+        updateReferenceHintVisibility();
     }
 
     function updateButtonStates() {
@@ -1869,7 +2050,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
 
     function hasUnsavedInputs() {
         // form always visible; consider unsaved if has tx id in edit or any data entered
-        const fields = ['pay_to', 'reference_number', 'check_number', 'description', 'memo'];
+        const fields = ['reference_number', 'pay_to', 'check_number', 'description', 'memo'];
         for (const fid of fields) {
             const el = document.getElementById(fid);
             if (el && el.value.trim() !== '') return true;
@@ -1904,7 +2085,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
                 const da = ta ? Date.parse(ta) : 0;
                 const db = tb ? Date.parse(tb) : 0;
                 return (da - db) * dir;
-            } else if (colIdx === 3 || colIdx === 4 || colIdx === 6 || colIdx === 7) {
+            } else if (colIdx === 2 || colIdx === 4 || colIdx === 6 || colIdx === 7) {
                 // Ref #, Check #, Debit, Credit — numeric
                 const na = parseFloat(ta.replace(/[^0-9.-]/g, '')) || 0;
                 const nb = parseFloat(tb.replace(/[^0-9.-]/g, '')) || 0;
@@ -2063,10 +2244,233 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         addLineBtn.addEventListener('click', addLine);
     }
 
+    // ── Reference #: shadow default, double-click fill, reuse warn, list modal ──
+    // Ledger manual entry is non-contribution → suggest YY0100+
+    const REF_KIND = 'other';
+
+    /** Show tip only when Ref # is empty (ghost placeholder is visible). */
+    function updateReferenceHintVisibility() {
+        if (!refSuggestHint) return;
+        const hasValue = !!(refInput && (refInput.value || '').trim() !== '');
+        refSuggestHint.classList.toggle('d-none', hasValue);
+        if (!hasValue) {
+            refSuggestHint.textContent = 'Double-click for next suggested number';
+        }
+    }
+
+    function refreshReferenceSuggestion() {
+        if (!refInput) return Promise.resolve(null);
+        const dateEl = document.getElementById('transaction_date');
+        const date = (dateEl && dateEl.value) ? dateEl.value : '';
+        let url = 'pages/ledger.php?reference_api=suggest&kind=' + encodeURIComponent(REF_KIND);
+        if (date) url += '&date=' + encodeURIComponent(date);
+        return fetch(url)
+            .then(r => r.json())
+            .then(d => {
+                if (!d || !d.suggested) return null;
+                // Ghosted suggestion in the empty field (placeholder)
+                refInput.dataset.suggested = d.suggested;
+                refInput.placeholder = d.suggested;
+                updateReferenceHintVisibility();
+                return d.suggested;
+            })
+            .catch(() => null);
+    }
+
+    function clearReferenceReuseState() {
+        refReuseConfirmedFor = '';
+        if (refReuseFlag) refReuseFlag.value = '0';
+        if (refReuseWarn) {
+            refReuseWarn.classList.add('d-none');
+            refReuseWarn.textContent = '';
+        }
+    }
+
+    function checkReferenceReuseLive() {
+        if (!refInput) return;
+        const seq = (refInput.value || '').trim();
+        const excludeId = parseInt(txIdField.value || '0', 10) || 0;
+        if (!/^\d{6}$/.test(seq)) {
+            if (refReuseConfirmedFor !== seq) {
+                if (refReuseFlag) refReuseFlag.value = '0';
+            }
+            if (refReuseWarn) {
+                refReuseWarn.classList.add('d-none');
+                refReuseWarn.textContent = '';
+            }
+            return;
+        }
+        if (refReuseConfirmedFor === seq) {
+            if (refReuseFlag) refReuseFlag.value = '1';
+            if (refReuseWarn) {
+                refReuseWarn.classList.remove('d-none');
+                refReuseWarn.textContent = 'Reuse of ' + seq + ' confirmed.';
+            }
+            return;
+        }
+        fetch('pages/ledger.php?reference_api=check&ref=' + encodeURIComponent(seq)
+            + '&exclude_id=' + excludeId
+            + '&kind=' + encodeURIComponent(REF_KIND))
+            .then(r => r.json())
+            .then(d => {
+                if (!refReuseWarn) return;
+                const parts = [];
+                if (d && d.taken) {
+                    const u = d.usage || {};
+                    const who = [u.transaction_date, u.pay_to || u.memo].filter(Boolean).join(' — ');
+                    parts.push('⚠ Already used'
+                        + (u.id ? (' by <strong>#' + u.id + '</strong>') : '')
+                        + (who ? (' (' + escHtml(who) + ')') : '')
+                        + '. Saving will ask you to confirm reuse.');
+                    if (refReuseFlag) refReuseFlag.value = '0';
+                } else {
+                    if (refReuseFlag) refReuseFlag.value = '0';
+                }
+                if (d && d.range_advisory) {
+                    parts.push('ℹ ' + escHtml(d.range_advisory));
+                }
+                if (parts.length) {
+                    refReuseWarn.classList.remove('d-none');
+                    refReuseWarn.innerHTML = parts.join('<br>');
+                } else {
+                    refReuseWarn.classList.add('d-none');
+                    refReuseWarn.textContent = '';
+                }
+            })
+            .catch(() => { /* ignore live-check failures */ });
+    }
+
+    /**
+     * If Reference # is taken by another tx, confirm reuse. Resolves true to proceed.
+     */
+    function confirmReferenceReuseIfNeeded(seqVal) {
+        const excludeId = parseInt(txIdField.value || '0', 10) || 0;
+        if (refReuseConfirmedFor === seqVal && refReuseFlag && refReuseFlag.value === '1') {
+            return Promise.resolve(true);
+        }
+        return fetch('pages/ledger.php?reference_api=check&ref=' + encodeURIComponent(seqVal)
+            + '&exclude_id=' + excludeId
+            + '&kind=' + encodeURIComponent(REF_KIND))
+            .then(r => r.json())
+            .then(d => {
+                if (!d || !d.taken) {
+                    clearReferenceReuseState();
+                    return true;
+                }
+                const u = d.usage || {};
+                const lines = [
+                    'Reference # ' + seqVal + ' is already used.',
+                    u.id ? ('Existing transaction #' + u.id
+                        + (u.transaction_date ? (' dated ' + u.transaction_date) : '')
+                        + (u.pay_to ? (' — ' + u.pay_to) : '')
+                        + '.') : '',
+                    '',
+                    'Reuse this Reference # anyway?',
+                    '(Attachments share the same folder when Reference # values match.)',
+                ].filter(Boolean);
+                if (!window.confirm(lines.join('\n'))) {
+                    return false;
+                }
+                refReuseConfirmedFor = seqVal;
+                if (refReuseFlag) refReuseFlag.value = '1';
+                if (refReuseWarn) {
+                    refReuseWarn.classList.remove('d-none');
+                    refReuseWarn.textContent = 'Reuse of ' + seqVal + ' confirmed.';
+                }
+                return true;
+            })
+            .catch(() => {
+                // If check fails, let server validate
+                return true;
+            });
+    }
+
+    function openReferenceListModal() {
+        const modalEl = document.getElementById('referenceListModal');
+        const body = document.getElementById('referenceListBody');
+        if (!modalEl || !body || typeof bootstrap === 'undefined') return;
+        body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Loading…</td></tr>';
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+        fetch('pages/ledger.php?reference_api=list')
+            .then(r => r.json())
+            .then(d => {
+                const items = (d && d.items) || [];
+                if (!items.length) {
+                    body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No Reference #s assigned yet.</td></tr>';
+                    return;
+                }
+                body.innerHTML = items.map(it => {
+                    return '<tr>'
+                        + '<td class="ps-3 font-monospace fw-semibold">' + escHtml(it.reference_number || it.sequence_number || '') + '</td>'
+                        + '<td class="text-nowrap">' + escHtml(it.transaction_date || '—') + '</td>'
+                        + '<td class="small">' + escHtml(it.description || '—') + '</td>'
+                        + '<td class="pe-3 text-end text-muted">#' + escHtml(String(it.id || '')) + '</td>'
+                        + '</tr>';
+                }).join('');
+            })
+            .catch(() => {
+                body.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">Failed to load list.</td></tr>';
+            });
+    }
+
+    if (refInput) {
+        refInput.addEventListener('dblclick', function() {
+            const suggested = (refInput.dataset.suggested || refInput.placeholder || '').trim();
+            if (/^\d{6}$/.test(suggested)) {
+                refInput.value = suggested;
+                clearReferenceReuseState();
+                checkReferenceReuseLive();
+                updateReferenceHintVisibility();
+                showToast('Filled suggested Reference # ' + suggested + '.', 'info', 2500);
+            } else {
+                refreshReferenceSuggestion().then(s => {
+                    if (s && /^\d{6}$/.test(s)) {
+                        refInput.value = s;
+                        clearReferenceReuseState();
+                        checkReferenceReuseLive();
+                        updateReferenceHintVisibility();
+                        showToast('Filled suggested Reference # ' + s + '.', 'info', 2500);
+                    }
+                });
+            }
+        });
+        refInput.addEventListener('input', function() {
+            if (refReuseConfirmedFor && refReuseConfirmedFor !== (refInput.value || '').trim()) {
+                clearReferenceReuseState();
+            }
+            updateReferenceHintVisibility();
+            checkReferenceReuseLive();
+        });
+        refInput.addEventListener('blur', checkReferenceReuseLive);
+        updateReferenceHintVisibility();
+    }
+    const dateElForSeq = document.getElementById('transaction_date');
+    if (dateElForSeq) {
+        dateElForSeq.addEventListener('change', function() {
+            refreshReferenceSuggestion();
+        });
+    }
+    if (refHelpBtn) {
+        refHelpBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            openReferenceListModal();
+        });
+    }
+    // Initial shadow default for empty form
+    refreshReferenceSuggestion();
+
     // Form submit (Add or Edit) — process queued attachment deletions after confirm
     if (form) {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
+
+            const seqVal = (document.getElementById('reference_number')?.value || '').trim();
+            if (!/^\d{6}$/.test(seqVal)) {
+                showToast('Reference # must be YY#### (exactly 6 digits, e.g. 260001).', 'warning');
+                document.getElementById('reference_number')?.focus();
+                return;
+            }
 
             const lines = [];
             linesBody.querySelectorAll('tr').forEach(row => {
@@ -2097,50 +2501,57 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
             }
             const pendingDeletes = confirmDel.pending.slice();
 
-            // Save transaction first; only then permanently delete queued attachments
-            fetch('pages/ledger.php' + buildQueryString(true), {
-                method: 'POST',
-                body: new FormData(form)
-            })
-                .then(r => r.text())
-                .then(html => {
-                    const flashMatch = html.match(/id=["']ledger-flash["'][^>]*>([\s\S]*?)<\/script>/i);
-                    let flash = null;
-                    if (flashMatch) {
-                        try { flash = JSON.parse(flashMatch[1].trim()); } catch (e) { flash = null; }
-                    }
-                    const saveOk = !!(flash && flash.type === 'success');
+            confirmReferenceReuseIfNeeded(seqVal).then(function(ok) {
+                if (!ok) {
+                    showToast('Save cancelled — Reference # not confirmed for reuse.', 'info');
+                    return;
+                }
 
-                    if (!pendingDeletes.length) {
-                        applyMainContent(html);
-                        return null;
-                    }
-                    if (!saveOk) {
-                        // Keep deletion queue so user can fix validation and save again
-                        applyMainContent(html);
-                        showToast('Transaction was not saved; queued attachments were not deleted.', 'warning', 6000);
-                        return null;
-                    }
-                    return executeQueuedDocumentDeletion(pendingDeletes)
-                        .then(delRes => {
-                            applyMainContent(html);
-                            const delMsg = delRes.message || ((delRes.deleted_count || pendingDeletes.length) + ' attachment(s) deleted.');
-                            showToast('Transaction saved. ' + delMsg, 'success', 6000);
-                        })
-                        .catch(delErr => {
-                            applyMainContent(html);
-                            showToast(
-                                'Transaction saved, but attachment deletion failed: '
-                                    + ((delErr && delErr.message) || 'unknown error'),
-                                'warning',
-                                7000
-                            );
-                        });
+                // Save transaction first; only then permanently delete queued attachments
+                fetch('pages/ledger.php' + buildQueryString(true), {
+                    method: 'POST',
+                    body: new FormData(form)
                 })
-                .catch(err => {
-                    console.error(err);
-                    showToast('Save failed. See console.', 'danger');
-                });
+                    .then(r => r.text())
+                    .then(html => {
+                        const flashMatch = html.match(/id=["']ledger-flash["'][^>]*>([\s\S]*?)<\/script>/i);
+                        let flash = null;
+                        if (flashMatch) {
+                            try { flash = JSON.parse(flashMatch[1].trim()); } catch (err) { flash = null; }
+                        }
+                        const saveOk = !!(flash && flash.type === 'success');
+
+                        if (!pendingDeletes.length) {
+                            applyMainContent(html);
+                            return null;
+                        }
+                        if (!saveOk) {
+                            // Keep deletion queue so user can fix validation and save again
+                            applyMainContent(html);
+                            showToast('Transaction was not saved; queued attachments were not deleted.', 'warning', 6000);
+                            return null;
+                        }
+                        return executeQueuedDocumentDeletion(pendingDeletes)
+                            .then(delRes => {
+                                applyMainContent(html);
+                                const delMsg = delRes.message || ((delRes.deleted_count || pendingDeletes.length) + ' attachment(s) deleted.');
+                                showToast('Transaction saved. ' + delMsg, 'success', 6000);
+                            })
+                            .catch(delErr => {
+                                applyMainContent(html);
+                                showToast(
+                                    'Transaction saved, but attachment deletion failed: '
+                                        + ((delErr && delErr.message) || 'unknown error'),
+                                    'warning',
+                                    7000
+                                );
+                            });
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        showToast('Save failed. See console.', 'danger');
+                    });
+            });
         });
     }
 

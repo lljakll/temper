@@ -23,11 +23,38 @@ function getSessionMaxIdleSeconds(): int {
 
 /**
  * Build a login URL relative to the current script location.
+ *
+ * @param string $query Optional query string (e.g. "expired=1"). Empty = clean login.
  */
-function getLoginUrl(string $query = 'expired=1'): string {
+function getLoginUrl(string $query = ''): string {
     $script = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
     $base = (strpos($script, '/pages/') !== false) ? '../login.php' : 'login.php';
     return $query !== '' ? ($base . '?' . ltrim($query, '?')) : $base;
+}
+
+/**
+ * One-time session flash: true only after a real authenticated session ended.
+ * Consumed by login.php so ?expired=1 alone (bookmark / fresh visit) does not show a message.
+ */
+function markAuthSessionExpiredFlash(): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    $_SESSION['auth_flash_expired'] = 1;
+}
+
+/**
+ * Consume and return whether the login page should show the session-expired alert.
+ */
+function consumeAuthSessionExpiredFlash(): bool {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    if (empty($_SESSION['auth_flash_expired'])) {
+        return false;
+    }
+    unset($_SESSION['auth_flash_expired']);
+    return true;
 }
 
 /**
@@ -95,13 +122,23 @@ function clearAuthSession(): void {
 /**
  * Emit unauthorized response and stop execution.
  * Full page navigations redirect to login; AJAX/API get 401 + X-Auth-Required.
+ *
+ * The "session expired" login banner is only set when the caller had an
+ * authenticated session (user_id). Never-logged-in visitors get a clean login.
  */
 function denyUnauthenticatedAccess(string $message = AUTH_SESSION_EXPIRED_MESSAGE): void {
+    // Capture before clear: true expiry / forced logout of a logged-in user
+    $hadAuthenticatedSession = isset($_SESSION['user_id']) && (int)$_SESSION['user_id'] > 0;
+
     clearAuthSession();
 
-    $loginUrl = getLoginUrl('expired=1');
-    // Client-side always uses root-relative login path from the SPA shell
-    $clientLoginUrl = 'login.php?expired=1';
+    if ($hadAuthenticatedSession) {
+        markAuthSessionExpiredFlash();
+    }
+
+    // Query param is a UX hint; login.php also requires the one-time flash
+    $loginUrl = $hadAuthenticatedSession ? getLoginUrl('expired=1') : getLoginUrl();
+    $clientLoginUrl = $hadAuthenticatedSession ? 'login.php?expired=1' : 'login.php';
 
     // Always mark auth failures so the SPA can intercept without parsing body
     if (!headers_sent()) {

@@ -310,7 +310,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
     .budget-active-list .budget-active-item + .budget-active-item {
         margin-top: 0.5rem;
         padding-top: 0.5rem;
-        border-top: 1px solid rgba(0, 0, 0, 0.08);
+        border-top: 1px solid var(--bs-border-color-translucent);
     }
 </style>
 
@@ -373,7 +373,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                             <td>
                                 <span class="badge bg-<?= $statusBadges[$b['status']] ?? 'secondary' ?>"><?= htmlspecialchars($b['status']) ?></span>
                                 <?php if ($b['status'] === 'active'): ?>
-                                    <span class="badge bg-light text-dark border ms-1">FY <?= (int)$b['fiscal_year'] ?></span>
+                                    <span class="badge bg-body-secondary text-body border ms-1">FY <?= (int)$b['fiscal_year'] ?></span>
                                 <?php endif; ?>
                             </td>
                             <td class="text-end">$<?= number_format((float)$b['total_budgeted'], 2) ?></td>
@@ -500,7 +500,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                 </p>
                 <div class="mb-3">
                     <label class="form-label fw-semibold">Currently Active Budgets</label>
-                    <div id="cycleActiveInfo" class="p-2 bg-light rounded border text-muted budget-active-list">Loading…</div>
+                    <div id="cycleActiveInfo" class="p-2 bg-body-tertiary rounded border text-body-secondary budget-active-list">Loading…</div>
                 </div>
                 <div class="mb-3">
                     <label for="cyclePromoteSelect" class="form-label fw-semibold">Activate Approved Budget</label>

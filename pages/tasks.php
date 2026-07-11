@@ -177,15 +177,15 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
     }
     .kanban-column-body {
         min-height: 360px;
-        background: #f8f9fa;
-        border: 1px dashed #dee2e6;
+        background: var(--bs-tertiary-bg);
+        border: 1px dashed var(--bs-border-color);
         border-radius: 0.375rem;
         padding: 0.5rem;
         transition: background-color 0.15s, border-color 0.15s;
     }
     .kanban-column-body.drag-over {
-        background: #e7f1ff;
-        border-color: #0d6efd;
+        background: rgba(var(--bs-primary-rgb), 0.12);
+        border-color: var(--bs-primary);
     }
     .task-card {
         cursor: grab;
@@ -204,7 +204,7 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         overflow: hidden;
     }
     .kanban-empty {
-        color: #adb5bd;
+        color: var(--bs-secondary-color);
         font-size: 0.85rem;
         text-align: center;
         padding: 1.5rem 0.5rem;
@@ -214,8 +214,8 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         text-align: center;
         font-size: 0.8rem;
         text-transform: uppercase;
-        color: #6c757d;
-        background: #f8f9fa;
+        color: var(--bs-secondary-color);
+        background: var(--bs-tertiary-bg);
     }
     .calendar-day {
         vertical-align: top;
@@ -223,21 +223,22 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         width: 14.28%;
         cursor: pointer;
         transition: background-color 0.15s;
+        color: var(--bs-body-color);
     }
     .calendar-day:hover {
-        background-color: #f8f9fa;
+        background-color: var(--bs-tertiary-bg);
     }
     .calendar-day.other-month {
-        background-color: #fafafa;
-        color: #adb5bd;
+        background-color: var(--bs-secondary-bg);
+        color: var(--bs-secondary-color);
     }
     .calendar-day.today .calendar-day-num {
-        background: #0d6efd;
-        color: #fff;
+        background: var(--bs-primary);
+        color: var(--bs-white, #fff);
     }
     .calendar-day.selected {
-        background-color: #e7f1ff;
-        box-shadow: inset 0 0 0 2px #0d6efd;
+        background-color: rgba(var(--bs-primary-rgb), 0.12);
+        box-shadow: inset 0 0 0 2px var(--bs-primary);
     }
     .calendar-day-num {
         display: inline-flex;
@@ -260,16 +261,16 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        background: #e9ecef;
-        color: #212529;
+        background: var(--bs-secondary-bg);
+        color: var(--bs-body-color);
     }
-    .calendar-task-pill.status-overdue { background: #f8d7da; color: #842029; }
-    .calendar-task-pill.status-due_soon { background: #fff3cd; color: #664d03; }
-    .calendar-task-pill.status-in_progress { background: #cff4fc; color: #055160; }
-    .calendar-task-pill.status-done { background: #d1e7dd; color: #0f5132; }
+    .calendar-task-pill.status-overdue { background: var(--bs-danger-bg-subtle); color: var(--bs-danger-text-emphasis); }
+    .calendar-task-pill.status-due_soon { background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); }
+    .calendar-task-pill.status-in_progress { background: var(--bs-info-bg-subtle); color: var(--bs-info-text-emphasis); }
+    .calendar-task-pill.status-done { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
     .calendar-more {
         font-size: 0.7rem;
-        color: #6c757d;
+        color: var(--bs-secondary-color);
     }
 </style>
 
@@ -304,7 +305,7 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
                 <div class="card h-100 shadow-sm">
                     <div class="card-header <?= $meta['header'] ?> d-flex justify-content-between align-items-center py-2">
                         <span class="fw-semibold"><?= htmlspecialchars($meta['label']) ?></span>
-                        <span class="badge rounded-pill bg-light text-dark" id="count-<?= $status ?>"><?= count($items) ?></span>
+                        <span class="badge rounded-pill bg-body-secondary text-body" id="count-<?= $status ?>"><?= count($items) ?></span>
                     </div>
                     <div class="card-body p-2">
                         <div class="kanban-column-body" data-drop-zone="<?= htmlspecialchars($status) ?>">

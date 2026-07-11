@@ -600,7 +600,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
 
     <div id="reportViewer" class="mt-4 d-none">
         <div class="card border-primary shadow-sm">
-            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 bg-light">
+            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 bg-body-tertiary">
                 <div id="viewerHeader" class="fw-semibold text-break"></div>
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeViewer()">Close</button>
             </div>

@@ -15,7 +15,7 @@ function setupSchemaTransactions(): array
     check_number VARCHAR(20) NULL,
     pay_to VARCHAR(255) NULL,
     memo TEXT,
-    reference_number VARCHAR(50),
+    reference_number VARCHAR(50) NULL,
     status ENUM('pending', 'cleared', 'reconciled') DEFAULT 'pending',
     date_reconciled DATE NULL,
     source ENUM('manual', 'workflow') NOT NULL DEFAULT 'manual',
@@ -101,6 +101,8 @@ $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_status ON transac
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_source ON transaction_details(source)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_entry_status ON transaction_details(entry_status)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_workflow ON transaction_details(workflow_instance_id)");
+// Reference # (YY####) — non-unique so confirmed reuse is allowed
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_reference ON transaction_details(reference_number)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_documents_tx ON transaction_documents(transaction_detail_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_events_tx ON transaction_events(transaction_detail_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_events_type ON transaction_events(event_type)");

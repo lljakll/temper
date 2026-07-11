@@ -435,7 +435,7 @@ define('MAINTENANCE_PIN', '464546');
     .admin-card .card-header {
         background: transparent;
         padding: 0.5rem 0.75rem;
-        border-bottom-color: rgba(0, 0, 0, 0.06);
+        border-bottom-color: var(--bs-border-color-translucent);
     }
     .admin-card .card-body {
         padding: 0.75rem;
@@ -448,7 +448,7 @@ define('MAINTENANCE_PIN', '464546');
     .admin-backup-date .time {
         font-weight: 500;
         font-size: 0.8rem;
-        color: #495057;
+        color: var(--bs-secondary-color);
     }
     .db-maint-btn {
         text-align: left;
@@ -595,7 +595,7 @@ define('MAINTENANCE_PIN', '464546');
     <div class="modal-dialog">
         <div class="modal-content">
             <form id="dbMaintForm">
-                <div class="modal-header py-2 bg-danger text-white">
+                <div class="modal-header py-2 text-bg-danger">
                     <h5 class="modal-title h6" id="dbMaintModalLabel">
                         <i class="bi bi-shield-lock"></i> Confirm Destructive Action
                     </h5>

@@ -12,6 +12,37 @@ requireLogin();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= APP_NAME ?? "Hope Baptist Treasurer" ?></title>
+    <!-- Apply Bootstrap color mode before CSS paints to avoid flash / wrong text color -->
+    <script>
+    (function () {
+        try {
+            var key = 'temper-theme';
+            var stored = localStorage.getItem(key); // 'light' | 'dark' | 'auto' | null
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var theme = (stored === 'light' || stored === 'dark')
+                ? stored
+                : (prefersDark ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-bs-theme', theme);
+            window.__temperTheme = {
+                key: key,
+                get: function () { return localStorage.getItem(key) || 'auto'; },
+                resolve: function () {
+                    var s = localStorage.getItem(key);
+                    if (s === 'light' || s === 'dark') return s;
+                    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+                },
+                apply: function (mode) {
+                    if (mode === 'light' || mode === 'dark' || mode === 'auto') {
+                        localStorage.setItem(key, mode);
+                    }
+                    document.documentElement.setAttribute('data-bs-theme', this.resolve());
+                }
+            };
+        } catch (e) {
+            document.documentElement.setAttribute('data-bs-theme', 'light');
+        }
+    })();
+    </script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
@@ -20,10 +51,69 @@ requireLogin();
             display: block !important;
         }
 
-        /* ── Desktop sidebar ─────────────────────────────────────────────── */
+        /* ── Theme-aware base (Bootstrap body color + background) ────────── */
+        body {
+            color: var(--bs-body-color);
+            background-color: var(--bs-body-bg);
+        }
+
+        /* Soft surfaces that track the active theme (prefer over hard bg-light) */
+        .bg-surface {
+            background-color: var(--bs-tertiary-bg) !important;
+            color: var(--bs-body-color);
+        }
+        .bg-surface-secondary {
+            background-color: var(--bs-secondary-bg) !important;
+            color: var(--bs-body-color);
+        }
+
+        /* Reference # suggestion: ghosted placeholder (clearly not a real value) */
+        .ref-number-input {
+            color: var(--bs-body-color);
+        }
+        .ref-number-input::placeholder {
+            color: var(--bs-secondary-color, #6c757d);
+            opacity: 0.4;
+            font-weight: 400;
+            font-style: italic;
+        }
+        .ref-number-input::-webkit-input-placeholder {
+            color: var(--bs-secondary-color, #6c757d);
+            opacity: 0.4;
+            font-weight: 400;
+            font-style: italic;
+        }
+        .ref-number-input::-moz-placeholder {
+            color: var(--bs-secondary-color, #6c757d);
+            opacity: 0.4;
+            font-weight: 400;
+            font-style: italic;
+        }
+        .ref-number-input:-ms-input-placeholder {
+            color: var(--bs-secondary-color, #6c757d);
+            opacity: 0.4;
+            font-weight: 400;
+            font-style: italic;
+        }
+
+        /* ── Sidebar (theme-aware surface + text) ────────────────────────── */
         .sidebar-panel {
             height: calc(100vh - 1rem);
             max-height: calc(100vh - 1rem);
+            color: var(--bs-body-color);
+            background-color: var(--bs-tertiary-bg);
+            border-color: var(--bs-border-color) !important;
+        }
+        .sidebar-panel .offcanvas-body {
+            color: var(--bs-body-color);
+            background-color: var(--bs-tertiary-bg) !important;
+        }
+        .sidebar-panel .offcanvas-header {
+            color: var(--bs-body-color);
+            border-bottom-color: var(--bs-border-color) !important;
+        }
+        .sidebar-panel .offcanvas-title {
+            color: var(--bs-body-color);
         }
         .sidebar-panel .nav-link {
             border-radius: 0.375rem;
@@ -32,19 +122,40 @@ requireLogin();
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            color: var(--bs-body-color);
         }
         .sidebar-panel .nav-link:hover,
         .sidebar-panel .nav-link:focus {
-            background-color: rgba(255, 255, 255, 0.08);
+            background-color: rgba(var(--bs-primary-rgb), 0.1);
+            color: var(--bs-primary);
         }
         .sidebar-panel .nav-link.active {
-            background-color: rgba(255, 255, 255, 0.15);
+            background-color: rgba(var(--bs-primary-rgb), 0.15);
             font-weight: 600;
+            color: var(--bs-primary);
+        }
+        .sidebar-panel .sidebar-brand,
+        .sidebar-panel .sidebar-meta {
+            color: var(--bs-body-color);
+            border-bottom-color: var(--bs-border-color) !important;
+        }
+        .sidebar-panel .sidebar-footnote,
+        .sidebar-panel .sidebar-welcome {
+            color: var(--bs-secondary-color);
+        }
+        .sidebar-panel .sidebar-welcome strong {
+            color: var(--bs-body-color);
+        }
+        .sidebar-panel .sidebar-divider {
+            border-color: var(--bs-border-color);
+            opacity: 1;
         }
 
-        /* Offcanvas-md: keep dark panel styling when shown as overlay */
+        /* Offcanvas-md: sticky column on desktop */
         #appSidebar.offcanvas {
             --bs-offcanvas-width: min(18rem, 85vw);
+            --bs-offcanvas-bg: var(--bs-tertiary-bg);
+            --bs-offcanvas-color: var(--bs-body-color);
         }
         @media (min-width: 768px) {
             #appSidebar.offcanvas-md {
@@ -64,14 +175,19 @@ requireLogin();
         /* ── Main content area ───────────────────────────────────────────── */
         #main-content-col {
             min-width: 0; /* allow flex children to shrink / tables to scroll */
+            color: var(--bs-body-color);
         }
         #main-content {
             min-width: 0;
+            color: var(--bs-body-color);
         }
 
-        /* ── Mobile top bar ──────────────────────────────────────────────── */
+        /* ── Mobile top bar (matches sidebar theme) ──────────────────────── */
         .mobile-topbar {
             z-index: 1020;
+            color: var(--bs-body-color);
+            background-color: var(--bs-tertiary-bg) !important;
+            border: 1px solid var(--bs-border-color);
         }
 
         /* ── Bottom navigation (phones / small tablets) ──────────────────── */
@@ -81,12 +197,13 @@ requireLogin();
             left: 0;
             right: 0;
             z-index: 1030;
-            background: #212529;
-            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            background: var(--bs-tertiary-bg);
+            border-top: 1px solid var(--bs-border-color);
             display: flex;
             justify-content: space-around;
             padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
-            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.15);
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+            color: var(--bs-body-color);
         }
         .mobile-bottom-nav a {
             flex: 1;
@@ -95,7 +212,7 @@ requireLogin();
             align-items: center;
             justify-content: center;
             gap: 0.15rem;
-            color: rgba(255, 255, 255, 0.7);
+            color: var(--bs-secondary-color);
             text-decoration: none;
             font-size: 0.65rem;
             padding: 0.35rem 0.15rem;
@@ -110,8 +227,8 @@ requireLogin();
         .mobile-bottom-nav a:hover,
         .mobile-bottom-nav a:focus,
         .mobile-bottom-nav a.active {
-            color: #fff;
-            background: rgba(255, 255, 255, 0.1);
+            color: var(--bs-primary);
+            background: rgba(var(--bs-primary-rgb), 0.1);
         }
         /* Room for fixed bottom nav on small screens */
         @media (max-width: 767.98px) {
@@ -369,9 +486,22 @@ requireLogin();
 
     // Load default dashboard on initial page load
     document.addEventListener('DOMContentLoaded', function() {
+        // Follow OS light/dark changes when theme preference is auto
+        try {
+            if (window.matchMedia) {
+                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+                    if (window.__temperTheme && window.__temperTheme.get() === 'auto') {
+                        window.__temperTheme.apply('auto');
+                    } else if (window.__temperTheme && !localStorage.getItem(window.__temperTheme.key)) {
+                        window.__temperTheme.apply('auto');
+                    }
+                });
+            }
+        } catch (e) { /* ignore */ }
+
         loadPage('dashboard');
     });
     </script>
-<body class="bg-light has-mobile-nav">
+<body class="has-mobile-nav">
 
 <div class="container-fluid p-2">

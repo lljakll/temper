@@ -22,13 +22,13 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
     </div>
 
     <?php if ($hubTotals['total'] === 0): ?>
-    <div class="alert alert-light border mb-4">
+    <div class="alert alert-secondary border mb-4">
         <i class="bi bi-info-circle me-1"></i>
         No workflow instances yet. Choose a workflow below to start — for example, open
         <strong>Contribution Processing</strong> to record a Sunday offering with dual-count controls.
     </div>
     <?php elseif ($hubTotals['active'] === 0): ?>
-    <div class="alert alert-light border mb-4">
+    <div class="alert alert-secondary border mb-4">
         <i class="bi bi-check-circle me-1"></i>
         <?= (int)$hubTotals['total'] ?> workflow instance(s) on file; none are awaiting action right now.
     </div>

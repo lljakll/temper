@@ -7,6 +7,10 @@ if (isLoggedIn()) {
     exit;
 }
 
+// One-time flash set only when a real authenticated session ended (idle/forced).
+// Query param alone is not enough — avoids banner on fresh visits / bookmarks of ?expired=1.
+$showSessionExpired = consumeAuthSessionExpiredFlash();
+
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -31,9 +35,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Hope Baptist Treasurer</title>
+    <script>
+    (function () {
+        try {
+            var stored = localStorage.getItem('temper-theme');
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var theme = (stored === 'light' || stored === 'dark') ? stored : (prefersDark ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-bs-theme', theme);
+        } catch (e) {
+            document.documentElement.setAttribute('data-bs-theme', 'light');
+        }
+    })();
+    </script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            color: var(--bs-body-color);
+            background-color: var(--bs-body-bg);
+        }
+    </style>
 </head>
-<body class="bg-light">
+<body>
     <div class="container px-3">
         <div class="row justify-content-center min-vh-100 align-items-center py-4">
             <div class="col-12 col-sm-10 col-md-6 col-lg-4">
@@ -47,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 You have been logged out successfully.
                             </div>
                         <?php endif; ?>
-                        <?php if (isset($_GET['expired'])): ?>
+                        <?php if ($showSessionExpired): ?>
                             <div class="alert alert-warning text-center">
                                 Your session has expired. Please log in again.
                             </div>
@@ -69,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </form>
 
                         <div class="text-center mt-3">
-                            <small class="text-muted">Try: <strong>admin</strong> / <strong>password</strong></small>
+                            <small class="text-body-secondary">Try: <strong>admin</strong> / <strong>password</strong></small>
                         </div>
                     </div>
                 </div>

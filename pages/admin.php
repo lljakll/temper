@@ -60,7 +60,7 @@ $lookupLinks = [
     .admin-card .card-header {
         background: transparent;
         padding: 0.5rem 0.75rem;
-        border-bottom-color: rgba(0, 0, 0, 0.06);
+        border-bottom-color: var(--bs-border-color-translucent);
     }
     .admin-card .card-body {
         padding: 0.65rem 0.75rem;
@@ -69,7 +69,7 @@ $lookupLinks = [
     .admin-active-link {
         font-size: 0.875rem;
         padding: 0.35rem 0;
-        color: inherit;
+        color: var(--bs-body-color);
         text-decoration: none;
         display: flex;
         align-items: center;
@@ -77,8 +77,8 @@ $lookupLinks = [
     }
     .admin-lookup-link:hover,
     .admin-active-link:hover {
-        background-color: rgba(255, 255, 255, 0.55);
-        color: #0d6efd;
+        background-color: rgba(var(--bs-primary-rgb), 0.1);
+        color: var(--bs-primary);
     }
     .admin-backup-dates {
         display: flex;
@@ -188,7 +188,7 @@ $lookupLinks = [
                             <i class="bi <?= $card['icon'] ?> text-secondary"></i>
                             <h6 class="mb-0 small fw-semibold"><?= htmlspecialchars($card['title']) ?></h6>
                         </div>
-                        <span class="badge rounded-pill bg-light text-muted border">Soon</span>
+                        <span class="badge rounded-pill bg-body-secondary text-body-secondary border">Soon</span>
                     </div>
                     <p class="text-muted small mb-0 flex-grow-1"><?= htmlspecialchars($card['description']) ?></p>
                 </div>

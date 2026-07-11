@@ -938,7 +938,7 @@ require_once __DIR__ . '/../includes/backup_utils.php';
 <div class="row g-3">
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
-            <div class="card-header bg-primary text-white py-2">
+            <div class="card-header text-bg-primary py-2">
                 <i class="bi bi-cloud-arrow-down"></i> <span class="fw-semibold">Backup</span>
             </div>
             <div class="card-body">

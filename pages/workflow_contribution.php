@@ -73,6 +73,8 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
 
         if ($action === 'create') {
             $payload = [
+                'reference_number' => trim($_POST['reference_number'] ?? $_POST['sequence_number'] ?? ''),
+                'allow_reference_reuse' => in_array((string)($_POST['allow_reference_reuse'] ?? $_POST['allow_sequence_reuse'] ?? '0'), ['1', 'true'], true),
                 'service_date' => $_POST['service_date'] ?? date('Y-m-d'),
                 'description' => trim($_POST['description'] ?? 'Sunday Offering'),
                 'cash_denominations' => json_decode($_POST['cash_denominations'] ?? '{}', true) ?: contribEmptyDenominations(),
@@ -341,11 +343,25 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
             <div class="modal-body">
                 <form id="newContribForm">
                     <div class="row g-3 mb-3">
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <label class="form-label">Service Date</label>
                             <input type="date" class="form-control" name="service_date" id="ncServiceDate" required>
                         </div>
-                        <div class="col-md-8">
+                        <div class="col-md-3">
+                            <label class="form-label" for="ncReferenceNumber">
+                                Ref # *
+                                <button type="button" class="btn btn-link btn-sm p-0 align-baseline" id="ncReferenceHelpBtn"
+                                        title="List used Reference # values" aria-label="Show used Reference numbers">(?)</button>
+                            </label>
+                            <input type="text" class="form-control font-monospace ref-number-input" name="reference_number" id="ncReferenceNumber"
+                                   placeholder="" maxlength="6" pattern="\d{6}" required
+                                   data-suggested="" data-ref-kind="contribution"
+                                   title="Double-click for next suggested number" autocomplete="off">
+                            <div class="form-text small text-muted" id="ncReferenceSuggestHint">Double-click for next suggested number</div>
+                            <div class="form-text small text-warning d-none" id="ncReferenceReuseWarn"></div>
+                            <input type="hidden" id="ncAllowReferenceReuse" value="0">
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label">Description</label>
                             <input type="text" class="form-control" name="description" id="ncDescription" value="Sunday Offering" required>
                         </div>
@@ -421,6 +437,44 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
             <div class="modal-footer py-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-sm btn-danger" id="wfQueueDeleteConfirm">Queue Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Used Reference # values (scrollable) -->
+<div class="modal fade" id="ncReferenceListModal" tabindex="-1" aria-labelledby="ncReferenceListTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title" id="ncReferenceListTitle">Used Reference # values</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <p class="small text-muted px-3 pt-2 mb-2">
+                    Manual <code>YY####</code> Reference # values already on the ledger (highest first).
+                    <strong>YY0001–YY0099</strong> are reserved for contributions;
+                    <strong>YY0100+</strong> for other transactions.
+                    This form suggests the next number in the contribution range.
+                </p>
+                <div class="table-responsive" style="max-height: 60vh;">
+                    <table class="table table-sm table-hover mb-0 align-middle">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th class="ps-3">Ref #</th>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th class="pe-3 text-end">Tx #</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ncReferenceListBody">
+                            <tr><td colspan="4" class="text-center text-muted py-4">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
@@ -514,7 +568,7 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
                     bodyEl.innerHTML = `<iframe src="${url}" title="PDF preview" class="w-100 border-0" style="height:70vh"></iframe>`;
                 } else if (kind === 'text') {
                     fetch(url).then(r => r.text()).then(txt => {
-                        bodyEl.innerHTML = `<pre class="small bg-light border rounded p-3 m-0" style="max-height:70vh;overflow:auto;white-space:pre-wrap">${esc(txt)}</pre>`;
+                        bodyEl.innerHTML = `<pre class="small bg-body-tertiary border rounded p-3 m-0" style="max-height:70vh;overflow:auto;white-space:pre-wrap">${esc(txt)}</pre>`;
                     }).catch(() => {
                         bodyEl.innerHTML = '<div class="alert alert-warning m-3">Could not load text preview. Use Download instead.</div>';
                     });
@@ -678,7 +732,7 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
         return CFG.denominations.map(k => {
             const c = denoms[k] || 0;
             if (!c) return '';
-            return `<span class="badge bg-light text-dark border me-1">$${k} × ${c}</span>`;
+            return `<span class="badge bg-body-secondary text-body border me-1">$${k} × ${c}</span>`;
         }).filter(Boolean).join(' ') || '<span class="text-muted">None</span>';
     }
 
@@ -724,9 +778,10 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
                 </div>
                 <div class="card-body">
                     <div class="row g-3 mb-3">
-                        <div class="col-md-4"><div class="small text-muted">Service Date</div><div>${esc(p.service_date || '')}</div></div>
-                        <div class="col-md-4"><div class="small text-muted">Grand Total</div><div class="fw-bold">${fmt(p.totals?.grand)}</div></div>
-                        <div class="col-md-4"><div class="small text-muted">Cash / Checks</div><div>${fmt(p.totals?.cash)} / ${fmt(p.totals?.checks)}</div></div>
+                        <div class="col-md-3"><div class="small text-muted">Service Date</div><div>${esc(p.service_date || '')}</div></div>
+                        <div class="col-md-3"><div class="small text-muted">Ref #</div><div class="font-monospace fw-semibold">${esc(p.reference_number || inst.reference_number || p.sequence_number || inst.sequence_number || '—')}</div></div>
+                        <div class="col-md-3"><div class="small text-muted">Grand Total</div><div class="fw-bold">${fmt(p.totals?.grand)}</div></div>
+                        <div class="col-md-3"><div class="small text-muted">Cash / Checks</div><div>${fmt(p.totals?.cash)} / ${fmt(p.totals?.checks)}</div></div>
                     </div>
                     <h6 class="small text-muted">Cash Denominations (1st count)</h6>
                     <p>${renderDenomsReadonly(p.cash_denominations || {})}</p>
@@ -1041,8 +1096,202 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
         })).filter(a => a.fund_id > 0 && a.amount > 0);
     }
 
+    // ── Reference # UX (shadow default, double-click, reuse confirm, list modal) ──
+    const ncRefInput = document.getElementById('ncReferenceNumber');
+    const ncRefReuseFlag = document.getElementById('ncAllowReferenceReuse');
+    const ncRefReuseWarn = document.getElementById('ncReferenceReuseWarn');
+    const ncRefHint = document.getElementById('ncReferenceSuggestHint');
+    let ncRefReuseConfirmedFor = '';
+
+    function ncClearRefReuse() {
+        ncRefReuseConfirmedFor = '';
+        if (ncRefReuseFlag) ncRefReuseFlag.value = '0';
+        if (ncRefReuseWarn) {
+            ncRefReuseWarn.classList.add('d-none');
+            ncRefReuseWarn.textContent = '';
+        }
+    }
+
+    // Contribution workflow → suggest within YY0001–YY0099
+    const NC_REF_KIND = 'contribution';
+
+    /** Show tip only when Ref # is empty (ghost placeholder is visible). */
+    function ncUpdateRefHintVisibility() {
+        if (!ncRefHint) return;
+        const hasValue = !!(ncRefInput && (ncRefInput.value || '').trim() !== '');
+        ncRefHint.classList.toggle('d-none', hasValue);
+        if (!hasValue) {
+            ncRefHint.textContent = 'Double-click for next suggested number';
+        }
+    }
+
+    function ncRefreshRefSuggestion() {
+        if (!ncRefInput) return Promise.resolve(null);
+        const date = document.getElementById('ncServiceDate')?.value || '';
+        let url = 'pages/ledger.php?reference_api=suggest&kind=' + encodeURIComponent(NC_REF_KIND);
+        if (date) url += '&date=' + encodeURIComponent(date);
+        return fetch(url).then(r => r.json()).then(d => {
+            if (!d || !d.suggested) return null;
+            // Ghosted suggestion in the empty field (placeholder)
+            ncRefInput.dataset.suggested = d.suggested;
+            ncRefInput.placeholder = d.suggested;
+            ncUpdateRefHintVisibility();
+            return d.suggested;
+        }).catch(() => null);
+    }
+
+    function ncCheckRefReuseLive() {
+        if (!ncRefInput) return;
+        const seq = (ncRefInput.value || '').trim();
+        if (!/^\d{6}$/.test(seq)) {
+            if (ncRefReuseWarn) { ncRefReuseWarn.classList.add('d-none'); ncRefReuseWarn.textContent = ''; }
+            if (ncRefReuseFlag) ncRefReuseFlag.value = '0';
+            return;
+        }
+        if (ncRefReuseConfirmedFor === seq) {
+            if (ncRefReuseFlag) ncRefReuseFlag.value = '1';
+            if (ncRefReuseWarn) {
+                ncRefReuseWarn.classList.remove('d-none');
+                ncRefReuseWarn.textContent = 'Reuse of ' + seq + ' confirmed.';
+            }
+            return;
+        }
+        fetch('pages/ledger.php?reference_api=check&ref=' + encodeURIComponent(seq)
+            + '&kind=' + encodeURIComponent(NC_REF_KIND))
+            .then(r => r.json())
+            .then(d => {
+                if (!ncRefReuseWarn) return;
+                const parts = [];
+                if (d && d.taken) {
+                    const u = d.usage || {};
+                    const who = [u.transaction_date, u.pay_to || u.memo].filter(Boolean).join(' — ');
+                    parts.push('⚠ Already used'
+                        + (u.id ? (' by #' + u.id) : '')
+                        + (who ? (' (' + who + ')') : '')
+                        + '. Saving will ask you to confirm reuse.');
+                    if (ncRefReuseFlag) ncRefReuseFlag.value = '0';
+                } else {
+                    if (ncRefReuseFlag) ncRefReuseFlag.value = '0';
+                }
+                if (d && d.range_advisory) {
+                    parts.push('ℹ ' + d.range_advisory);
+                }
+                if (parts.length) {
+                    ncRefReuseWarn.classList.remove('d-none');
+                    ncRefReuseWarn.textContent = parts.join(' ');
+                } else {
+                    ncRefReuseWarn.classList.add('d-none');
+                    ncRefReuseWarn.textContent = '';
+                }
+            })
+            .catch(() => {});
+    }
+
+    function ncConfirmRefReuseIfNeeded(seq) {
+        if (ncRefReuseConfirmedFor === seq && ncRefReuseFlag && ncRefReuseFlag.value === '1') {
+            return Promise.resolve(true);
+        }
+        return fetch('pages/ledger.php?reference_api=check&ref=' + encodeURIComponent(seq)
+            + '&kind=' + encodeURIComponent(NC_REF_KIND))
+            .then(r => r.json())
+            .then(d => {
+                if (!d || !d.taken) {
+                    ncClearRefReuse();
+                    return true;
+                }
+                const u = d.usage || {};
+                const msg = [
+                    'Reference # ' + seq + ' is already used.',
+                    u.id ? ('Existing transaction #' + u.id
+                        + (u.transaction_date ? (' dated ' + u.transaction_date) : '')
+                        + (u.pay_to ? (' — ' + u.pay_to) : '')
+                        + '.') : '',
+                    '',
+                    'Reuse this Reference # anyway?',
+                ].filter(Boolean).join('\n');
+                if (!window.confirm(msg)) return false;
+                ncRefReuseConfirmedFor = seq;
+                if (ncRefReuseFlag) ncRefReuseFlag.value = '1';
+                if (ncRefReuseWarn) {
+                    ncRefReuseWarn.classList.remove('d-none');
+                    ncRefReuseWarn.textContent = 'Reuse of ' + seq + ' confirmed.';
+                }
+                return true;
+            })
+            .catch(() => true);
+    }
+
+    function ncOpenRefListModal() {
+        const modalEl = document.getElementById('ncReferenceListModal');
+        const body = document.getElementById('ncReferenceListBody');
+        if (!modalEl || !body || typeof bootstrap === 'undefined') return;
+        body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Loading…</td></tr>';
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        fetch('pages/ledger.php?reference_api=list')
+            .then(r => r.json())
+            .then(d => {
+                const items = (d && d.items) || [];
+                if (!items.length) {
+                    body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No Reference #s assigned yet.</td></tr>';
+                    return;
+                }
+                body.innerHTML = items.map(it =>
+                    '<tr>'
+                    + '<td class="ps-3 font-monospace fw-semibold">' + esc(it.reference_number || it.sequence_number || '') + '</td>'
+                    + '<td class="text-nowrap">' + esc(it.transaction_date || '—') + '</td>'
+                    + '<td class="small">' + esc(it.description || '—') + '</td>'
+                    + '<td class="pe-3 text-end text-muted">#' + esc(String(it.id || '')) + '</td>'
+                    + '</tr>'
+                ).join('');
+            })
+            .catch(() => {
+                body.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">Failed to load list.</td></tr>';
+            });
+    }
+
+    if (ncRefInput) {
+        ncRefInput.addEventListener('dblclick', () => {
+            const suggested = (ncRefInput.dataset.suggested || ncRefInput.placeholder || '').trim();
+            if (/^\d{6}$/.test(suggested)) {
+                ncRefInput.value = suggested;
+                ncClearRefReuse();
+                ncCheckRefReuseLive();
+                ncUpdateRefHintVisibility();
+                showToast('Filled suggested Reference # ' + suggested + '.', 'info', 2500);
+            } else {
+                ncRefreshRefSuggestion().then(s => {
+                    if (s && /^\d{6}$/.test(s)) {
+                        ncRefInput.value = s;
+                        ncClearRefReuse();
+                        ncCheckRefReuseLive();
+                        ncUpdateRefHintVisibility();
+                        showToast('Filled suggested Reference # ' + s + '.', 'info', 2500);
+                    }
+                });
+            }
+        });
+        ncRefInput.addEventListener('input', () => {
+            if (ncRefReuseConfirmedFor && ncRefReuseConfirmedFor !== (ncRefInput.value || '').trim()) {
+                ncClearRefReuse();
+            }
+            ncUpdateRefHintVisibility();
+            ncCheckRefReuseLive();
+        });
+        ncRefInput.addEventListener('blur', ncCheckRefReuseLive);
+        ncUpdateRefHintVisibility();
+    }
+    document.getElementById('ncServiceDate')?.addEventListener('change', () => ncRefreshRefSuggestion());
+    document.getElementById('ncReferenceHelpBtn')?.addEventListener('click', e => {
+        e.preventDefault();
+        ncOpenRefListModal();
+    });
+
     document.getElementById('btnNewContrib')?.addEventListener('click', () => {
         document.getElementById('ncServiceDate').value = new Date().toISOString().slice(0, 10);
+        if (ncRefInput) ncRefInput.value = '';
+        ncClearRefReuse();
+        ncRefreshRefSuggestion().then(ncUpdateRefHintVisibility);
+        ncUpdateRefHintVisibility();
         buildDenomInputs('ncDenoms', 'nc');
         document.querySelectorAll('.nc-denom').forEach(inp => inp.addEventListener('input', updateNewTotals));
         document.getElementById('ncChecks').innerHTML = '';
@@ -1055,21 +1304,34 @@ require_once __DIR__ . '/../includes/workflow_bootstrap.php';
     document.getElementById('ncAddCheck')?.addEventListener('click', addCheckRow);
     document.getElementById('ncAddAlloc')?.addEventListener('click', addAllocRow);
     document.getElementById('ncSaveBtn')?.addEventListener('click', () => {
-        const fd = new FormData();
-        fd.append('action', 'create');
-        fd.append('service_date', document.getElementById('ncServiceDate').value);
-        fd.append('description', document.getElementById('ncDescription').value);
-        fd.append('cash_denominations', JSON.stringify(readDenoms('nc')));
-        fd.append('checks_json', JSON.stringify(collectChecks()));
-        fd.append('allocations_json', JSON.stringify(collectAllocs()));
-        fetch(`pages/${page}.php`, { method: 'POST', body: fd }).then(r => r.json()).then(res => {
-            if (res.error) showToast(res.error, 'danger');
-            else {
-                newModal.hide();
-                showToast('Contribution saved — pending second count.', 'success');
-                selectedId = res.id;
-                loadList().then(() => loadDetail(res.id));
+        const seq = (document.getElementById('ncReferenceNumber').value || '').trim();
+        if (!/^\d{6}$/.test(seq)) {
+            showToast('Reference # must be YY#### (6 digits, e.g. 260001).', 'warning');
+            return;
+        }
+        ncConfirmRefReuseIfNeeded(seq).then(ok => {
+            if (!ok) {
+                showToast('Save cancelled — Reference # not confirmed for reuse.', 'info');
+                return;
             }
+            const fd = new FormData();
+            fd.append('action', 'create');
+            fd.append('reference_number', seq);
+            fd.append('allow_reference_reuse', (ncRefReuseFlag && ncRefReuseFlag.value === '1') ? '1' : '0');
+            fd.append('service_date', document.getElementById('ncServiceDate').value);
+            fd.append('description', document.getElementById('ncDescription').value);
+            fd.append('cash_denominations', JSON.stringify(readDenoms('nc')));
+            fd.append('checks_json', JSON.stringify(collectChecks()));
+            fd.append('allocations_json', JSON.stringify(collectAllocs()));
+            fetch(`pages/${page}.php`, { method: 'POST', body: fd }).then(r => r.json()).then(res => {
+                if (res.error) showToast(res.error, 'danger');
+                else {
+                    newModal.hide();
+                    showToast('Contribution saved — pending second count.', 'success');
+                    selectedId = res.id;
+                    loadList().then(() => loadDetail(res.id));
+                }
+            });
         });
     });
 

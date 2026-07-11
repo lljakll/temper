@@ -41,7 +41,406 @@ function ledgerRequireTables(mysqli $db): void {
         );
     }
 
+    // Reference # (YY####) lives in reference_number; migrate off sequence_number if present
+    ledgerEnsureReferenceNumberSchema($db);
+
     $verified = true;
+}
+
+/**
+ * Ensure transaction Reference # (YY####) is stored in reference_number.
+ * Migrates legacy sequence_number column into reference_number, then drops it.
+ * Index is non-unique so confirmed reuse is allowed.
+ */
+function ledgerEnsureReferenceNumberSchema(mysqli $db): void {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    $seqCol = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'sequence_number'");
+    if ($seqCol && $seqCol->num_rows > 0) {
+        // Prefer explicit YY#### sequence values when present
+        $db->query(
+            "UPDATE transaction_details
+             SET reference_number = sequence_number
+             WHERE sequence_number IS NOT NULL
+               AND sequence_number <> ''
+               AND sequence_number REGEXP '^[0-9]{6}$'"
+        );
+        $oldIdx = $db->query("SHOW INDEX FROM transaction_details WHERE Key_name = 'idx_transaction_details_sequence'");
+        if ($oldIdx && $oldIdx->num_rows > 0) {
+            $db->query('DROP INDEX idx_transaction_details_sequence ON transaction_details');
+        }
+        if (!$db->query('ALTER TABLE transaction_details DROP COLUMN sequence_number')) {
+            error_log('ledgerEnsureReferenceNumberSchema: drop sequence_number failed: ' . $db->error);
+        }
+    }
+
+    $idxRes = $db->query("SHOW INDEX FROM transaction_details WHERE Key_name = 'idx_transaction_details_reference'");
+    if (!$idxRes || $idxRes->num_rows === 0) {
+        if (!$db->query('CREATE INDEX idx_transaction_details_reference ON transaction_details(reference_number)')) {
+            error_log('ledgerEnsureReferenceNumberSchema: index create failed: ' . $db->error);
+        }
+    }
+}
+
+/**
+ * Normalize a Reference # value (trim only).
+ */
+function ledgerNormalizeReferenceNumber(?string $value): string {
+    return trim((string)$value);
+}
+
+/** @deprecated Use ledgerNormalizeReferenceNumber */
+function ledgerNormalizeSequenceNumber(?string $value): string {
+    return ledgerNormalizeReferenceNumber($value);
+}
+
+/**
+ * Validate manual Reference # as YY#### (exactly 6 digits: 2-digit year + 4-digit serial).
+ *
+ * @return array{ok:bool,value:?string,error?:string}
+ */
+function ledgerValidateReferenceNumber(?string $value, bool $required = true): array {
+    $ref = ledgerNormalizeReferenceNumber($value);
+    if ($ref === '') {
+        if ($required) {
+            return [
+                'ok' => false,
+                'value' => null,
+                'error' => 'Reference # is required (format YY####, e.g. 260001).',
+            ];
+        }
+        return ['ok' => true, 'value' => null];
+    }
+    if (!preg_match('/^\d{6}$/', $ref)) {
+        return [
+            'ok' => false,
+            'value' => null,
+            'error' => 'Reference # must be YY#### (exactly 6 digits, e.g. 260001).',
+        ];
+    }
+    return ['ok' => true, 'value' => $ref];
+}
+
+/** @deprecated Use ledgerValidateReferenceNumber */
+function ledgerValidateSequenceNumber(?string $value, bool $required = true): array {
+    return ledgerValidateReferenceNumber($value, $required);
+}
+
+/**
+ * True if another transaction already uses this Reference # (YY####).
+ */
+function ledgerReferenceNumberTaken(mysqli $db, string $referenceNumber, ?int $excludeTransactionId = null): bool {
+    return ledgerReferenceUsage($db, $referenceNumber, $excludeTransactionId) !== null;
+}
+
+/** @deprecated Use ledgerReferenceNumberTaken */
+function ledgerSequenceNumberTaken(mysqli $db, string $sequenceNumber, ?int $excludeTransactionId = null): bool {
+    return ledgerReferenceNumberTaken($db, $sequenceNumber, $excludeTransactionId);
+}
+
+/**
+ * First transaction using this Reference # (excluding optional id), or null.
+ *
+ * @return array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,memo:?string}|null
+ */
+function ledgerReferenceUsage(mysqli $db, string $referenceNumber, ?int $excludeTransactionId = null): ?array {
+    ledgerRequireTables($db);
+    $ref = ledgerNormalizeReferenceNumber($referenceNumber);
+    if ($ref === '') {
+        return null;
+    }
+    if ($excludeTransactionId !== null && $excludeTransactionId > 0) {
+        $stmt = $db->prepare(
+            'SELECT id, reference_number, transaction_date, pay_to, memo
+             FROM transaction_details
+             WHERE reference_number = ? AND id <> ?
+             ORDER BY id ASC LIMIT 1'
+        );
+        $stmt->bind_param('si', $ref, $excludeTransactionId);
+    } else {
+        $stmt = $db->prepare(
+            'SELECT id, reference_number, transaction_date, pay_to, memo
+             FROM transaction_details
+             WHERE reference_number = ?
+             ORDER BY id ASC LIMIT 1'
+        );
+        $stmt->bind_param('s', $ref);
+    }
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return null;
+    }
+    $row['id'] = (int)$row['id'];
+    return $row;
+}
+
+/** @deprecated Use ledgerReferenceUsage */
+function ledgerSequenceUsage(mysqli $db, string $sequenceNumber, ?int $excludeTransactionId = null): ?array {
+    $row = ledgerReferenceUsage($db, $sequenceNumber, $excludeTransactionId);
+    if ($row) {
+        $row['sequence_number'] = $row['reference_number'] ?? null;
+    }
+    return $row;
+}
+
+/**
+ * Recommended Reference # serial ranges (suffix after YY):
+ * - contribution: 0001–0099
+ * - other:        0100–9999 (payments, reimbursements, transfers, manual ledger, etc.)
+ *
+ * @return array{kind:string,min:int,max:int,label:string,hint:string}
+ */
+function ledgerReferenceRangeForKind(string $kind = 'other'): array {
+    $kind = strtolower(trim($kind));
+    if ($kind === 'contribution' || $kind === 'contrib' || $kind === 'contributions') {
+        return [
+            'kind' => 'contribution',
+            'min' => 1,
+            'max' => 99,
+            'label' => 'contributions',
+            'hint' => 'YY0001–YY0099 reserved for contributions',
+        ];
+    }
+    return [
+        'kind' => 'other',
+        'min' => 100,
+        'max' => 9999,
+        'label' => 'other transactions',
+        'hint' => 'YY0100+ for payments, reimbursements, transfers, and other non-contribution entries',
+    ];
+}
+
+/**
+ * Soft advisory when a Reference # is outside the recommended range for a kind.
+ * Does not block save — manual override is allowed.
+ *
+ * @return string|null Warning message, or null if in range / invalid format
+ */
+function ledgerReferenceRangeAdvisory(?string $value, string $kind = 'other'): ?string {
+    $check = ledgerValidateReferenceNumber($value, false);
+    if (empty($check['ok']) || empty($check['value'])) {
+        return null;
+    }
+    $ref = $check['value'];
+    if (!preg_match('/^\d{2}(\d{4})$/', $ref, $m)) {
+        return null;
+    }
+    $suffix = (int)$m[1];
+    $range = ledgerReferenceRangeForKind($kind);
+    if ($suffix >= $range['min'] && $suffix <= $range['max']) {
+        return null;
+    }
+    if ($range['kind'] === 'contribution') {
+        return 'Reference # ' . $ref . ' is outside the contribution range (YY0001–YY0099). '
+            . 'You may still use it if intentional.';
+    }
+    return 'Reference # ' . $ref . ' is in the contribution range (YY0001–YY0099). '
+        . 'Non-contribution entries usually start at YY0100. You may still use it if intentional.';
+}
+
+/**
+ * Suggest next free-ish Reference # for a year within the kind's range.
+ * Does not auto-assign — UI only (placeholder / double-click fill).
+ *
+ * Ranges:
+ * - contribution → YY0001–YY0099
+ * - other        → YY0100–YY9999
+ *
+ * @param string|null $asOfDate Y-m-d (defaults to today) to pick YY
+ * @param string      $kind     contribution|other
+ */
+function ledgerSuggestNextReferenceNumber(mysqli $db, ?string $asOfDate = null, string $kind = 'other'): string {
+    ledgerRequireTables($db);
+    $range = ledgerReferenceRangeForKind($kind);
+    $ts = time();
+    if ($asOfDate !== null && $asOfDate !== '') {
+        $parsed = strtotime($asOfDate);
+        if ($parsed !== false) {
+            $ts = $parsed;
+        }
+    }
+    $yy = date('y', $ts);
+    $prefix = $yy;
+    $like = $yy . '%';
+
+    $stmt = $db->prepare(
+        'SELECT reference_number FROM transaction_details
+         WHERE reference_number LIKE ? AND CHAR_LENGTH(reference_number) = 6'
+    );
+    $stmt->bind_param('s', $like);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $maxInRange = $range['min'] - 1;
+    while ($row = $res->fetch_assoc()) {
+        $sn = ledgerNormalizeReferenceNumber($row['reference_number'] ?? '');
+        if (!preg_match('/^(\d{2})(\d{4})$/', $sn, $m) || $m[1] !== $prefix) {
+            continue;
+        }
+        $suffix = (int)$m[2];
+        if ($suffix < $range['min'] || $suffix > $range['max']) {
+            continue;
+        }
+        if ($suffix > $maxInRange) {
+            $maxInRange = $suffix;
+        }
+    }
+    $stmt->close();
+
+    $next = $maxInRange + 1;
+    if ($next < $range['min']) {
+        $next = $range['min'];
+    }
+    if ($next > $range['max']) {
+        // Range exhausted — still surface the max (user can override manually)
+        $next = $range['max'];
+    }
+    return $prefix . str_pad((string)$next, 4, '0', STR_PAD_LEFT);
+}
+
+/** @deprecated Use ledgerSuggestNextReferenceNumber */
+function ledgerSuggestNextSequenceNumber(mysqli $db, ?string $asOfDate = null, string $kind = 'other'): string {
+    return ledgerSuggestNextReferenceNumber($db, $asOfDate, $kind);
+}
+
+/**
+ * All used YY#### Reference # values for the lookup modal (highest first).
+ *
+ * @return list<array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,memo:?string,description:string,source:?string}>
+ */
+function ledgerListUsedReferenceNumbers(mysqli $db, int $limit = 1000): array {
+    ledgerRequireTables($db);
+    $limit = max(1, min(5000, $limit));
+    $sql = "SELECT id, reference_number, transaction_date, pay_to, memo, source
+            FROM transaction_details
+            WHERE reference_number IS NOT NULL
+              AND reference_number <> ''
+              AND reference_number REGEXP '^[0-9]{6}$'
+            ORDER BY reference_number DESC, transaction_date DESC, id DESC
+            LIMIT " . (int)$limit;
+    $rows = [];
+    $res = $db->query($sql);
+    if (!$res) {
+        return [];
+    }
+    while ($row = $res->fetch_assoc()) {
+        $memo = trim((string)($row['memo'] ?? ''));
+        $pay = trim((string)($row['pay_to'] ?? ''));
+        $desc = $pay !== '' ? $pay : ($memo !== '' ? $memo : '—');
+        if (mb_strlen($desc) > 80) {
+            $desc = mb_substr($desc, 0, 77) . '…';
+        }
+        $rows[] = [
+            'id' => (int)$row['id'],
+            'reference_number' => (string)$row['reference_number'],
+            // Keep sequence_number key for older UI JSON consumers during rename
+            'sequence_number' => (string)$row['reference_number'],
+            'transaction_date' => $row['transaction_date'] ?? null,
+            'pay_to' => $row['pay_to'] ?? null,
+            'memo' => $row['memo'] ?? null,
+            'description' => $desc,
+            'source' => $row['source'] ?? null,
+        ];
+    }
+    return $rows;
+}
+
+/** @deprecated Use ledgerListUsedReferenceNumbers */
+function ledgerListUsedSequenceNumbers(mysqli $db, int $limit = 1000): array {
+    return ledgerListUsedReferenceNumbers($db, $limit);
+}
+
+/**
+ * Resolve YY#### Reference # for a transaction (null if missing / not YY####).
+ */
+function ledgerGetReferenceNumber(mysqli $db, int $transactionId): ?string {
+    ledgerRequireTables($db);
+    $stmt = $db->prepare('SELECT reference_number FROM transaction_details WHERE id = ? LIMIT 1');
+    $stmt->bind_param('i', $transactionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return null;
+    }
+    $ref = ledgerNormalizeReferenceNumber($row['reference_number'] ?? null);
+    if ($ref === '' || !preg_match('/^\d{6}$/', $ref)) {
+        return null;
+    }
+    return $ref;
+}
+
+/** @deprecated Use ledgerGetReferenceNumber */
+function ledgerGetSequenceNumber(mysqli $db, int $transactionId): ?string {
+    return ledgerGetReferenceNumber($db, $transactionId);
+}
+
+/**
+ * Folder key for attachments: prefer Reference # (YY####), else numeric id (legacy).
+ */
+function ledgerAttachmentFolderKey(?string $referenceNumber, int $transactionId): string {
+    $ref = ledgerNormalizeReferenceNumber($referenceNumber);
+    if ($ref !== '' && preg_match('/^\d{6}$/', $ref)) {
+        return $ref;
+    }
+    return (string)$transactionId;
+}
+
+/**
+ * Absolute directory for a transaction's attachments under the preferred key.
+ */
+function ledgerAttachmentDir(string $folderKey): string {
+    $safe = basename(str_replace(['\\', "\0"], '', $folderKey));
+    if ($safe === '' || $safe === '.' || $safe === '..') {
+        $safe = '_invalid';
+    }
+    return getTransactionDocumentsDir() . '/' . $safe;
+}
+
+/**
+ * Move attachment files when Reference # changes (or from legacy id folder → YY####).
+ */
+function ledgerRelocateAttachmentFolder(string $fromKey, string $toKey): void {
+    if ($fromKey === '' || $toKey === '' || $fromKey === $toKey) {
+        return;
+    }
+    $from = ledgerAttachmentDir($fromKey);
+    $to = ledgerAttachmentDir($toKey);
+    if (!is_dir($from)) {
+        return;
+    }
+    if (!is_dir($to) && !@mkdir($to, 0775, true)) {
+        return;
+    }
+    $items = @scandir($from);
+    if (!is_array($items)) {
+        return;
+    }
+    foreach ($items as $name) {
+        if ($name === '.' || $name === '..') {
+            continue;
+        }
+        $src = $from . '/' . $name;
+        $dst = $to . '/' . $name;
+        if (is_file($src)) {
+            if (!is_file($dst)) {
+                @rename($src, $dst) || @copy($src, $dst);
+            }
+            if (is_file($dst) && is_file($src) && realpath($src) !== realpath($dst)) {
+                @unlink($src);
+            }
+        }
+    }
+    // Remove empty source directory
+    $left = @scandir($from);
+    if (is_array($left) && count(array_diff($left, ['.', '..'])) === 0) {
+        @rmdir($from);
+    }
 }
 
 function ledgerLogEvent(
@@ -132,8 +531,8 @@ function ledgerDescribeTransactionUpdate(
         $changes[] = 'Pay to changed from "' . ($oldPay !== '' ? $oldPay : '—') . '" to "' . ($newPay !== '' ? $newPay : '—') . '".';
     }
 
-    $oldRef = trim((string)($existing['reference_number'] ?? ''));
-    $newRef = trim((string)($newHeader['reference_number'] ?? ''));
+    $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
+    $newRef = ledgerNormalizeReferenceNumber($newHeader['reference_number'] ?? null);
     if ($oldRef !== $newRef) {
         $changes[] = 'Reference # changed from "' . ($oldRef !== '' ? $oldRef : '—') . '" to "' . ($newRef !== '' ? $newRef : '—') . '".';
     }
@@ -290,6 +689,9 @@ function ledgerDescribeTransactionCreate(
     ];
 }
 
+/**
+ * Create a transaction header. $referenceNumber is the manual YY#### Reference #.
+ */
 function ledgerCreateHeader(
     mysqli $db,
     string $transactionDate,
@@ -304,6 +706,8 @@ function ledgerCreateHeader(
 ): int {
     ledgerRequireTables($db);
     $dataJson = $transactionData ? json_encode($transactionData) : null;
+    $ref = ledgerNormalizeReferenceNumber($referenceNumber);
+    $refParam = $ref !== '' ? $ref : null;
     $stmt = $db->prepare(
         "INSERT INTO transaction_details (
             transaction_date, pay_to, reference_number, memo, status,
@@ -314,7 +718,7 @@ function ledgerCreateHeader(
         'ssssssiis',
         $transactionDate,
         $payTo,
-        $referenceNumber,
+        $refParam,
         $memo,
         $source,
         $entryStatus,
@@ -353,9 +757,10 @@ function ledgerUpdateHeader(
         $params[] = $payTo;
     }
     if ($referenceNumber !== null) {
+        $ref = ledgerNormalizeReferenceNumber($referenceNumber);
         $sets[] = 'reference_number = ?';
         $types .= 's';
-        $params[] = $referenceNumber;
+        $params[] = $ref !== '' ? $ref : null;
     }
     if ($memo !== null) {
         $sets[] = 'memo = ?';
@@ -714,7 +1119,19 @@ function ledgerStoreDocument(
         return ['success' => false, 'error' => 'Upload temporary file is missing or unreadable.'];
     }
 
-    $dir = getTransactionDocumentsDir() . '/' . $transactionId;
+    // Attachments live under storage/attachments/{YY####}/ (Reference #). Require a valid ref.
+    $reference = ledgerGetReferenceNumber($db, $transactionId);
+    if ($reference === null) {
+        return [
+            'success' => false,
+            'error' => 'Set a Reference # (YY####) on the transaction before uploading attachments.',
+        ];
+    }
+    // Migrate any legacy id-folder files into the reference folder on first new upload
+    ledgerRelocateAttachmentFolder((string)$transactionId, $reference);
+
+    $folderKey = ledgerAttachmentFolderKey($reference, $transactionId);
+    $dir = ledgerAttachmentDir($folderKey);
     if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
         return ['success' => false, 'error' => 'Could not create transaction document directory.'];
     }
@@ -773,7 +1190,13 @@ function ledgerStoreDocument(
         return ['success' => false, 'error' => 'Failed to link document to transaction.'];
     }
 
-    return ['success' => true, 'id' => $docId, 'stored_filename' => $stored];
+    return [
+        'success' => true,
+        'id' => $docId,
+        'stored_filename' => $stored,
+        'reference_number' => $reference,
+        'folder' => $folderKey,
+    ];
 }
 
 /**
@@ -801,24 +1224,64 @@ function ledgerStoreDocumentFromUpload(
     );
 }
 
-function ledgerResolveDocumentPath(int $transactionId, string $storedFilename): ?string {
+/**
+ * Resolve on-disk path for a stored document filename.
+ * Checks (in order): Reference # (YY####) folder, numeric id folder, legacy transaction_documents/{id}/.
+ *
+ * @param int         $transactionId    DB id (always known)
+ * @param string      $storedFilename   Basename in storage
+ * @param string|null $referenceNumber  Optional YY#### Reference #
+ */
+function ledgerResolveDocumentPath(
+    int $transactionId,
+    string $storedFilename,
+    ?string $referenceNumber = null
+): ?string {
     $safe = basename($storedFilename);
-    // Preferred path: storage/attachments/{txId}/
-    $path = getTransactionDocumentsDir() . '/' . $transactionId . '/' . $safe;
-    if (is_file($path)) {
-        return $path;
+    if ($safe === '' || $safe === '.' || $safe === '..') {
+        return null;
     }
-    // Legacy fallback: storage/transaction_documents/{txId}/
+
+    $candidates = [];
+    $ref = ledgerNormalizeReferenceNumber($referenceNumber);
+    if ($ref !== '' && preg_match('/^\d{6}$/', $ref)) {
+        $candidates[] = ledgerAttachmentDir($ref) . '/' . $safe;
+    }
+    // Current / legacy id-based folder under attachments/
+    $candidates[] = ledgerAttachmentDir((string)$transactionId) . '/' . $safe;
+    // Older path: storage/transaction_documents/{txId}/
     $legacyRoot = resolveStorageRoot()['path'] . '/transaction_documents';
-    $legacy = $legacyRoot . '/' . $transactionId . '/' . $safe;
-    return is_file($legacy) ? $legacy : null;
+    $candidates[] = $legacyRoot . '/' . $transactionId . '/' . $safe;
+
+    foreach ($candidates as $path) {
+        if (is_file($path)) {
+            return $path;
+        }
+    }
+    return null;
+}
+
+/**
+ * Resolve path using DB to load Reference # when not provided.
+ */
+function ledgerResolveDocumentPathForTransaction(
+    mysqli $db,
+    int $transactionId,
+    string $storedFilename
+): ?string {
+    $ref = ledgerGetReferenceNumber($db, $transactionId);
+    return ledgerResolveDocumentPath($transactionId, $storedFilename, $ref);
 }
 
 function ledgerFetchDocument(mysqli $db, int $documentId): ?array {
+    ledgerRequireTables($db);
     $stmt = $db->prepare(
-        'SELECT id, transaction_detail_id, stored_filename, original_filename, mime_type, file_size,
-                uploaded_by_user_id, workflow_step_key, created_at
-         FROM transaction_documents WHERE id = ? LIMIT 1'
+        'SELECT d.id, d.transaction_detail_id, d.stored_filename, d.original_filename, d.mime_type,
+                d.file_size, d.uploaded_by_user_id, d.workflow_step_key, d.created_at,
+                t.reference_number
+         FROM transaction_documents d
+         LEFT JOIN transaction_details t ON t.id = d.transaction_detail_id
+         WHERE d.id = ? LIMIT 1'
     );
     $stmt->bind_param('i', $documentId);
     $stmt->execute();
@@ -838,7 +1301,8 @@ function ledgerDeleteDocument(mysqli $db, int $documentId): array {
     }
 
     $txId = (int)$doc['transaction_detail_id'];
-    $path = ledgerResolveDocumentPath($txId, $doc['stored_filename']);
+    $ref = ledgerNormalizeReferenceNumber($doc['reference_number'] ?? null);
+    $path = ledgerResolveDocumentPath($txId, $doc['stored_filename'], preg_match('/^\d{6}$/', $ref) ? $ref : null);
 
     $stmt = $db->prepare('DELETE FROM transaction_documents WHERE id = ? LIMIT 1');
     if (!$stmt) {
@@ -866,6 +1330,7 @@ function ledgerDeleteDocument(mysqli $db, int $documentId): array {
         'id' => $documentId,
         'transaction_detail_id' => $txId,
         'original_filename' => $doc['original_filename'] ?? '',
+        'reference_number' => preg_match('/^\d{6}$/', $ref) ? $ref : null,
     ];
 }
 
