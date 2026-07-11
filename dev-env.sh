@@ -26,8 +26,8 @@ echo "MariaDB Status: $(systemctl is-active mariadb 2>/dev/null || echo 'Not run
 echo ""
 
 echo "=== Other Useful Tools ==="
-echo "VSCodium: $(command -v codium >/dev/null && echo 'Installed' || echo 'Not found in PATH')"
-echo "Ollama: $(ollama --version 2>/dev/null || echo 'Not installed or not in PATH')"
+#echo "VSCodium: $(command -v codium >/dev/null && echo 'Installed' || echo 'Not found in PATH')"
+#echo "Ollama: $(ollama --version 2>/dev/null || echo 'Not installed or not in PATH')"
 echo ""
 
 echo "=================================================="
@@ -44,6 +44,6 @@ if [[ "$install_choice" == "y" || "$install_choice" == "Y" ]]; then
     echo "Services restarted."
 fi
 
-echo "=================================================="
-echo "Copy everything above this line and paste it in your next message to Grok."
-echo "=================================================="
+#echo "=================================================="
+#echo "Copy everything above this line and paste it in your next message to Grok."
+#echo "=================================================="
