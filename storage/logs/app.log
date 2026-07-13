@@ -451,3 +451,10 @@ Stack trace:
 [11-Jul-2026 16:57:49 UTC] [AUDIT] user=admin action=ledger.deposit_finalized details=transaction=35 Contribution deposit of $100.00 finalized by Admin User. {"workflow_instance_id":1,"amount":100,"finalized_by":"Admin User"} ip=::1
 [11-Jul-2026 16:57:49 UTC] [AUDIT] user=admin action=workflow.deposit_created details=instance=1 Ledger deposit #35 finalized from contribution workflow. {"transaction_id":35,"amount":100} ip=::1
 [11-Jul-2026 17:37:46 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=34 Transaction updated (5 changes). {"debits":58.75,"credits":58.75,"changes":["Reference # changed from \"—\" to \"260006\".","Added Fund \"General Operating Fund\" (Retained Earnings) credit $58.75.","Added Fund \"General Operating Fund\" (Bank Account) debit $58.75.","Removed Fund \"General Operating Fund\" (Retained Earnings) debit $58.75.","Removed Fund \"General Operating Fund\" (Bank Account) credit $58.75."]} ip=::1
+[12-Jul-2026 13:16:21 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/tasks.php on line 68
+[12-Jul-2026 13:16:27 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/tasks.php on line 68
+[12-Jul-2026 13:18:42 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Incorrect date value: '' for column `temper_db`.`tasks`.`due_date` at row 1 in Command line code:12
+Stack trace:
+#0 Command line code(12): mysqli_stmt->execute()
+#1 {main}
+  thrown in Command line code on line 12

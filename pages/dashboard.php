@@ -7,7 +7,8 @@ require_once __DIR__ . '/../includes/workflow_engine.php';
 require_once __DIR__ . '/../includes/workflows/registry.php';
 
 $today = date('Y-m-d');
-    $recent_limit = 6;
+    $tasksHorizon = date('Y-m-d', strtotime('+30 days'));
+    $upcoming_tasks_limit = 10;
     $actorUser = getCurrentUser();
     $tellerLimited = $actorUser ? isTellerLimitedUser($db, (int)$actorUser['id']) : false;
 
@@ -314,34 +315,67 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
     $cash_total = (float)($cashStmt->get_result()->fetch_assoc()['balance'] ?? 0);
     $cashStmt->close();
 
-    // Recent transactions (debit / credit totals for traditional two-column display)
-    $recent_tx = [];
-    $txStmt = $db->prepare("
-        SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.status,
-               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id AND type = 'debit'), 0) AS total_debits,
-               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id = td.id AND type = 'credit'), 0) AS total_credits
-        FROM transaction_details td
-        ORDER BY td.transaction_date DESC, td.id DESC
-        LIMIT ?
-    ");
-    $txStmt->bind_param('i', $recent_limit);
-    $txStmt->execute();
-    $txRes = $txStmt->get_result();
-    if ($txRes) {
-        while ($tx = $txRes->fetch_assoc()) {
-            $recent_tx[] = $tx;
+    // Upcoming tasks from the tasks/reminders system (next 30 days, or all pending if fewer)
+    $taskStatusMeta = [
+        'upcoming' => ['label' => 'Upcoming', 'badge' => 'secondary'],
+        'due_soon' => ['label' => 'Due Soon', 'badge' => 'warning'],
+        'overdue' => ['label' => 'Overdue', 'badge' => 'danger'],
+        'in_progress' => ['label' => 'In Progress', 'badge' => 'info'],
+        'done' => ['label' => 'Done', 'badge' => 'success'],
+    ];
+    $upcomingTasks = [];
+    $pendingTasks = [];
+    $tasksTableOk = false;
+    $tasksCheck = $db->query("SHOW TABLES LIKE 'tasks'");
+    if ($tasksCheck && $tasksCheck->num_rows > 0) {
+        $tasksTableOk = true;
+        $tasksCheck->close();
+        $taskSql = "
+            SELECT id, title, description, due_date, status
+            FROM tasks
+            WHERE status <> 'done'
+            ORDER BY
+                CASE status
+                    WHEN 'overdue' THEN 0
+                    WHEN 'due_soon' THEN 1
+                    WHEN 'in_progress' THEN 2
+                    ELSE 3
+                END,
+                due_date IS NULL,
+                due_date ASC,
+                id ASC
+        ";
+        $taskRes = $db->query($taskSql);
+        if ($taskRes) {
+            while ($row = $taskRes->fetch_assoc()) {
+                $pendingTasks[] = $row;
+            }
+            $taskRes->close();
         }
-        $txRes->close();
-    }
-    $txStmt->close();
 
-    $fmtLedgerAmt = static function ($amount): string {
-        $a = (float)$amount;
-        if (abs($a) < 0.005) {
-            return '';
+        foreach ($pendingTasks as $task) {
+            $due = $task['due_date'] ?? null;
+            if ($due !== null && $due !== '' && $due <= $tasksHorizon) {
+                $upcomingTasks[] = $task;
+            }
         }
-        return '$' . number_format(abs($a), 2);
-    };
+        // If fewer tasks fall in the 30-day window than the display limit, fill with other pending
+        if (count($upcomingTasks) < $upcoming_tasks_limit) {
+            $seenIds = array_column($upcomingTasks, 'id');
+            foreach ($pendingTasks as $task) {
+                if (count($upcomingTasks) >= $upcoming_tasks_limit) {
+                    break;
+                }
+                if (!in_array($task['id'], $seenIds, true)) {
+                    $upcomingTasks[] = $task;
+                }
+            }
+        } else {
+            $upcomingTasks = array_slice($upcomingTasks, 0, $upcoming_tasks_limit);
+        }
+    } elseif ($tasksCheck) {
+        $tasksCheck->close();
+    }
 
     $workflowPending = dashboardWorkflowPendingItems($db);
     $quickLinks = array_values(array_filter(
@@ -554,58 +588,83 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
     </div>
 </div>
 
-<!-- Recent Transactions -->
+<!-- Upcoming Tasks -->
 <div class="row">
     <div class="col-12">
-        <div class="card">
+        <div class="card shadow-sm">
             <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-1">
-                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Transactions</h5>
-                <a href="javascript:void(0)" onclick="loadPage('ledger')" class="small text-decoration-none">View all in Ledger &rarr;</a>
+                <h5 class="mb-0"><i class="bi bi-check2-square"></i> Upcoming Tasks</h5>
+                <a href="javascript:void(0)" onclick="loadPage('tasks')" class="small text-decoration-none">View all tasks &rarr;</a>
             </div>
             <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-striped table-hover mb-0">
-                        <thead class="table-dark">
-                            <tr>
-                                <th>Date</th>
-                                <th>Pay To</th>
-                                <th>Ref #</th>
-                                <th class="text-end text-nowrap">Debit</th>
-                                <th class="text-end text-nowrap">Credit</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (count($recent_tx) > 0): ?>
-                                <?php foreach ($recent_tx as $tx): ?>
+                <?php if (!$tasksTableOk): ?>
+                    <p class="text-muted text-center py-4 mb-0">Tasks system is not set up yet.</p>
+                <?php elseif (count($upcomingTasks) === 0): ?>
+                    <div class="d-flex align-items-start gap-2 text-success small py-4 px-3 justify-content-center">
+                        <i class="bi bi-check-circle-fill mt-1"></i>
+                        <div>
+                            <strong>No upcoming tasks.</strong>
+                            <div class="text-body-secondary">You’re clear for the next 30 days.</div>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0 align-middle">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Task</th>
+                                    <th>Description</th>
+                                    <th class="text-nowrap">Due Date</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($upcomingTasks as $task): ?>
                                     <?php
-                                        $statusBadge = 'bg-secondary';
-                                        $statusText = 'Pending';
-                                        if ($tx['status'] === 'cleared') {
-                                            $statusBadge = 'bg-success';
-                                            $statusText = 'Cleared';
-                                        } elseif ($tx['status'] === 'reconciled') {
-                                            $statusBadge = 'bg-info';
-                                            $statusText = 'Reconciled';
-                                        }
-                                        $deb = $fmtLedgerAmt($tx['total_debits'] ?? 0);
-                                        $cred = $fmtLedgerAmt($tx['total_credits'] ?? 0);
+                                        $statusKey = $task['status'] ?? 'upcoming';
+                                        $meta = $taskStatusMeta[$statusKey] ?? ['label' => $statusKey, 'badge' => 'secondary'];
+                                        $dueLabel = !empty($task['due_date']) ? $task['due_date'] : '—';
+                                        $desc = trim((string)($task['description'] ?? ''));
                                     ?>
                                     <tr>
-                                        <td><?= htmlspecialchars($tx['transaction_date']) ?></td>
-                                        <td><?= htmlspecialchars($tx['pay_to'] ?? '') ?></td>
-                                        <td><?= htmlspecialchars($tx['reference_number'] ?? '-') ?></td>
-                                        <td class="text-end font-monospace text-primary fw-semibold"><?= $deb !== '' ? htmlspecialchars($deb) : '' ?></td>
-                                        <td class="text-end font-monospace text-success fw-semibold"><?= $cred !== '' ? htmlspecialchars($cred) : '' ?></td>
-                                        <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
+                                        <td class="fw-semibold"><?= htmlspecialchars($task['title'] ?? '') ?></td>
+                                        <td class="text-muted small">
+                                            <?php if ($desc !== ''): ?>
+                                                <?= htmlspecialchars(mb_strlen($desc) > 120 ? mb_substr($desc, 0, 117) . '…' : $desc) ?>
+                                            <?php else: ?>
+                                                <span class="text-body-secondary">—</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="text-nowrap">
+                                            <?php if (!empty($task['due_date'])): ?>
+                                                <i class="bi bi-calendar3 text-body-secondary"></i>
+                                                <?= htmlspecialchars($dueLabel) ?>
+                                                <?php if ($task['due_date'] < $today): ?>
+                                                    <span class="badge text-bg-danger ms-1">Past due</span>
+                                                <?php elseif ($task['due_date'] === $today): ?>
+                                                    <span class="badge text-bg-warning ms-1">Today</span>
+                                                <?php endif; ?>
+                                            <?php else: ?>
+                                                <span class="text-body-secondary">No due date</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-<?= htmlspecialchars($meta['badge']) ?>">
+                                                <?= htmlspecialchars($meta['label']) ?>
+                                            </span>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
-                            <?php else: ?>
-                                <tr><td colspan="6" class="text-center py-4">No transactions recorded yet.</td></tr>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
+                            </tbody>
+                        </table>
+                    </div>
+                    <?php if (count($pendingTasks) > count($upcomingTasks)): ?>
+                        <div class="small text-body-secondary px-3 py-2 border-top">
+                            Showing <?= count($upcomingTasks) ?> of <?= count($pendingTasks) ?> pending —
+                            <a href="javascript:void(0)" onclick="loadPage('tasks')">open Tasks</a>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
             </div>
         </div>
     </div>

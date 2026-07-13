@@ -15,122 +15,275 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
     $today = date('Y-m-d');
     $validStatuses = ['upcoming', 'due_soon', 'overdue', 'in_progress', 'done'];
 
-    function tasksComputeDueStatus(?string $dueDate, string $today): string {
-        if (!$dueDate) {
-            return 'upcoming';
+    if (!function_exists('tasksComputeDueStatus')) {
+        function tasksComputeDueStatus(?string $dueDate, string $today): string {
+            if ($dueDate === null || $dueDate === '') {
+                return 'upcoming';
+            }
+            if ($dueDate < $today) {
+                return 'overdue';
+            }
+            $dueTs = strtotime($dueDate . ' 12:00:00');
+            $todayTs = strtotime($today . ' 12:00:00');
+            if ($dueTs === false || $todayTs === false) {
+                return 'upcoming';
+            }
+            $days = (int)floor(($dueTs - $todayTs) / 86400);
+            return $days <= 7 ? 'due_soon' : 'upcoming';
         }
-        if ($dueDate < $today) {
-            return 'overdue';
-        }
-        $days = (int)floor((strtotime($dueDate) - strtotime($today)) / 86400);
-        return $days <= 7 ? 'due_soon' : 'upcoming';
     }
 
-    function tasksFormatRow(array $row): array {
-        return [
-            'id' => (int)$row['id'],
-            'title' => $row['title'],
-            'description' => $row['description'] ?? '',
-            'due_date' => $row['due_date'] ?? '',
-            'status' => $row['status'],
-            'created_at' => $row['created_at'] ?? '',
-        ];
+    if (!function_exists('tasksFormatRow')) {
+        function tasksFormatRow(array $row): array {
+            return [
+                'id' => (int)$row['id'],
+                'title' => $row['title'],
+                'description' => $row['description'] ?? '',
+                'due_date' => $row['due_date'] ?? '',
+                'status' => $row['status'],
+                'created_at' => $row['created_at'] ?? '',
+            ];
+        }
+    }
+
+    if (!function_exists('tasksNormalizeDueDate')) {
+        /**
+         * Normalize posted due date to Y-m-d or null. Returns [normalized, errorMessage].
+         * Avoids empty-string DATE inserts that throw under strict SQL mode.
+         *
+         * @return array{0:?string,1:?string}
+         */
+        function tasksNormalizeDueDate($raw): array {
+            if ($raw === null) {
+                return [null, null];
+            }
+            $raw = trim((string)$raw);
+            if ($raw === '') {
+                return [null, null];
+            }
+            // Prefer DateTime over regex (avoids PCRE JIT noise and validates calendar dates)
+            $dt = DateTime::createFromFormat('Y-m-d', $raw);
+            $errors = DateTime::getLastErrors();
+            $hasErrors = is_array($errors)
+                && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0);
+            if (!$dt || $hasErrors || $dt->format('Y-m-d') !== $raw) {
+                return [null, 'Enter a valid due date.'];
+            }
+            return [$dt->format('Y-m-d'), null];
+        }
+    }
+
+    if (!function_exists('tasksJsonResponse')) {
+        function tasksJsonResponse(array $payload, int $httpCode = 200): void {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            // Keep API responses clean even when display_errors is on
+            $prevDisplay = ini_get('display_errors');
+            ini_set('display_errors', '0');
+            if (!headers_sent()) {
+                http_response_code($httpCode);
+                header('Content-Type: application/json; charset=utf-8');
+                header('Cache-Control: no-store');
+            }
+            echo json_encode($payload, JSON_UNESCAPED_UNICODE);
+            if ($prevDisplay !== false) {
+                ini_set('display_errors', (string)$prevDisplay);
+            }
+            exit;
+        }
     }
 
     if (isset($_GET['api']) && $_GET['api'] === 'list') {
-        header('Content-Type: application/json');
         $tasks = [];
-        $res = $db->query("SELECT id, title, description, due_date, status, created_at FROM tasks ORDER BY due_date IS NULL, due_date ASC, id DESC");
-        if ($res) {
-            while ($row = $res->fetch_assoc()) {
-                $tasks[] = tasksFormatRow($row);
+        try {
+            $res = $db->query("SELECT id, title, description, due_date, status, created_at FROM tasks ORDER BY due_date IS NULL, due_date ASC, id DESC");
+            if ($res) {
+                while ($row = $res->fetch_assoc()) {
+                    $tasks[] = tasksFormatRow($row);
+                }
+                $res->close();
             }
-            $res->close();
+        } catch (Throwable $e) {
+            error_log('tasks list failed: ' . $e->getMessage());
+            tasksJsonResponse([
+                'error' => 'Could not load tasks due to a system error. Please refresh and try again.',
+                'system' => true,
+            ], 500);
         }
-        echo json_encode(['tasks' => $tasks]);
-        exit;
+        tasksJsonResponse(['tasks' => $tasks]);
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-        header('Content-Type: application/json');
-        $action = $_POST['action'];
+        $action = (string)$_POST['action'];
 
         if ($action === 'create') {
-            $title = trim($_POST['title'] ?? '');
-            $description = trim($_POST['description'] ?? '');
-            $dueDate = trim($_POST['due_date'] ?? '') ?: null;
-            $status = $_POST['status'] ?? '';
+            $title = trim((string)($_POST['title'] ?? ''));
+            $description = trim((string)($_POST['description'] ?? ''));
+            $statusRaw = trim((string)($_POST['status'] ?? ''));
+            [$dueDate, $dueError] = tasksNormalizeDueDate($_POST['due_date'] ?? null);
 
+            $fieldErrors = [];
             if ($title === '') {
-                echo json_encode(['error' => 'Title is required.']);
-                exit;
+                $fieldErrors['title'] = 'Task name is required.';
+            } elseif (mb_strlen($title) > 200) {
+                $fieldErrors['title'] = 'Task name must be 200 characters or fewer.';
             }
-            if ($dueDate && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dueDate)) {
-                echo json_encode(['error' => 'Invalid due date.']);
-                exit;
+            if ($dueError !== null) {
+                $fieldErrors['due_date'] = $dueError;
             }
-            if (!in_array($status, $validStatuses, true)) {
+            if ($statusRaw !== '' && !in_array($statusRaw, $validStatuses, true)) {
+                $fieldErrors['status'] = 'Choose a valid status, or leave Auto selected.';
+            }
+
+            if ($fieldErrors !== []) {
+                tasksJsonResponse([
+                    'error' => 'Please fix the highlighted fields.',
+                    'fields' => $fieldErrors,
+                ], 422);
+            }
+
+            $status = $statusRaw;
+            if ($status === '' || !in_array($status, $validStatuses, true)) {
                 $status = tasksComputeDueStatus($dueDate, $today);
-            }
-            if (in_array($status, ['upcoming', 'due_soon', 'overdue'], true) && $dueDate) {
+            } elseif (in_array($status, ['upcoming', 'due_soon', 'overdue'], true) && $dueDate !== null) {
+                // Keep due-based statuses in sync with the chosen date
                 $status = tasksComputeDueStatus($dueDate, $today);
             }
 
-            $stmt = $db->prepare("INSERT INTO tasks (title, description, due_date, status) VALUES (?, ?, ?, ?)");
-            $stmt->bind_param('ssss', $title, $description, $dueDate, $status);
-            if (!$stmt->execute()) {
-                echo json_encode(['error' => 'Could not create task.']);
+            try {
+                // Bind NULL explicitly when no due date — empty string fails under strict SQL mode
+                if ($dueDate === null) {
+                    $stmt = $db->prepare(
+                        'INSERT INTO tasks (title, description, due_date, status) VALUES (?, ?, NULL, ?)'
+                    );
+                    if (!$stmt) {
+                        throw new RuntimeException('Prepare failed: ' . $db->error);
+                    }
+                    $stmt->bind_param('sss', $title, $description, $status);
+                } else {
+                    $stmt = $db->prepare(
+                        'INSERT INTO tasks (title, description, due_date, status) VALUES (?, ?, ?, ?)'
+                    );
+                    if (!$stmt) {
+                        throw new RuntimeException('Prepare failed: ' . $db->error);
+                    }
+                    $stmt->bind_param('ssss', $title, $description, $dueDate, $status);
+                }
+
+                if (!$stmt->execute()) {
+                    $dbErr = $stmt->error ?: 'unknown database error';
+                    $stmt->close();
+                    throw new RuntimeException('Execute failed: ' . $dbErr);
+                }
+                $id = (int)$stmt->insert_id;
                 $stmt->close();
-                exit;
-            }
-            $id = (int)$stmt->insert_id;
-            $stmt->close();
 
-            $get = $db->prepare("SELECT id, title, description, due_date, status, created_at FROM tasks WHERE id = ?");
-            $get->bind_param('i', $id);
-            $get->execute();
-            $task = tasksFormatRow($get->get_result()->fetch_assoc());
-            $get->close();
-            echo json_encode(['success' => true, 'task' => $task]);
-            exit;
+                $get = $db->prepare(
+                    'SELECT id, title, description, due_date, status, created_at FROM tasks WHERE id = ?'
+                );
+                if (!$get) {
+                    throw new RuntimeException('Could not reload saved task: ' . $db->error);
+                }
+                $get->bind_param('i', $id);
+                $get->execute();
+                $row = $get->get_result()->fetch_assoc();
+                $get->close();
+                if (!$row) {
+                    throw new RuntimeException('Task was saved but could not be reloaded.');
+                }
+                tasksJsonResponse(['success' => true, 'task' => tasksFormatRow($row)]);
+            } catch (Throwable $e) {
+                error_log('tasks create failed: ' . $e->getMessage());
+                tasksJsonResponse([
+                    'error' => 'Could not save the task due to a system error. Please try again. If it keeps failing, contact an administrator.',
+                    'system' => true,
+                ], 500);
+            }
         }
 
         if ($action === 'update_status') {
             $id = (int)($_POST['id'] ?? 0);
-            $status = $_POST['status'] ?? '';
+            $status = (string)($_POST['status'] ?? '');
             if ($id <= 0 || !in_array($status, $validStatuses, true)) {
-                echo json_encode(['error' => 'Invalid task or status.']);
-                exit;
+                tasksJsonResponse([
+                    'error' => 'Could not update status: invalid task or status value.',
+                    'system' => true,
+                ], 400);
             }
-            $stmt = $db->prepare("UPDATE tasks SET status = ? WHERE id = ?");
-            $stmt->bind_param('si', $status, $id);
-            if (!$stmt->execute() || $stmt->affected_rows < 1) {
-                echo json_encode(['error' => 'Task not found or status unchanged.']);
+            try {
+                $stmt = $db->prepare('UPDATE tasks SET status = ? WHERE id = ?');
+                if (!$stmt) {
+                    throw new RuntimeException('Prepare failed: ' . $db->error);
+                }
+                $stmt->bind_param('si', $status, $id);
+                $stmt->execute();
+                $affected = $stmt->affected_rows;
                 $stmt->close();
-                exit;
+                if ($affected < 1) {
+                    // unchanged status still counts as success for drag/drop UX
+                    $check = $db->prepare('SELECT id FROM tasks WHERE id = ?');
+                    if ($check) {
+                        $check->bind_param('i', $id);
+                        $check->execute();
+                        $exists = (bool)$check->get_result()->fetch_assoc();
+                        $check->close();
+                        if ($exists) {
+                            tasksJsonResponse(['success' => true, 'unchanged' => true]);
+                        }
+                    }
+                    tasksJsonResponse([
+                        'error' => 'Task not found. It may have been deleted.',
+                        'system' => true,
+                    ], 404);
+                }
+                tasksJsonResponse(['success' => true]);
+            } catch (Throwable $e) {
+                error_log('tasks update_status failed: ' . $e->getMessage());
+                tasksJsonResponse([
+                    'error' => 'Could not update task status due to a system error. Please try again.',
+                    'system' => true,
+                ], 500);
             }
-            $stmt->close();
-            echo json_encode(['success' => true]);
-            exit;
         }
 
         if ($action === 'delete') {
             $id = (int)($_POST['id'] ?? 0);
             if ($id <= 0) {
-                echo json_encode(['error' => 'Invalid task.']);
-                exit;
+                tasksJsonResponse([
+                    'error' => 'Could not delete: invalid task.',
+                    'system' => true,
+                ], 400);
             }
-            $stmt = $db->prepare("DELETE FROM tasks WHERE id = ?");
-            $stmt->bind_param('i', $id);
-            $stmt->execute();
-            $deleted = $stmt->affected_rows > 0;
-            $stmt->close();
-            echo json_encode($deleted ? ['success' => true] : ['error' => 'Task not found.']);
-            exit;
+            try {
+                $stmt = $db->prepare('DELETE FROM tasks WHERE id = ?');
+                if (!$stmt) {
+                    throw new RuntimeException('Prepare failed: ' . $db->error);
+                }
+                $stmt->bind_param('i', $id);
+                $stmt->execute();
+                $deleted = $stmt->affected_rows > 0;
+                $stmt->close();
+                if (!$deleted) {
+                    tasksJsonResponse([
+                        'error' => 'Task not found. It may have already been deleted.',
+                        'system' => true,
+                    ], 404);
+                }
+                tasksJsonResponse(['success' => true]);
+            } catch (Throwable $e) {
+                error_log('tasks delete failed: ' . $e->getMessage());
+                tasksJsonResponse([
+                    'error' => 'Could not delete the task due to a system error. Please try again.',
+                    'system' => true,
+                ], 500);
+            }
         }
 
-        echo json_encode(['error' => 'Unknown action.']);
-        exit;
+        tasksJsonResponse([
+            'error' => 'Unknown action. Please refresh the page and try again.',
+            'system' => true,
+        ], 400);
     }
 
     $tasksByStatus = array_fill_keys($validStatuses, []);
@@ -444,17 +597,21 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
+                    <div id="addTaskFormAlert" class="alert alert-danger d-none py-2 small" role="alert"></div>
                     <div class="mb-3">
-                        <label for="taskTitle" class="form-label">Title <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="taskTitle" name="title" maxlength="200" required>
+                        <label for="taskTitle" class="form-label">Task name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="taskTitle" name="title" maxlength="200" required autocomplete="off">
+                        <div class="invalid-feedback" id="taskTitleError">Task name is required.</div>
                     </div>
                     <div class="mb-3">
                         <label for="taskDescription" class="form-label">Description</label>
                         <textarea class="form-control" id="taskDescription" name="description" rows="3"></textarea>
+                        <div class="invalid-feedback" id="taskDescriptionError"></div>
                     </div>
                     <div class="mb-3">
-                        <label for="taskDueDate" class="form-label">Due Date</label>
+                        <label for="taskDueDate" class="form-label">Due date</label>
                         <input type="date" class="form-control" id="taskDueDate" name="due_date">
+                        <div class="invalid-feedback" id="taskDueDateError">Enter a valid due date.</div>
                     </div>
                     <div class="mb-0">
                         <label for="taskStatus" class="form-label">Status</label>
@@ -464,6 +621,7 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
                                 <option value="<?= $s ?>"><?= htmlspecialchars($statusMeta[$s]['label']) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <div class="invalid-feedback" id="taskStatusError">Choose a valid status.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -690,10 +848,124 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         });
     }
 
+    const fieldMap = {
+        title: document.getElementById('taskTitle'),
+        description: document.getElementById('taskDescription'),
+        due_date: document.getElementById('taskDueDate'),
+        status: document.getElementById('taskStatus')
+    };
+    const fieldErrorMap = {
+        title: document.getElementById('taskTitleError'),
+        description: document.getElementById('taskDescriptionError'),
+        due_date: document.getElementById('taskDueDateError'),
+        status: document.getElementById('taskStatusError')
+    };
+    const formAlert = document.getElementById('addTaskFormAlert');
+    const saveTaskBtn = addTaskForm.querySelector('button[type="submit"]');
+
+    function clearFieldErrors() {
+        Object.keys(fieldMap).forEach(key => {
+            const el = fieldMap[key];
+            if (el) el.classList.remove('is-invalid');
+            const err = fieldErrorMap[key];
+            if (err && err.dataset.defaultText === undefined) {
+                err.dataset.defaultText = err.textContent || '';
+            }
+        });
+        if (formAlert) {
+            formAlert.classList.add('d-none');
+            formAlert.textContent = '';
+        }
+    }
+
+    function setFieldErrors(fields) {
+        clearFieldErrors();
+        if (!fields || typeof fields !== 'object') return;
+        let firstInvalid = null;
+        Object.keys(fields).forEach(key => {
+            const el = fieldMap[key];
+            const err = fieldErrorMap[key];
+            const message = fields[key];
+            if (el) {
+                el.classList.add('is-invalid');
+                if (!firstInvalid) firstInvalid = el;
+            }
+            if (err && message) {
+                err.textContent = message;
+            }
+        });
+        if (firstInvalid) firstInvalid.focus();
+    }
+
+    function clientValidateTaskForm() {
+        const fields = {};
+        const title = (fieldMap.title?.value || '').trim();
+        const due = (fieldMap.due_date?.value || '').trim();
+        if (!title) {
+            fields.title = 'Task name is required.';
+        } else if (title.length > 200) {
+            fields.title = 'Task name must be 200 characters or fewer.';
+        }
+        if (due) {
+            // HTML date inputs usually enforce format; still guard empty-invalid edge cases
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
+            if (!m) {
+                fields.due_date = 'Enter a valid due date.';
+            } else {
+                const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+                const dt = new Date(y, mo - 1, d);
+                if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) {
+                    fields.due_date = 'Enter a valid due date.';
+                }
+            }
+        }
+        if (Object.keys(fields).length) {
+            setFieldErrors(fields);
+            return false;
+        }
+        clearFieldErrors();
+        return true;
+    }
+
     function postAction(data) {
         const fd = new FormData();
-        Object.entries(data).forEach(([k, v]) => fd.append(k, v));
-        return fetch(`pages/${page}.php`, { method: 'POST', body: fd }).then(r => r.json());
+        Object.entries(data).forEach(([k, v]) => {
+            // Never send null/undefined as the strings "null"/"undefined"
+            if (v === null || v === undefined) {
+                fd.append(k, '');
+            } else {
+                fd.append(k, v);
+            }
+        });
+        return fetch(`pages/${page}.php`, {
+            method: 'POST',
+            body: fd,
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(async (r) => {
+            const text = await r.text();
+            let res;
+            try {
+                res = text ? JSON.parse(text) : {};
+            } catch (parseErr) {
+                const err = new Error(
+                    r.status >= 500
+                        ? 'The server returned an unexpected response while saving. Please try again.'
+                        : 'Could not read the server response. Please refresh and try again.'
+                );
+                err.system = true;
+                err.status = r.status;
+                throw err;
+            }
+            if (!r.ok && !res.error) {
+                res.error = r.status >= 500
+                    ? 'A server error occurred while saving the task. Please try again.'
+                    : 'The request could not be completed. Please try again.';
+                res.system = true;
+            }
+            res._httpStatus = r.status;
+            return res;
+        });
     }
 
     viewKanbanBtn.addEventListener('click', () => setActiveView('kanban'));
@@ -713,23 +985,81 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
 
     document.getElementById('addTaskBtn').addEventListener('click', () => {
         addTaskForm.reset();
+        clearFieldErrors();
+        if (saveTaskBtn) saveTaskBtn.disabled = false;
         addTaskModal.show();
+        setTimeout(() => fieldMap.title && fieldMap.title.focus(), 200);
+    });
+
+    Object.keys(fieldMap).forEach(key => {
+        const el = fieldMap[key];
+        if (!el) return;
+        const clear = () => {
+            el.classList.remove('is-invalid');
+            if (formAlert) {
+                formAlert.classList.add('d-none');
+                formAlert.textContent = '';
+            }
+        };
+        el.addEventListener('input', clear);
+        el.addEventListener('change', clear);
     });
 
     addTaskForm.addEventListener('submit', e => {
         e.preventDefault();
-        const fd = new FormData(addTaskForm);
-        fd.append('action', 'create');
-        postAction(Object.fromEntries(fd.entries()))
+        if (!clientValidateTaskForm()) {
+            return;
+        }
+        if (saveTaskBtn) saveTaskBtn.disabled = true;
+
+        // Build payload explicitly so empty due_date is a clean empty string
+        const payload = {
+            action: 'create',
+            title: (fieldMap.title?.value || '').trim(),
+            description: (fieldMap.description?.value || '').trim(),
+            due_date: (fieldMap.due_date?.value || '').trim(),
+            status: fieldMap.status?.value || ''
+        };
+
+        postAction(payload)
             .then(res => {
+                if (res.fields) {
+                    setFieldErrors(res.fields);
+                    if (formAlert && res.error) {
+                        formAlert.textContent = res.error;
+                        formAlert.classList.remove('d-none');
+                    }
+                    return;
+                }
                 if (res.error) {
-                    showToast(res.error, 'danger');
+                    if (res.system || res._httpStatus >= 500) {
+                        showToast(res.error, 'danger', 7000);
+                    } else {
+                        // Non-field validation message — keep visible in the form
+                        if (formAlert) {
+                            formAlert.textContent = res.error;
+                            formAlert.classList.remove('d-none');
+                        }
+                        showToast(res.error, 'warning', 5000);
+                    }
+                    return;
+                }
+                if (!res.success) {
+                    showToast('Could not save the task. The server did not confirm success. Please try again.', 'danger', 7000);
                     return;
                 }
                 addTaskModal.hide();
                 reload('Task created successfully.');
             })
-            .catch(() => showToast('Could not save task. Please try again.', 'danger'));
+            .catch(err => {
+                const msg = (err && err.message)
+                    ? err.message
+                    : 'Could not save the task due to a network or system error. Check your connection and try again.';
+                showToast(msg, 'danger', 7000);
+            })
+            .finally(() => {
+                if (saveTaskBtn) saveTaskBtn.disabled = false;
+            });
     });
 
     document.querySelectorAll('.task-delete').forEach(btn => {
