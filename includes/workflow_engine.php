@@ -260,17 +260,22 @@ function workflowListInstances(mysqli $db, ?string $type = null, int $limit = 10
 }
 
 function workflowEligibleUsers(mysqli $db, string $capability): array {
+    require_once __DIR__ . '/permissions.php';
     $users = [];
     $res = $db->query(
-        'SELECT u.id, u.username, u.first_name, u.last_name, r.name AS role_name
+        'SELECT u.id, u.username, u.first_name, u.last_name
          FROM users u
-         JOIN roles r ON r.id = u.role_id
          WHERE u.is_active = TRUE
          ORDER BY u.first_name, u.last_name, u.username'
     );
     if ($res) {
         while ($row = $res->fetch_assoc()) {
-            if (userHasWorkflowCapability($db, (int)$row['id'], $capability)) {
+            $uid = (int)$row['id'];
+            if (userHasWorkflowCapability($db, $uid, $capability)) {
+                $acl = loadUserAcl($db, $uid);
+                $row['role_name'] = $acl
+                    ? implode(', ', $acl['role_names'] ?? [($acl['role_name'] ?? '')])
+                    : '';
                 $row['display_name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')) ?: $row['username'];
                 $users[] = $row;
             }

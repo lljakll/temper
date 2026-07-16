@@ -445,6 +445,14 @@ requireLogin();
     function loadPage(page) {
         if (window.__temperAuthRedirecting) return;
 
+        // While forced password change is required, only allow force-password
+        if (window.__temperMustChangePassword && page !== 'force-password') {
+            page = 'force-password';
+            if (typeof showToast === 'function') {
+                showToast('You must change your password before using the app.', 'warning', 3500);
+            }
+        }
+
         if (typeof window.closeMobileNav === 'function') {
             window.closeMobileNav();
         }
@@ -484,7 +492,7 @@ requireLogin();
             });
     }
 
-    // Load default dashboard on initial page load
+    // Load default landing page based on role permissions (set by nav.php)
     document.addEventListener('DOMContentLoaded', function() {
         // Follow OS light/dark changes when theme preference is auto
         try {
@@ -499,7 +507,10 @@ requireLogin();
             }
         } catch (e) { /* ignore */ }
 
-        loadPage('dashboard');
+        var home = (window.__temperHomePage && typeof window.__temperHomePage === 'string')
+            ? window.__temperHomePage
+            : 'dashboard';
+        loadPage(home);
     });
     </script>
 <body class="has-mobile-nav">

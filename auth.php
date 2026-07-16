@@ -223,6 +223,10 @@ function requireLogin(?mysqli $db = null): array {
     $userId = (int)$_SESSION['user_id'];
 
     if ($db instanceof mysqli) {
+        require_once __DIR__ . '/includes/permissions.php';
+        // Periodic cleanup of accounts that never completed forced password change
+        archiveExpiredForcePasswordUsers($db);
+
         static $validatedUserId = null;
         static $validatedOk = false;
         if ($validatedUserId !== $userId) {
@@ -244,6 +248,9 @@ function requireLogin(?mysqli $db = null): array {
 
     touchAuthSession();
 
+    // Block app use until forced password change completes
+    enforceMustChangePasswordGate();
+
     return [
         'id' => $userId,
         'name' => (string)($_SESSION['user_name'] ?? 'User'),
@@ -260,9 +267,18 @@ function requireAuthenticatedSession(?mysqli $db = null): array {
 
 function login($username, $password) {
     require_once __DIR__ . '/config.php';
+    require_once __DIR__ . '/includes/permissions.php';
     $db = getDbConnection();
+    ensureUsersRolesSchema($db);
+    // Expire accounts that never completed forced password change
+    archiveExpiredForcePasswordUsers($db);
 
-    $stmt = $db->prepare("SELECT id, username, first_name, email, password FROM users WHERE username = ? AND is_active = TRUE");
+    $cols = 'id, username, first_name, email, password';
+    if (temperColumnExists($db, 'users', 'must_change_password')) {
+        $cols .= ', must_change_password';
+    }
+
+    $stmt = $db->prepare("SELECT {$cols} FROM users WHERE username = ? AND is_active = TRUE");
     $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -276,6 +292,11 @@ function login($username, $password) {
             $_SESSION['user_id'] = (int)$user['id'];
             $_SESSION['user_name'] = $user['first_name'] ?? $user['username'];
             $_SESSION['username'] = $user['username'];
+            if (!empty($user['must_change_password'])) {
+                $_SESSION['must_change_password'] = 1;
+            } else {
+                unset($_SESSION['must_change_password']);
+            }
             touchAuthSession();
 
             $update = $db->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
@@ -311,22 +332,14 @@ function getCurrentUser() {
 }
 
 function getUserWithRole(mysqli $db, int $userId): ?array {
-    $stmt = $db->prepare(
-        'SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.is_active,
-                r.id AS role_id, r.name AS role_name, r.permissions
-         FROM users u
-         JOIN roles r ON r.id = u.role_id
-         WHERE u.id = ? AND u.is_active = TRUE'
-    );
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    if (!$row) {
+    require_once __DIR__ . '/includes/permissions.php';
+    $acl = loadUserAcl($db, $userId);
+    if (!$acl) {
         return null;
     }
-    $row['display_name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')) ?: $row['username'];
-    return $row;
+    // Preserve legacy shape: permissions as JSON string for callers that json_decode
+    $acl['permissions'] = encodeRolePermissions($acl['permissions']);
+    return $acl;
 }
 
 function getCurrentUserWithRole(mysqli $db): ?array {
@@ -349,18 +362,42 @@ function verifyUserPassword(mysqli $db, int $userId, string $password): bool {
     return password_verify($password, $row['password']);
 }
 
+/**
+ * Workflow capability check — prefers role permissions JSON, with role-name fallback
+ * only when the role has no permissions configured (legacy empty seed).
+ */
 function userHasWorkflowCapability(mysqli $db, int $userId, string $capability): bool {
-    $user = getUserWithRole($db, $userId);
-    if (!$user) {
+    require_once __DIR__ . '/includes/permissions.php';
+
+    // Permission-first (Administrator * included)
+    if (userHasPermission($db, $userId, $capability)) {
+        return true;
+    }
+
+    $acl = loadUserAcl($db, $userId);
+    if (!$acl) {
         return false;
     }
-    $role = $user['role_name'] ?? '';
+
+    // If role has any permissions configured (or *), permissions are authoritative
+    $perms = $acl['permissions'] ?? [];
+    if ($perms !== [] && !in_array('*', $perms, true)) {
+        // Non-empty permission set without the capability → deny
+        // (already failed userHasPermission above)
+        return false;
+    }
+    if (in_array('*', $perms, true)) {
+        return true;
+    }
+
+    // Legacy empty permissions: role-name fallback
+    $role = $acl['role_name'] ?? '';
     $elevated = in_array($role, ['Administrator', 'Finance Manager', 'Treasurer', 'Financial Secretary'], true);
-    if ($elevated) {
+    if ($elevated && str_starts_with($capability, 'workflow.')) {
         return true;
     }
     $map = [
-        'workflow.view' => ['Teller', 'Second Teller', 'Member'],
+        'workflow.view' => ['Teller', 'Second Teller'],
         'workflow.contribution.create' => ['Teller', 'Second Teller'],
         'workflow.contribution.second_sign' => ['Second Teller', 'Teller'],
         'workflow.contribution.official' => ['Treasurer', 'Financial Secretary'],
@@ -368,11 +405,93 @@ function userHasWorkflowCapability(mysqli $db, int $userId, string $capability):
     return in_array($role, $map[$capability] ?? [], true);
 }
 
+/**
+ * Tellers only see workflows (limited nav). Driven by permissions when possible.
+ */
 function isTellerLimitedUser(mysqli $db, int $userId): bool {
-    $user = getUserWithRole($db, $userId);
-    if (!$user) {
+    require_once __DIR__ . '/includes/permissions.php';
+    $acl = loadUserAcl($db, $userId);
+    if (!$acl) {
         return false;
     }
-    return in_array($user['role_name'], ['Teller', 'Second Teller'], true);
+    $names = $acl['role_names'] ?? [($acl['role_name'] ?? '')];
+    foreach ($names as $name) {
+        if (in_array($name, ['Teller', 'Second Teller'], true)) {
+            // Only treat as limited if they lack broader staff access via other roles/custom perms
+            $hasStaffPage = permissionSetAllows($acl['permissions'], 'page.dashboard')
+                || permissionSetAllows($acl['permissions'], 'page.ledger')
+                || permissionSetAllows($acl['permissions'], 'page.reports');
+            if (!$hasStaffPage) {
+                return true;
+            }
+        }
+    }
+    $hasWorkflow = permissionSetAllows($acl['permissions'], 'workflow.view');
+    $hasStaffPage = permissionSetAllows($acl['permissions'], 'page.dashboard')
+        || permissionSetAllows($acl['permissions'], 'page.ledger')
+        || permissionSetAllows($acl['permissions'], 'page.reports');
+    return $hasWorkflow && !$hasStaffPage;
+}
+
+/**
+ * Pages under /pages/ allowed while must_change_password is set.
+ * Shell scripts (index, header, nav, footer) are never blocked.
+ */
+function isForcePasswordExemptPage(): bool {
+    $script = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    $base = basename($script, '.php');
+    return in_array($base, ['force-password', 'logout', 'login'], true);
+}
+
+/**
+ * If the user must change password, block SPA page fragments except force-password.
+ * Does not block the application shell (index.php / includes).
+ */
+function enforceMustChangePasswordGate(): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    if (empty($_SESSION['must_change_password'])) {
+        return;
+    }
+    if (isForcePasswordExemptPage()) {
+        return;
+    }
+
+    // Only gate AJAX-loaded application pages under /pages/
+    $script = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? ''));
+    if (strpos($script, '/pages/') === false) {
+        return;
+    }
+
+    $wantsJson = wantsJsonAuthResponse();
+
+    if ($wantsJson) {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => false,
+            'error' => 'You must change your password before continuing.',
+            'must_change_password' => true,
+            'redirect' => 'force-password',
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Must-Change-Password: 1');
+    echo '<div class="alert alert-warning mb-0" role="alert">'
+        . '<i class="bi bi-key me-1"></i>You must change your password before continuing. '
+        . '<a href="javascript:void(0)" onclick="loadPage(\'force-password\')">Change password now</a>.'
+        . '</div>'
+        . '<script>if(typeof loadPage==="function"){loadPage("force-password");}</script>';
+    exit;
 }
 ?>

@@ -10,13 +10,16 @@ $today = date('Y-m-d');
     $tasksHorizon = date('Y-m-d', strtotime('+30 days'));
     $upcoming_tasks_limit = 10;
     $actorUser = getCurrentUser();
+    require_once __DIR__ . '/../includes/permissions.php';
     $tellerLimited = $actorUser ? isTellerLimitedUser($db, (int)$actorUser['id']) : false;
+    $dashAcl = $actorUser ? loadUserAcl($db, (int)$actorUser['id']) : null;
+    $dashPerms = $dashAcl['permissions'] ?? [];
 
 /**
  * Quick-access dashboard links (easy to extend).
- * Optional keys: page (SPA), href (external), roles ('all'|'staff'), variant, icon, description
+ * Optional keys: page (SPA), href (external), permission (RBAC), variant, icon, description
  *
- * @return list<array{label:string,icon:string,variant:string,page?:string,href?:string,description?:string,roles?:string}>
+ * @return list<array{label:string,icon:string,variant:string,page?:string,href?:string,description?:string,permission?:string}>
  */
 function dashboardQuickLinks(): array {
     return [
@@ -26,7 +29,7 @@ function dashboardQuickLinks(): array {
             'page' => 'workflow_contribution',
             'icon' => 'bi-cash-coin',
             'variant' => 'success',
-            'roles' => 'all',
+            'permission' => 'workflow.contribution.create',
         ],
         [
             'label' => 'View Ledger',
@@ -34,7 +37,7 @@ function dashboardQuickLinks(): array {
             'page' => 'ledger',
             'icon' => 'bi-currency-dollar',
             'variant' => 'primary',
-            'roles' => 'staff',
+            'permission' => 'page.ledger',
         ],
         [
             'label' => 'Run Reports',
@@ -42,7 +45,7 @@ function dashboardQuickLinks(): array {
             'page' => 'reports',
             'icon' => 'bi-file-earmark-bar-graph',
             'variant' => 'info',
-            'roles' => 'staff',
+            'permission' => 'page.reports',
         ],
         [
             'label' => 'Budget',
@@ -50,7 +53,7 @@ function dashboardQuickLinks(): array {
             'page' => 'budget',
             'icon' => 'bi-graph-up',
             'variant' => 'secondary',
-            'roles' => 'staff',
+            'permission' => 'page.budget',
         ],
         [
             'label' => 'Tasks',
@@ -58,7 +61,7 @@ function dashboardQuickLinks(): array {
             'page' => 'tasks',
             'icon' => 'bi-check2-square',
             'variant' => 'secondary',
-            'roles' => 'staff',
+            'permission' => 'page.tasks',
         ],
         [
             'label' => 'Workflows Hub',
@@ -66,7 +69,7 @@ function dashboardQuickLinks(): array {
             'page' => 'workflows',
             'icon' => 'bi-diagram-3',
             'variant' => 'outline-secondary',
-            'roles' => 'all',
+            'permission' => 'workflow.view',
         ],
         [
             'label' => 'Funds Setup',
@@ -74,7 +77,15 @@ function dashboardQuickLinks(): array {
             'page' => 'setup_funds',
             'icon' => 'bi-wallet2',
             'variant' => 'outline-secondary',
-            'roles' => 'staff',
+            'permission' => 'admin.lookups',
+        ],
+        [
+            'label' => 'Users & Roles',
+            'description' => 'Admin · accounts',
+            'page' => 'admin-users',
+            'icon' => 'bi-people',
+            'variant' => 'outline-secondary',
+            'permission' => 'users.manage',
         ],
         [
             'label' => 'Backup / Restore',
@@ -82,7 +93,7 @@ function dashboardQuickLinks(): array {
             'page' => 'admin-backup',
             'icon' => 'bi-cloud-arrow-up',
             'variant' => 'outline-secondary',
-            'roles' => 'staff',
+            'permission' => 'admin.backup',
         ],
     ];
 }
@@ -380,12 +391,12 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
     $workflowPending = dashboardWorkflowPendingItems($db);
     $quickLinks = array_values(array_filter(
         dashboardQuickLinks(),
-        static function (array $link) use ($tellerLimited): bool {
-            $roles = $link['roles'] ?? 'all';
-            if ($tellerLimited && $roles === 'staff') {
-                return false;
+        static function (array $link) use ($dashPerms): bool {
+            $perm = $link['permission'] ?? null;
+            if ($perm === null || $perm === '') {
+                return true;
             }
-            return true;
+            return permissionSetAllows($dashPerms, $perm);
         }
     ));
 ?>

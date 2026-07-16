@@ -2,6 +2,7 @@
 // Admin Backup & Restore - Inner content only for AJAX loading
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/backup_utils.php';
+// Page permission admin.backup enforced via page_bootstrap map
 
 @ini_set('pcre.jit', '0');
 

@@ -3,30 +3,41 @@
 require_once __DIR__ . '/../includes/page_bootstrap.php';
     require_once __DIR__ . '/../includes/backup_utils.php';
 
-$lookupLinks = [
+require_once __DIR__ . '/../includes/permissions.php';
+    $adminUser = getCurrentUser();
+    $canManageUsers = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'users.manage');
+    $canDatabase = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.database');
+    $canBackup = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.backup');
+    $canLookups = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.lookups');
+
+    $lookupLinks = $canLookups ? [
         ['page' => 'setup_funds', 'title' => 'Funds', 'icon' => 'bi-wallet2'],
         ['page' => 'setup_accounts', 'title' => 'Accounts', 'icon' => 'bi-credit-card'],
         ['page' => 'setup_naturalclasses', 'title' => 'Natural Classes', 'icon' => 'bi-tag'],
         ['page' => 'setup_functionalclasses', 'title' => 'Functional Classes', 'icon' => 'bi-tags'],
-    ];
+    ] : [];
 
-    $recentBackups = listRecentBackupSummaries(getBackupDir(), 4);
+    $recentBackups = $canBackup ? listRecentBackupSummaries(getBackupDir(), 4) : [];
 
-    $activeCards = [
-        [
+    $activeCards = [];
+    if ($canManageUsers) {
+        $activeCards[] = [
+            'title' => 'Users & Roles',
+            'description' => 'Create users, assign roles, reset passwords, and deactivate accounts.',
+            'icon' => 'bi-people',
+            'page' => 'admin-users',
+        ];
+    }
+    if ($canDatabase) {
+        $activeCards[] = [
             'title' => 'Database Maintenance',
             'description' => 'Clear test data, reset users, and run destructive database utilities.',
             'icon' => 'bi-database-gear',
             'page' => 'admin-database',
-        ],
-    ];
+        ];
+    }
 
     $placeholderCards = [
-        [
-            'title' => 'Users & Roles',
-            'description' => 'Manage user accounts, roles, and access permissions.',
-            'icon' => 'bi-people',
-        ],
         [
             'title' => 'System Settings',
             'description' => 'Configure application preferences and organization details.',
@@ -102,6 +113,7 @@ $lookupLinks = [
 </div>
 
 <div class="row g-2">
+    <?php if ($canLookups): ?>
     <div class="col-sm-6 col-xl-4">
         <div class="card admin-card admin-card--primary h-100 shadow-sm">
             <div class="card-header border-bottom d-flex align-items-center gap-2">
@@ -124,7 +136,9 @@ $lookupLinks = [
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
+    <?php if ($canBackup): ?>
     <div class="col-sm-6 col-xl-4">
         <div class="card admin-card admin-card--success h-100 shadow-sm">
             <div class="card-body d-flex flex-column">
@@ -158,6 +172,7 @@ $lookupLinks = [
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
     <?php foreach ($activeCards as $card): ?>
         <div class="col-sm-6 col-xl-4">

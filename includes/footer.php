@@ -6,8 +6,9 @@ require_once __DIR__ . '/../auth.php';
 // Central session check (shell footer)
 requireLogin();
 
-// Get current user info
+// Get current user info + permissions for mobile nav
 $user = getCurrentUser();
+require_once __DIR__ . '/permissions.php';
 
 // Database connection (only create if not already set)
 if (!isset($db)) {
@@ -15,6 +16,11 @@ if (!isset($db)) {
 }
 
 $footerDb = getDbConnection();
+$footerAcl = $user ? loadUserAcl($footerDb, (int)$user['id']) : null;
+$footerPerms = $footerAcl['permissions'] ?? [];
+$footerCan = static function (string $perm) use ($footerPerms): bool {
+    return permissionSetAllows($footerPerms, $perm);
+};
 $tellerLimitedFooter = $user ? isTellerLimitedUser($footerDb, (int)$user['id']) : false;
 $footerDb->close();
 ?>
@@ -23,33 +29,44 @@ $footerDb->close();
 </div><!-- /.row -->
 </div><!-- /.container-fluid -->
 
+<?php $footerMustChange = !empty($_SESSION['must_change_password']); ?>
+<?php if (!$footerMustChange): ?>
 <!-- Mobile bottom navigation -->
 <nav class="mobile-bottom-nav d-md-none" aria-label="Primary">
-<?php if (!$tellerLimitedFooter): ?>
+<?php if ($footerCan('page.dashboard')): ?>
     <a href="javascript:void(0)" onclick="loadPage('dashboard')" data-nav-page="dashboard">
         <i class="bi bi-speedometer2"></i>
         <span>Home</span>
     </a>
+<?php endif; ?>
+<?php if ($footerCan('page.ledger')): ?>
     <a href="javascript:void(0)" onclick="loadPage('ledger')" data-nav-page="ledger">
         <i class="bi bi-currency-dollar"></i>
         <span>Ledger</span>
     </a>
+<?php endif; ?>
+<?php if ($footerCan('workflow.view')): ?>
     <a href="javascript:void(0)" onclick="loadPage('workflows')" data-nav-page="workflows">
         <i class="bi bi-diagram-3"></i>
         <span>Workflows</span>
     </a>
+<?php endif; ?>
+<?php if ($footerCan('page.reports')): ?>
     <a href="javascript:void(0)" onclick="loadPage('reports')" data-nav-page="reports">
         <i class="bi bi-file-earmark-bar-graph"></i>
         <span>Reports</span>
     </a>
+<?php endif; ?>
+<?php if ($footerCan('page.tasks')): ?>
     <a href="javascript:void(0)" onclick="loadPage('tasks')" data-nav-page="tasks">
         <i class="bi bi-check2-square"></i>
         <span>Tasks</span>
     </a>
-<?php else: ?>
-    <a href="javascript:void(0)" onclick="loadPage('workflows')" data-nav-page="workflows">
-        <i class="bi bi-diagram-3"></i>
-        <span>Workflows</span>
+<?php endif; ?>
+<?php if ($tellerLimitedFooter || (!$footerCan('page.dashboard') && !$footerCan('page.ledger'))): ?>
+    <a href="javascript:void(0)" onclick="loadPage('profile')" data-nav-page="profile">
+        <i class="bi bi-person-circle"></i>
+        <span>Profile</span>
     </a>
     <a href="logout.php">
         <i class="bi bi-box-arrow-right"></i>
@@ -57,6 +74,7 @@ $footerDb->close();
     </a>
 <?php endif; ?>
 </nav>
+<?php endif; ?>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -108,29 +126,78 @@ $footerDb->close();
             return toast;
         };
 
-        window.showActionResponse = function(text) {
-            if (window.__temperAuthRedirecting) return;
-            if (!text || typeof text !== 'string') return;
+        /**
+         * Extract a clean toast from a POST response body.
+         * Handles: pure JSON APIs, embedded page-flash JSON, plain-text prefixes before HTML.
+         * Never surfaces raw HTML or raw JSON script tags as the toast message.
+         */
+        window.toastFromPostResponse = function(text) {
+            if (window.__temperAuthRedirecting) return { handled: false, success: null };
+            if (!text || typeof text !== 'string') return { handled: false, success: null };
             const trimmed = text.trim();
-            if (!trimmed) return;
+            if (!trimmed) return { handled: false, success: null };
             if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(trimmed)) {
                 if (typeof window.redirectToLoginExpired === 'function') {
                     window.redirectToLoginExpired();
                 }
-                return;
+                return { handled: true, success: false };
             }
-            const htmlIdx = trimmed.search(/<[!do]/i);
-            const prefix = (htmlIdx > 0 ? trimmed.slice(0, htmlIdx) : trimmed).trim();
-            const line = prefix.split('\n').map(function(l) { return l.trim(); }).find(function(l) { return l.length > 0; });
-            if (!line) return;
+
+            // 1) Embedded page-flash / ledger-flash (preferred for HTML fragments)
+            const flashRe = /id=["'](?:page-flash|ledger-flash)["'][^>]*>\s*(\{[\s\S]*?\})\s*<\/script>/i;
+            const flashMatch = trimmed.match(flashRe);
+            if (flashMatch) {
+                try {
+                    const flash = JSON.parse(flashMatch[1]);
+                    if (flash && flash.message) {
+                        showToast(String(flash.message), flash.type || 'success', flash.delay || 4500);
+                        return { handled: true, success: (flash.type || 'success') !== 'danger' };
+                    }
+                } catch (e) { /* fall through */ }
+            }
+
+            // 2) Pure JSON body
+            if (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
+                try {
+                    const data = JSON.parse(trimmed);
+                    if (data && typeof data === 'object' && !Array.isArray(data)) {
+                        if (data.error) {
+                            showToast(String(data.error), 'danger');
+                            return { handled: true, success: false, data: data };
+                        }
+                        if (data.message) {
+                            showToast(String(data.message), data.success === false ? 'danger' : 'success');
+                            return { handled: true, success: data.success !== false, data: data };
+                        }
+                        return { handled: true, success: data.success !== false, data: data };
+                    }
+                } catch (e) { /* fall through */ }
+            }
+
+            // 3) Plain-text line before any HTML (setup pages: "Fund added successfully\n<div…")
+            // Skip lines that are HTML/script/JSON noise
+            const htmlIdx = trimmed.search(/</);
+            const prefix = (htmlIdx > 0 ? trimmed.slice(0, htmlIdx) : (/^\s*</.test(trimmed) ? '' : trimmed)).trim();
+            const line = prefix.split('\n').map(function(l) { return l.trim(); }).find(function(l) {
+                return l.length > 0 && l.charAt(0) !== '<' && l.charAt(0) !== '{' && l.charAt(0) !== '[';
+            });
+            if (!line) return { handled: false, success: null };
+
             const lower = line.toLowerCase();
             if (lower.indexOf('error') === 0) {
                 showToast(line, 'danger');
-            } else if (lower.indexOf('success') !== -1 || /added|updated|deleted|saved|archived|cleared|restored|reset/.test(lower)) {
-                showToast(line, 'success');
-            } else {
-                showToast(line, 'info');
+                return { handled: true, success: false };
             }
+            if (lower.indexOf('success') !== -1 || /added|updated|deleted|saved|archived|cleared|restored|reset/.test(lower)) {
+                showToast(line, 'success');
+                return { handled: true, success: true };
+            }
+            showToast(line, 'info');
+            return { handled: true, success: true };
+        };
+
+        window.showActionResponse = function(text) {
+            window.toastFromPostResponse(text);
         };
 
         window.consumePageFlash = function(id) {
@@ -147,15 +214,24 @@ $footerDb->close();
         };
 
         window.submitFormAndReload = function(postUrl, formData, reloadUrl) {
-            return fetch(postUrl, { method: 'POST', body: formData })
+            return fetch(postUrl, {
+                method: 'POST',
+                body: formData,
+                headers: { 'Accept': 'application/json, text/html;q=0.9,*/*;q=0.8' },
+            })
                 .then(function(r) { return r.text(); })
                 .then(function(text) {
                     if (window.__temperAuthRedirecting) return null;
-                    if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(text)) {
-                        window.redirectToLoginExpired();
-                        return null;
+                    const result = toastFromPostResponse(text);
+                    if (result.success === false) {
+                        return null; // keep current form state on error
                     }
-                    showActionResponse(text);
+                    if (result.data && result.data.must_change_password === false) {
+                        window.__temperMustChangePassword = false;
+                        if (typeof window.setForcePasswordShell === 'function') {
+                            window.setForcePasswordShell(false);
+                        }
+                    }
                     return fetch(reloadUrl);
                 })
                 .then(function(r) {
@@ -168,7 +244,15 @@ $footerDb->close();
                         window.redirectToLoginExpired();
                         return;
                     }
-                    document.getElementById('main-content').innerHTML = html;
+                    // Reload fragment; skip re-toasting page-flash if we already toasted from POST
+                    const main = document.getElementById('main-content');
+                    if (!main) return;
+                    main.innerHTML = html;
+                    // Remove flash nodes without toasting again (already handled from POST)
+                    ['page-flash', 'ledger-flash'].forEach(function(fid) {
+                        const el = document.getElementById(fid);
+                        if (el) el.remove();
+                    });
                 })
                 .catch(function(err) {
                     if (window.__temperAuthRedirecting) return;
@@ -187,6 +271,48 @@ $footerDb->close();
             consumePageFlash('page-flash');
             consumePageFlash('ledger-flash');
         };
+
+        /**
+         * Hide/show primary navigation while forced password change is required.
+         * Prevents navigation away from the form (and lost form state).
+         */
+        window.setForcePasswordShell = function(forceMode) {
+            const hide = !!forceMode;
+            document.body.classList.toggle('temper-force-password-mode', hide);
+            const sidebarCol = document.querySelector('#appSidebar')
+                ? document.querySelector('#appSidebar').closest('.col-md-2')
+                : null;
+            const mainCol = document.getElementById('main-content-col');
+            const mobileTop = document.querySelector('.mobile-topbar');
+            const mobileBottom = document.querySelector('.mobile-bottom-nav');
+            if (sidebarCol) sidebarCol.classList.toggle('d-none', hide);
+            if (mobileTop) {
+                // Keep logout only: hide hamburger when forced
+                const burger = mobileTop.querySelector('[data-bs-target="#appSidebar"]');
+                if (burger) burger.classList.toggle('d-none', hide);
+            }
+            if (mobileBottom) mobileBottom.classList.toggle('d-none', hide);
+            if (mainCol) {
+                mainCol.classList.toggle('col-md-10', !hide);
+                mainCol.classList.toggle('col-12', true);
+                if (hide) {
+                    mainCol.classList.add('col-md-12');
+                } else {
+                    mainCol.classList.remove('col-md-12');
+                }
+            }
+        };
+
+        // Apply on shell load
+        if (window.__temperMustChangePassword) {
+            document.addEventListener('DOMContentLoaded', function() {
+                window.setForcePasswordShell(true);
+            });
+            // In case DOMContentLoaded already fired
+            if (document.readyState !== 'loading') {
+                window.setForcePasswordShell(true);
+            }
+        }
     })();
     </script>
 </body>

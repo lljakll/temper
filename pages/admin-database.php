@@ -3,6 +3,9 @@
 require_once __DIR__ . '/../includes/page_bootstrap.php';
     require_once __DIR__ . '/../includes/audit.php';
 
+// Destructive maintenance is administrator-only
+requireAdministrator($db, 'Only administrators can run database maintenance.');
+
 define('MAINTENANCE_PIN', '464546');
     define('DEFAULT_ADMIN_PASSWORD_HASH', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute');
 
@@ -367,14 +370,23 @@ define('MAINTENANCE_PIN', '464546');
             clearAuditLog($db);
 
             $db->query('SET FOREIGN_KEY_CHECKS = 0');
+            if (function_exists('temperTableExists') || true) {
+                require_once __DIR__ . '/../includes/permissions.php';
+                ensureUsersRolesSchema($db);
+                if (temperTableExists($db, 'user_roles')) {
+                    if (!$db->query('TRUNCATE TABLE user_roles')) {
+                        $db->query('DELETE FROM user_roles');
+                    }
+                }
+            }
             if (!$db->query('TRUNCATE TABLE users')) {
                 $db->query('DELETE FROM users');
             }
             $db->query('SET FOREIGN_KEY_CHECKS = 1');
 
             $stmt = $db->prepare(
-                'INSERT INTO users (role_id, username, first_name, last_name, email, password, is_active)
-                 VALUES (1, ?, ?, ?, ?, ?, TRUE)'
+                'INSERT INTO users (role_id, username, first_name, last_name, email, password, is_active, must_change_password)
+                 VALUES (1, ?, ?, ?, ?, ?, TRUE, 0)'
             );
             $adminUsername = 'admin';
             $firstName = 'Admin';
@@ -388,7 +400,10 @@ define('MAINTENANCE_PIN', '464546');
                 $db->close();
                 exit;
             }
+            $newAdminId = (int)$stmt->insert_id;
             $stmt->close();
+            require_once __DIR__ . '/../includes/permissions.php';
+            setUserRoles($db, $newAdminId, [1]);
 
             $_SESSION = [];
             if (ini_get('session.use_cookies')) {

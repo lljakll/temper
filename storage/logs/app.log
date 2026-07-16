@@ -458,3 +458,84 @@ Stack trace:
 #0 Command line code(12): mysqli_stmt->execute()
 #1 {main}
   thrown in Command line code on line 12
+[13-Jul-2026 12:33:16 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from Command line code on line 6) in /var/www/temper/auth.php on line 3
+[13-Jul-2026 12:33:16 UTC] PHP Warning:  Undefined variable $user in Command line code on line 32
+[13-Jul-2026 12:33:16 UTC] PHP Warning:  Undefined variable $user in Command line code on line 32
+[13-Jul-2026 12:33:16 UTC] PHP Warning:  Undefined variable $user in Command line code on line 32
+[13-Jul-2026 12:33:42 UTC] [AUDIT] user=admin action=user_create details=smoke test ip=unknown
+[13-Jul-2026 12:33:52 UTC] PHP Fatal error:  Uncaught Error: mysqli object is already closed in /var/www/temper/includes/permissions.php:235
+Stack trace:
+#0 /var/www/temper/includes/permissions.php(235): mysqli->prepare()
+#1 /var/www/temper/includes/permissions.php(371): loadUserAcl()
+#2 /var/www/temper/pages/profile.php(8): requirePermission()
+#3 Command line code(29): include('...')
+#4 {main}
+  thrown in /var/www/temper/includes/permissions.php on line 235
+[13-Jul-2026 12:34:01 UTC] PHP Warning:  http_response_code(): Cannot set response code - headers already sent (output started at Command line code:14) in /var/www/temper/includes/permissions.php on line 341
+[13-Jul-2026 12:34:01 UTC] PHP Warning:  Cannot modify header information - headers already sent by (output started at Command line code:14) in /var/www/temper/includes/permissions.php on line 343
+[13-Jul-2026 12:34:08 UTC] PHP Fatal error:  Uncaught Error: mysqli object is already closed in Command line code:32
+Stack trace:
+#0 Command line code(32): mysqli->prepare()
+#1 {main}
+  thrown in Command line code on line 32
+[13-Jul-2026 12:34:13 UTC] [AUDIT] user=admin action=user_create details=Created user id=6 username=apitest1882 role=Board Member ip=127.0.0.1
+[13-Jul-2026 12:34:18 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from Command line code on line 5) in /var/www/temper/auth.php on line 3
+[13-Jul-2026 12:34:18 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from Command line code on line 5) in Command line code on line 12
+[13-Jul-2026 13:34:20 UTC] PHP Warning:  session_id(): Session ID cannot be changed after headers have already been sent (sent from Command line code on line 63) in Command line code on line 113
+[13-Jul-2026 13:34:20 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from Command line code on line 63) in Command line code on line 114
+[13-Jul-2026 13:34:20 UTC] PHP Warning:  session_regenerate_id(): Session ID cannot be regenerated when there is no active session (started from Command line code on line 2) in /var/www/temper/auth.php on line 285
+[13-Jul-2026 13:34:28 UTC] [AUDIT] user=admin action=user_create details=Created user id=9 username=apiu2682 roles=[Board Member, Teller] must_change=1 custom_perms=1 ip=127.0.0.1
+[13-Jul-2026 13:34:36 UTC] [AUDIT] user=admin action=role_create details=Created role id=11 name=Temp Auditor perms=3 ip=127.0.0.1
+[13-Jul-2026 13:34:36 UTC] [AUDIT] user=admin action=role_update details=Updated role id=11 name=Temp Auditor perms=2 ip=127.0.0.1
+[13-Jul-2026 13:34:36 UTC] [AUDIT] user=admin action=user_archive details=Archived user id=3 username=member ip=127.0.0.1
+[13-Jul-2026 13:34:36 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=3 username=member ip=127.0.0.1
+[13-Jul-2026 13:34:36 UTC] [AUDIT] user=admin action=role_delete details=Deleted role id=11 name=Temp Auditor ip=127.0.0.1
+[15-Jul-2026 10:08:58 UTC] [AUDIT] user=admin action=user_archive details=Archived user id=2 username=finance ip=::1
+[15-Jul-2026 10:09:02 UTC] [AUDIT] user=admin action=user_archive details=Archived user id=3 username=member ip=::1
+[15-Jul-2026 10:09:46 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[15-Jul-2026 10:09:56 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[15-Jul-2026 10:09:56 UTC] [AUDIT] user=admin action=user_create details=Created user id=10 username=jakadair roles=[Financial Secretary] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 10:10:52 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[15-Jul-2026 10:10:53 UTC] [AUDIT] user=admin action=user_create details=Created user id=11 username=heathet roles=[Board Member] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 10:11:45 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[15-Jul-2026 10:11:45 UTC] [AUDIT] user=admin action=user_create details=Created user id=12 username=blueelephant roles=[Board Member] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 10:12:59 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[15-Jul-2026 10:12:59 UTC] [AUDIT] user=admin action=user_update details=Updated user id=11 username=heathet roles=[2] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 10:27:33 UTC] [AUDIT] user=jakadair action=force_password_change details=User completed required password change ip=::1
+[15-Jul-2026 10:40:13 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=13 username=stale666: must_change_password not completed within 24h of creation ip=unknown
+[15-Jul-2026 10:40:13 UTC] [AUDIT] user=admin action=profile_password_change_failed details=Incorrect current password ip=unknown
+[15-Jul-2026 10:40:13 UTC] [AUDIT] user=fcpw279 action=force_password_change details=User completed required password change ip=unknown
+[15-Jul-2026 11:00:58 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Connection refused in /var/www/temper/config.php:24
+Stack trace:
+#0 /var/www/temper/config.php(24): mysqli->__construct()
+#1 /var/www/temper/auth.php(271): getDbConnection()
+#2 /var/www/temper/login.php(23): login()
+#3 {main}
+  thrown in /var/www/temper/config.php on line 24
+[15-Jul-2026 11:01:15 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Connection refused in /var/www/temper/config.php:24
+Stack trace:
+#0 /var/www/temper/config.php(24): mysqli->__construct()
+#1 /var/www/temper/auth.php(271): getDbConnection()
+#2 /var/www/temper/login.php(23): login()
+#3 {main}
+  thrown in /var/www/temper/config.php on line 24
+[15-Jul-2026 11:01:31 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Connection refused in /var/www/temper/config.php:24
+Stack trace:
+#0 /var/www/temper/config.php(24): mysqli->__construct()
+#1 /var/www/temper/auth.php(271): getDbConnection()
+#2 /var/www/temper/login.php(23): login()
+#3 {main}
+  thrown in /var/www/temper/config.php on line 24
+[15-Jul-2026 11:11:52 UTC] [AUDIT] user=admin action=user_create details=Created user id=16 username=testuser1 roles=[Teller] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 11:12:25 UTC] [AUDIT] user=admin action=user_create details=Created user id=17 username=testuser2 roles=[Teller] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 11:14:24 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[15-Jul-2026 11:14:25 UTC] [AUDIT] user=admin action=user_create details=Created user id=18 username=testuser3 roles=[Second Teller] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 11:14:43 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Duplicate entry 't@t.t' for key 'email' in /var/www/temper/pages/admin-users.php:229
+Stack trace:
+#0 /var/www/temper/pages/admin-users.php(229): mysqli_stmt->execute()
+#1 {main}
+  thrown in /var/www/temper/pages/admin-users.php on line 229
+[15-Jul-2026 11:14:53 UTC] [AUDIT] user=admin action=user_create details=Created user id=20 username=testuser4 roles=[Teller] must_change=1 custom_perms=0 ip=::1
+[15-Jul-2026 11:16:12 UTC] [AUDIT] user=testuser4 action=force_password_change details=User completed required password change ip=::1
+[16-Jul-2026 11:02:35 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=11 username=heathet: must_change_password not completed within 24h of creation ip=::1
+[16-Jul-2026 11:02:35 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=12 username=blueelephant: must_change_password not completed within 24h of creation ip=::1

@@ -78,20 +78,9 @@ $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_steps_key ON workflow_steps(
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_events_instance ON workflow_events(workflow_instance_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_workflow_events_type ON workflow_events(event_type)");
 
-$roles = [
-    ['Teller', 'Performs initial contribution count and data entry', '["workflow.view","workflow.contribution.create"]'],
-    ['Second Teller', 'Verifies dual count and signs off', '["workflow.view","workflow.contribution.second_sign"]'],
-    ['Treasurer', 'Official validation and deposit approval', '["workflow.view","workflow.contribution.official"]'],
-    ['Financial Secretary', 'Official validation and deposit approval', '["workflow.view","workflow.contribution.official"]'],
-];
-
-$ins = $db->prepare('INSERT IGNORE INTO roles (name, description, permissions) VALUES (?, ?, ?)');
-foreach ($roles as $role) {
-    $ins->bind_param('sss', $role[0], $role[1], $role[2]);
-    $ins->execute();
-}
-$ins->close();
-
-echo "Workflow tables and roles seeded successfully!\n";
+// Sync full predefined roles (includes Teller / Treasurer / etc. with complete permission sets)
+require_once __DIR__ . '/../includes/permissions.php';
+$sync = ensureDefaultRoles($db);
+echo "Workflow tables ready; roles synced (inserted={$sync['inserted']}, updated={$sync['updated']})\n";
 $db->close();
 ?>

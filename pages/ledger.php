@@ -3,9 +3,12 @@
 
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/ledger_engine.php';
+require_once __DIR__ . '/../includes/permissions.php';
 
     $success = null;
     $error = null;
+    $ledgerActor = getCurrentUser();
+    $canWriteLedger = $ledgerActor && userHasPermission($db, (int)$ledgerActor['id'], 'page.ledger.write');
 
     if (isset($_GET['download_document']) || isset($_GET['preview_document'])) {
         $isPreview = isset($_GET['preview_document']);
@@ -163,6 +166,10 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         $action = $_POST['action'] ?? 'save';
         require_once __DIR__ . '/../auth.php';
         $actor = getCurrentUserWithRole($db);
+
+        if (!$canWriteLedger) {
+            denyPermission('You do not have permission to modify ledger transactions.');
+        }
 
         if ($action === 'upload_document') {
             header('Content-Type: application/json; charset=utf-8');
@@ -783,6 +790,7 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
 
     <!-- Top Action Buttons -->
     <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar">
+        <?php if ($canWriteLedger): ?>
         <button type="button" id="addTxBtn" class="btn btn-primary">
             <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">Add Transaction</span><span class="d-sm-none">Add</span>
         </button>
@@ -795,6 +803,9 @@ require_once __DIR__ . '/../includes/ledger_engine.php';
         <button type="button" id="reconcileTxBtn" class="btn btn-outline-info" disabled>
             <i class="bi bi-journal-check"></i> <span class="d-none d-sm-inline">Reconcile</span><span class="d-sm-none">Rec.</span>
         </button>
+        <?php else: ?>
+        <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
+        <?php endif; ?>
     </div>
 
     <!-- Constrained viewport area: list fixed at 35%, form takes remainder and scrolls internally if long -->

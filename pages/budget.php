@@ -3,6 +3,10 @@
 
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/budget_utils.php';
+require_once __DIR__ . '/../includes/permissions.php';
+
+    $budgetActor = getCurrentUser();
+    $canWriteBudget = $budgetActor && userHasPermission($db, (int)$budgetActor['id'], 'page.budget.write');
 
     if (isset($_GET['get_budget'])) {
         $id = (int)$_GET['get_budget'];
@@ -55,6 +59,10 @@ require_once __DIR__ . '/../includes/budget_utils.php';
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $action = $_POST['action'];
+
+        if (!$canWriteBudget) {
+            denyPermission('You do not have permission to modify budgets.');
+        }
 
         if ($action === 'delete') {
             $id = (int)($_POST['id'] ?? 0);
@@ -345,7 +353,9 @@ require_once __DIR__ . '/../includes/budget_utils.php';
     <div class="row mb-3">
         <div class="col d-flex flex-wrap gap-2 justify-content-md-end">
             <button type="button" id="cycleBtn" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
+            <?php if ($canWriteBudget): ?>
             <button id="addBtn" class="btn btn-primary">New Budget</button>
+            <?php endif; ?>
             <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
         </div>
     </div>
