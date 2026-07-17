@@ -6,6 +6,9 @@
 **Overarching Principle (added per discussion):**  
 Workflows are a **means to an auditable system**, not the auditable system itself. They are disposable processes/tools (akin to complex, variable-defined forms). After a transaction is successfully logged in the ledger, the workflow data is no longer maintained/persisted. The ledger entry becomes the permanent record. There is no need to burden the core auditable system with unnecessary workflow data.
 
+**Workflow UI Style Decision:**  
+Adopt a **guided multi-page approach** with logical field grouping as the primary model. The workflow definition controls page structure, grouping, and flow. Engine is events-based (input, routing, validation, etc.). Include summary/review step. Support for more consolidated/one-page flows can be added per-definition or as future option.
+
 This document accumulates decisions as we go through the decision tree. We will revise and refine at the end.
 
 ## Decision Area 1: Core Format / Markup Language Choice

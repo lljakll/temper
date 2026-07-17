@@ -539,3 +539,6 @@ Stack trace:
 [15-Jul-2026 11:16:12 UTC] [AUDIT] user=testuser4 action=force_password_change details=User completed required password change ip=::1
 [16-Jul-2026 11:02:35 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=11 username=heathet: must_change_password not completed within 24h of creation ip=::1
 [16-Jul-2026 11:02:35 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=12 username=blueelephant: must_change_password not completed within 24h of creation ip=::1
+[16-Jul-2026 12:07:39 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=16 username=testuser1: must_change_password not completed within 24h of creation ip=::1
+[16-Jul-2026 12:07:39 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=17 username=testuser2: must_change_password not completed within 24h of creation ip=::1
+[16-Jul-2026 12:07:39 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=18 username=testuser3: must_change_password not completed within 24h of creation ip=::1
