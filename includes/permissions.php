@@ -24,9 +24,12 @@ const TEMPER_PERMISSION_CATALOG = [
     'page.budget.write' => 'Create/edit budgets',
     'page.tasks' => 'View and manage tasks',
     'workflow.view' => 'Access workflows hub',
-    'workflow.contribution.create' => 'Start contribution counts',
-    'workflow.contribution.second_sign' => 'Second-sign contribution counts',
-    'workflow.contribution.official' => 'Official contribution validation',
+    'workflow.manage' => 'Import/delete/version workflow definitions',
+    // Per-workflow execute permissions are declared in YAML; catalog entries below
+    // are optional named capabilities for fine-grained assignment (dev / custom).
+    'workflow.contribution.create' => 'Start contribution counts (legacy/capability)',
+    'workflow.contribution.second_sign' => 'Second-sign contribution counts (legacy/capability)',
+    'workflow.contribution.official' => 'Official contribution validation (legacy/capability)',
     'admin.access' => 'Access Admin overview',
     'admin.backup' => 'Backup and restore',
     'admin.database' => 'Database maintenance',
@@ -49,7 +52,7 @@ function temperPagePermissionMap(): array {
         'budget' => 'page.budget',
         'tasks' => 'page.tasks',
         'workflows' => 'workflow.view',
-        'workflow_contribution' => 'workflow.view',
+        'admin-workflows' => 'workflow.manage',
         'admin' => 'admin.access',
         'admin-backup' => 'admin.backup',
         'admin-database' => 'admin.database',
@@ -74,6 +77,16 @@ function temperDefaultRoles(): array {
             'name' => 'Administrator',
             'description' => 'System administrator with full access',
             'permissions' => ['*'],
+        ],
+        [
+            'name' => 'Workflow Manager',
+            'description' => 'Import, version, and retire workflow YAML definitions (not daily execution)',
+            'permissions' => [
+                'workflow.view',
+                'workflow.manage',
+                'admin.access',
+                'profile.self',
+            ],
         ],
         [
             'name' => 'Treasurer',

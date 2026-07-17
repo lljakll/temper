@@ -363,46 +363,25 @@ function verifyUserPassword(mysqli $db, int $userId, string $password): bool {
 }
 
 /**
- * Workflow capability check — prefers role permissions JSON, with role-name fallback
- * only when the role has no permissions configured (legacy empty seed).
+ * Workflow capability check — permission-first via RBAC.
+ * Definition management uses workflow.manage / Workflow Manager role
+ * (see userCanManageWorkflows in workflow_bootstrap.php).
+ * Per-workflow execute rights come from the YAML definition.
  */
 function userHasWorkflowCapability(mysqli $db, int $userId, string $capability): bool {
     require_once __DIR__ . '/includes/permissions.php';
 
-    // Permission-first (Administrator * included)
     if (userHasPermission($db, $userId, $capability)) {
         return true;
     }
 
-    $acl = loadUserAcl($db, $userId);
-    if (!$acl) {
-        return false;
+    // Management capabilities also honor Workflow Manager role
+    if ($capability === 'workflow.manage') {
+        require_once __DIR__ . '/includes/workflow_bootstrap.php';
+        return userCanManageWorkflows($db, $userId);
     }
 
-    // If role has any permissions configured (or *), permissions are authoritative
-    $perms = $acl['permissions'] ?? [];
-    if ($perms !== [] && !in_array('*', $perms, true)) {
-        // Non-empty permission set without the capability → deny
-        // (already failed userHasPermission above)
-        return false;
-    }
-    if (in_array('*', $perms, true)) {
-        return true;
-    }
-
-    // Legacy empty permissions: role-name fallback
-    $role = $acl['role_name'] ?? '';
-    $elevated = in_array($role, ['Administrator', 'Finance Manager', 'Treasurer', 'Financial Secretary'], true);
-    if ($elevated && str_starts_with($capability, 'workflow.')) {
-        return true;
-    }
-    $map = [
-        'workflow.view' => ['Teller', 'Second Teller'],
-        'workflow.contribution.create' => ['Teller', 'Second Teller'],
-        'workflow.contribution.second_sign' => ['Second Teller', 'Teller'],
-        'workflow.contribution.official' => ['Treasurer', 'Financial Secretary'],
-    ];
-    return in_array($role, $map[$capability] ?? [], true);
+    return false;
 }
 
 /**

@@ -201,6 +201,39 @@ function getAttachmentsDir(): string {
     return getTransactionDocumentsDir();
 }
 
+/**
+ * Immutable YAML workflow definitions.
+ * Layout: storage/workflow-definitions/{id}.v{version}.yaml
+ *
+ * @return array{path:string,error:?string,root?:array}
+ */
+function getWorkflowDefinitionsDir(): array {
+    return ensureStorageSubdir('workflow-definitions');
+}
+
+/**
+ * Absolute path helper for a relative storage path (e.g. workflow-definitions/foo.v1.yaml).
+ */
+function storageAbsolutePath(string $relativePath): string {
+    return rtrim(getStoragePath(), '/\\') . '/' . ltrim(str_replace('\\', '/', $relativePath), '/');
+}
+
+/**
+ * Ledger attachment directory for a reference / sequence number.
+ * Layout: storage/attachments/{ledger sequence number}/
+ */
+function getLedgerAttachmentDir(string $ledgerSequence): array {
+    $seq = preg_replace('/[^A-Za-z0-9_-]/', '', $ledgerSequence);
+    if ($seq === '') {
+        return [
+            'path' => '',
+            'error' => 'Invalid ledger sequence for attachment path.',
+            'root' => resolveStorageRoot(),
+        ];
+    }
+    return ensureStorageSubdir('attachments/' . $seq);
+}
+
 function describeFileOperationFailure(string $operation, string $path): string {
     $err = error_get_last();
     $detail = is_array($err) ? ($err['message'] ?? '') : '';

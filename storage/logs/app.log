@@ -542,3 +542,23 @@ Stack trace:
 [16-Jul-2026 12:07:39 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=16 username=testuser1: must_change_password not completed within 24h of creation ip=::1
 [16-Jul-2026 12:07:39 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=17 username=testuser2: must_change_password not completed within 24h of creation ip=::1
 [16-Jul-2026 12:07:39 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=18 username=testuser3: must_change_password not completed within 24h of creation ip=::1
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.definition.import details=example_minimal v1 checksum=e8d4bf7139a5b4415ca5c47e6aaf95e349a954f0dafcdbe942b084ddccee1471 ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.created details=instance=1 Workflow started: Test instance ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.step_started details=instance=1 Step started: enter_basics ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.input details=instance=1 Input applied on step enter_basics ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.validation details=instance=1 Validation passed for step enter_basics ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.step_completed details=instance=1 Step completed: enter_basics ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: log_event ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.routing details=instance=1 Routed enter_basics → enter_details ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.step_started details=instance=1 Step started: enter_details ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.validation details=instance=1 Validation passed for step enter_details ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.step_completed details=instance=1 Step completed: enter_details ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: validate_totals ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.routing details=instance=1 Routed enter_details → review_and_finish ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.step_started details=instance=1 Step started: review_and_finish ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.validation details=instance=1 Validation passed for step review_and_finish ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.step_completed details=instance=1 Step completed: review_and_finish ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: require_signature ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: set_status ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: log_event ip=unknown
+[17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.completed details=instance=1 Workflow completed ip=unknown

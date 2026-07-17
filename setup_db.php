@@ -20,6 +20,7 @@ $dropQueries = [
     'workflow_events',
     'workflow_steps',
     'workflow_instances',
+    'workflow_definitions',
     'transaction_documents',
     'transaction_events',
     'transaction_lines',

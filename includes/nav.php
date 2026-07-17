@@ -29,7 +29,8 @@ $canBackup = navCan($navPerms, 'admin.backup');
 $canDatabase = navCan($navPerms, 'admin.database');
 $canLookups = navCan($navPerms, 'admin.lookups');
 $canUsers = navCan($navPerms, 'users.manage');
-$showAdminSection = $canAdmin || $canBackup || $canDatabase || $canLookups || $canUsers;
+$canWorkflowManage = navCan($navPerms, 'workflow.manage');
+$showAdminSection = $canAdmin || $canBackup || $canDatabase || $canLookups || $canUsers || $canWorkflowManage;
 
 // Default SPA landing page by highest-priority available permission
 $temperHomePage = 'profile';
@@ -102,7 +103,8 @@ function temper_render_nav_links(
     bool $canBackup,
     bool $canDatabase,
     bool $canLookups,
-    bool $canUsers
+    bool $canUsers,
+    bool $canWorkflowManage = false
 ): void {
 ?>
         <ul class="nav flex-column w-100">
@@ -168,6 +170,13 @@ function temper_render_nav_links(
                         <li class="nav-item">
                             <a href="javascript:void(0)" onclick="loadPage('admin-users')" class="nav-link" data-nav-page="admin-users">
                                 <i class="bi bi-people"></i> Users &amp; Roles
+                            </a>
+                        </li>
+                        <?php endif; ?>
+                        <?php if ($canWorkflowManage): ?>
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('admin-workflows')" class="nav-link" data-nav-page="admin-workflows">
+                                <i class="bi bi-diagram-3"></i> Workflow Definitions
                             </a>
                         </li>
                         <?php endif; ?>
@@ -277,7 +286,8 @@ function temper_render_nav_links(
                     $canBackup,
                     $canDatabase,
                     $canLookups,
-                    $canUsers
+                    $canUsers,
+                    $canWorkflowManage
                 ); ?>
 
                 <!-- Bottom: footer note + user info + logout -->

@@ -9,6 +9,8 @@ require_once __DIR__ . '/../includes/permissions.php';
     $canDatabase = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.database');
     $canBackup = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.backup');
     $canLookups = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.lookups');
+    require_once __DIR__ . '/../includes/workflow_bootstrap.php';
+    $canWorkflowManage = $adminUser && userCanManageWorkflows($db, (int)$adminUser['id']);
 
     $lookupLinks = $canLookups ? [
         ['page' => 'setup_funds', 'title' => 'Funds', 'icon' => 'bi-wallet2'],
@@ -26,6 +28,14 @@ require_once __DIR__ . '/../includes/permissions.php';
             'description' => 'Create users, assign roles, reset passwords, and deactivate accounts.',
             'icon' => 'bi-people',
             'page' => 'admin-users',
+        ];
+    }
+    if ($canWorkflowManage) {
+        $activeCards[] = [
+            'title' => 'Workflow Definitions',
+            'description' => 'Import and version immutable YAML workflow definitions.',
+            'icon' => 'bi-diagram-3',
+            'page' => 'admin-workflows',
         ];
     }
     if ($canDatabase) {

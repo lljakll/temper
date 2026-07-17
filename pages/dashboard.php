@@ -3,8 +3,7 @@
     // Security and DB connection already handled by index.php
     // Light fallback in case
 require_once __DIR__ . '/../includes/page_bootstrap.php';
-require_once __DIR__ . '/../includes/workflow_engine.php';
-require_once __DIR__ . '/../includes/workflows/registry.php';
+require_once __DIR__ . '/../includes/workflow_bootstrap.php';
 
 $today = date('Y-m-d');
     $tasksHorizon = date('Y-m-d', strtotime('+30 days'));
@@ -23,14 +22,6 @@ $today = date('Y-m-d');
  */
 function dashboardQuickLinks(): array {
     return [
-        [
-            'label' => 'Start Contribution',
-            'description' => 'Dual-count offering workflow',
-            'page' => 'workflow_contribution',
-            'icon' => 'bi-cash-coin',
-            'variant' => 'success',
-            'permission' => 'workflow.contribution.create',
-        ],
         [
             'label' => 'View Ledger',
             'description' => 'Transactions & attachments',
@@ -65,7 +56,7 @@ function dashboardQuickLinks(): array {
         ],
         [
             'label' => 'Workflows Hub',
-            'description' => 'All guided processes',
+            'description' => 'Guided processes',
             'page' => 'workflows',
             'icon' => 'bi-diagram-3',
             'variant' => 'outline-secondary',
@@ -99,7 +90,7 @@ function dashboardQuickLinks(): array {
 }
 
 /**
- * Build prioritized pending workflow action cards for the dashboard.
+ * Running workflow instances for the dashboard (definition-driven engine).
  *
  * @return list<array{
  *   priority:int,type:string,title:string,action:string,action_badge:string,
@@ -109,154 +100,33 @@ function dashboardQuickLinks(): array {
 function dashboardWorkflowPendingItems(mysqli $db): array {
     $items = [];
     try {
-        workflowRequireTables($db);
-        workflowLoadTypeModules();
+        $engine = workflowEngine($db);
+        $engine->requireTables();
+        $instances = $engine->listInstances(null, 'running', 40);
     } catch (Throwable $e) {
         return [];
     }
 
-    $instances = workflowListInstances($db, null, 40);
-    $userNameCache = [];
-    $resolveUser = static function (?int $userId) use ($db, &$userNameCache): string {
-        if (!$userId || $userId <= 0) {
-            return '';
-        }
-        if (isset($userNameCache[$userId])) {
-            return $userNameCache[$userId];
-        }
-        $name = '';
-        $stmt = $db->prepare(
-            'SELECT username, first_name, last_name FROM users WHERE id = ? LIMIT 1'
-        );
-        if ($stmt) {
-            $stmt->bind_param('i', $userId);
-            $stmt->execute();
-            $row = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-            if ($row) {
-                $full = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
-                $name = $full !== '' ? $full : (string)($row['username'] ?? '');
-            }
-        }
-        $userNameCache[$userId] = $name;
-        return $name;
-    };
-
     foreach ($instances as $inst) {
-        $type = (string)($inst['workflow_type'] ?? '');
-        $status = (string)($inst['status'] ?? '');
         $id = (int)($inst['id'] ?? 0);
         if ($id <= 0) {
             continue;
         }
-
-        // Contribution pending actions
-        if ($type === 'contribution') {
-            if ($status === 'deposited' || $status === 'cancelled' || $status === 'complete') {
-                continue;
-            }
-
-            $txData = [];
-            $txId = (int)($inst['transaction_detail_id'] ?? 0);
-            if ($txId > 0) {
-                $td = $db->prepare('SELECT transaction_data FROM transaction_details WHERE id = ? LIMIT 1');
-                if ($td) {
-                    $td->bind_param('i', $txId);
-                    $td->execute();
-                    $trow = $td->get_result()->fetch_assoc();
-                    $td->close();
-                    if ($trow && !empty($trow['transaction_data'])) {
-                        $txData = json_decode((string)$trow['transaction_data'], true) ?: [];
-                    }
-                }
-            }
-
-            $firstName = $resolveUser((int)($txData['first_teller_id'] ?? 0));
-            $secondName = $resolveUser((int)($txData['second_teller_id'] ?? 0));
-            $personnel = [];
-
-            if ($status === 'draft_pending_second_count') {
-                if ($firstName !== '') {
-                    $personnel[] = 'Teller: ' . $firstName;
-                }
-                $personnel[] = 'Needed: Second Teller';
-                $items[] = [
-                    'priority' => 10,
-                    'type' => 'contribution',
-                    'title' => (string)($inst['title'] ?? 'Contribution'),
-                    'action' => 'Dual count needed',
-                    'action_badge' => 'warning',
-                    'personnel' => $personnel,
-                    'page' => 'workflow_contribution',
-                    'instance_id' => $id,
-                    'updated_at' => $inst['updated_at'] ?? null,
-                ];
-                continue;
-            }
-
-            if ($status === 'dual_count_complete_pending_official') {
-                if ($firstName !== '') {
-                    $personnel[] = 'Teller: ' . $firstName;
-                }
-                if ($secondName !== '') {
-                    $personnel[] = '2nd Teller: ' . $secondName;
-                }
-                $personnel[] = 'Needed: Official (Treasurer / Finance)';
-                $items[] = [
-                    'priority' => 20,
-                    'type' => 'contribution',
-                    'title' => (string)($inst['title'] ?? 'Contribution'),
-                    'action' => 'Official validation pending',
-                    'action_badge' => 'info',
-                    'personnel' => $personnel,
-                    'page' => 'workflow_contribution',
-                    'instance_id' => $id,
-                    'updated_at' => $inst['updated_at'] ?? null,
-                ];
-                continue;
-            }
-
-            // Unknown active contribution status — still surface
-            if ($status !== '' && $status !== 'deposited' && $status !== 'cancelled') {
-                $items[] = [
-                    'priority' => 50,
-                    'type' => 'contribution',
-                    'title' => (string)($inst['title'] ?? 'Contribution'),
-                    'action' => function_exists('contribStatusLabel')
-                        ? contribStatusLabel($status)
-                        : $status,
-                    'action_badge' => 'secondary',
-                    'personnel' => $personnel,
-                    'page' => 'workflow_contribution',
-                    'instance_id' => $id,
-                    'updated_at' => $inst['updated_at'] ?? null,
-                ];
-            }
-            continue;
-        }
-
-        // Future workflow types: generic pending surface if not terminal
-        $terminal = ['complete', 'completed', 'cancelled', 'deposited', 'closed'];
-        if (!in_array($status, $terminal, true) && $status !== '') {
-            $reg = workflowTypeRegistry()[$type] ?? null;
-            $items[] = [
-                'priority' => 40,
-                'type' => $type,
-                'title' => (string)($inst['title'] ?? ($reg['title'] ?? $type)),
-                'action' => 'Action needed · ' . $status,
-                'action_badge' => 'secondary',
-                'personnel' => [],
-                'page' => (string)($reg['page'] ?? 'workflows'),
-                'instance_id' => $id,
-                'updated_at' => $inst['updated_at'] ?? null,
-            ];
-        }
+        $step = (string)($inst['current_step'] ?? '');
+        $items[] = [
+            'priority' => 30,
+            'type' => (string)($inst['workflow_id'] ?? ''),
+            'title' => (string)($inst['title'] ?? 'Workflow'),
+            'action' => $step !== '' ? ('Step: ' . $step) : 'In progress',
+            'action_badge' => 'warning',
+            'personnel' => [],
+            'page' => 'workflows',
+            'instance_id' => $id,
+            'updated_at' => $inst['updated_at'] ?? null,
+        ];
     }
 
     usort($items, static function ($a, $b) {
-        if ($a['priority'] !== $b['priority']) {
-            return $a['priority'] <=> $b['priority'];
-        }
         return strcmp((string)($b['updated_at'] ?? ''), (string)($a['updated_at'] ?? ''));
     });
 
@@ -461,8 +331,8 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
                     <div class="d-flex align-items-start gap-2 text-success small py-1">
                         <i class="bi bi-check-circle-fill mt-1"></i>
                         <div>
-                            <strong>No pending workflow actions.</strong>
-                            <div class="text-body-secondary">Dual counts and official validations are clear.</div>
+                            <strong>No running workflows.</strong>
+                            <div class="text-body-secondary">Import a definition and start an instance from the Workflows hub.</div>
                         </div>
                     </div>
                 <?php else: ?>
