@@ -475,7 +475,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                         if (!$existing) {
                             $error = "Transaction not found.";
                         } elseif (!ledgerIsEditable($existing)) {
-                            $error = "This transaction is read-only (cleared, reconciled, or workflow-finalized).";
+                            $error = "This transaction is read-only (cleared or reconciled).";
                         } else {
                             $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
                             $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, memo=? WHERE id=?");
@@ -543,8 +543,6 @@ require_once __DIR__ . '/../includes/permissions.php';
                             $p,
                             (string)$ref,
                             $mm,
-                            'manual',
-                            'finalized',
                             $createdBy
                         );
                         $chk = $db->prepare('UPDATE transaction_details SET check_number = ? WHERE id = ?');
@@ -719,7 +717,7 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     $tx_stmt = $db->prepare("
         SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.memo, td.status, td.cleared_date,
-               td.source, td.entry_status, td.workflow_instance_id, td.validated_by_user_id, td.validated_at,
+               td.validated_by_user_id, td.validated_at,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0) AS total_debits,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
@@ -866,7 +864,6 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 <th class="text-end text-nowrap" style="min-width:5.5rem" title="Debit amounts">Debit</th>
                                 <th class="text-end text-nowrap" style="min-width:5.5rem" title="Credit amounts">Credit</th>
                                 <th>Status</th>
-                                <th>Source</th>
                                 <th class="text-center">Lines</th>
                             </tr>
                         </thead>
@@ -877,11 +874,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
                                         $statusBadge = 'bg-secondary';
                                         $statusText = 'Pending';
-                                        if (($r['entry_status'] ?? '') === 'draft') { $statusBadge = 'bg-warning'; $statusText = 'Draft'; }
-                                        elseif ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
+                                        if ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
                                         elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
-                                        $sourceText = ($r['source'] ?? 'manual') === 'workflow' ? 'Workflow' : 'Manual';
-                                        $sourceBadge = ($r['source'] ?? 'manual') === 'workflow' ? 'bg-primary' : 'bg-body-secondary text-body border';
                                         $tid = (int)$r['id'];
                                         if ($filter_account_id > 0) {
                                             $debAmt = $acct_debits[$tid] ?? 0.0;
@@ -893,7 +887,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         $debDisplay = $fmtLedgerAmt($debAmt);
                                         $credDisplay = $fmtLedgerAmt($credAmt);
                                     ?>
-                                    <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-entry-status="<?= htmlspecialchars($r['entry_status'] ?? 'finalized') ?>" data-source="<?= htmlspecialchars($r['source'] ?? 'manual') ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>">
+                                    <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= $tid ?>"></td>
                                         <td><?= htmlspecialchars($r['transaction_date']) ?></td>
                                         <td class="font-monospace"><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
@@ -903,13 +897,12 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         <td class="text-end font-monospace text-primary fw-semibold ledger-debit-col"><?= $debDisplay !== '' ? htmlspecialchars($debDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
                                         <td class="text-end font-monospace text-success fw-semibold ledger-credit-col"><?= $credDisplay !== '' ? htmlspecialchars($credDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
-                                        <td><span class="badge <?= $sourceBadge ?>"><?= $sourceText ?></span></td>
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="11" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
+                                    <td colspan="10" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -1380,8 +1373,6 @@ require_once __DIR__ . '/../includes/permissions.php';
         section.classList.remove('d-none');
 
         const badges = document.getElementById('txMetaBadges');
-        const source = data.source === 'workflow' ? 'Workflow' : 'Manual';
-        const entry = data.entry_status === 'draft' ? 'Draft' : 'Finalized';
         let validated = '';
         if (data.validated_by) {
             validated = `<div class="col-auto"><span class="badge bg-success">Validated by ${escHtml(data.validated_by.display_name)}</span></div>`;
@@ -1389,16 +1380,13 @@ require_once __DIR__ . '/../includes/permissions.php';
         if (data.created_by) {
             validated += `<div class="col-auto"><span class="badge bg-body-secondary text-body border">Created by ${escHtml(data.created_by.display_name)}</span></div>`;
         }
-        if (data.workflow_instance_id) {
-            validated += `<div class="col-auto"><span class="badge bg-info text-dark">Workflow #${data.workflow_instance_id}</span></div>`;
-        }
         const refBadge = data.reference_number
             ? `<div class="col-auto"><span class="badge bg-dark font-monospace" title="Reference #">Ref ${escHtml(data.reference_number)}</span></div>`
             : '';
+        const statusLabel = data.status || 'pending';
         badges.innerHTML = `
             ${refBadge}
-            <div class="col-auto"><span class="badge bg-secondary">${escHtml(source)}</span></div>
-            <div class="col-auto"><span class="badge ${data.entry_status === 'draft' ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}">${escHtml(entry)}</span></div>
+            <div class="col-auto"><span class="badge bg-secondary">${escHtml(statusLabel)}</span></div>
             ${validated}`;
 
         const contribEl = document.getElementById('txContributionData');
@@ -2034,16 +2022,9 @@ require_once __DIR__ . '/../includes/permissions.php';
             if (row && row.dataset.cleared === '1') hasCleared = true;
         });
         const multi = count > 1;
-        let readOnlyWorkflow = false;
-        checked.forEach(cb => {
-            const row = cb.closest('tr');
-            if (row && row.dataset.source === 'workflow' && row.dataset.entryStatus === 'finalized') {
-                readOnlyWorkflow = true;
-            }
-        });
 
         addTxBtn.disabled = multi;
-        editTxBtn.disabled = (count !== 1 || hasCleared || readOnlyWorkflow);
+        editTxBtn.disabled = (count !== 1 || hasCleared);
         clearTxBtn.disabled = (count === 0);
         reconcileTxBtn.disabled = (count === 0);
     }

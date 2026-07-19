@@ -21,7 +21,6 @@ $footerPerms = $footerAcl['permissions'] ?? [];
 $footerCan = static function (string $perm) use ($footerPerms): bool {
     return permissionSetAllows($footerPerms, $perm);
 };
-$tellerLimitedFooter = $user ? isTellerLimitedUser($footerDb, (int)$user['id']) : false;
 $footerDb->close();
 ?>
 
@@ -45,12 +44,6 @@ $footerDb->close();
         <span>Ledger</span>
     </a>
 <?php endif; ?>
-<?php if ($footerCan('workflow.view')): ?>
-    <a href="javascript:void(0)" onclick="loadPage('workflows')" data-nav-page="workflows">
-        <i class="bi bi-diagram-3"></i>
-        <span>Workflows</span>
-    </a>
-<?php endif; ?>
 <?php if ($footerCan('page.reports')): ?>
     <a href="javascript:void(0)" onclick="loadPage('reports')" data-nav-page="reports">
         <i class="bi bi-file-earmark-bar-graph"></i>
@@ -63,7 +56,7 @@ $footerDb->close();
         <span>Tasks</span>
     </a>
 <?php endif; ?>
-<?php if ($tellerLimitedFooter || (!$footerCan('page.dashboard') && !$footerCan('page.ledger'))): ?>
+<?php if (!$footerCan('page.dashboard') && !$footerCan('page.ledger')): ?>
     <a href="javascript:void(0)" onclick="loadPage('profile')" data-nav-page="profile">
         <i class="bi bi-person-circle"></i>
         <span>Profile</span>

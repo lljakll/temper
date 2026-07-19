@@ -18,9 +18,6 @@ function setupSchemaTransactions(): array
     reference_number VARCHAR(50) NULL,
     status ENUM('pending', 'cleared', 'reconciled') DEFAULT 'pending',
     date_reconciled DATE NULL,
-    source ENUM('manual', 'workflow') NOT NULL DEFAULT 'manual',
-    entry_status ENUM('draft', 'finalized') NOT NULL DEFAULT 'finalized',
-    workflow_instance_id INT NULL,
     created_by_user_id INT NULL,
     validated_by_user_id INT NULL,
     validated_at DATETIME NULL,
@@ -36,7 +33,6 @@ function setupSchemaTransactions(): array
     mime_type VARCHAR(120) NULL,
     file_size INT NOT NULL DEFAULT 0,
     uploaded_by_user_id INT NOT NULL,
-    workflow_step_key VARCHAR(80) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (transaction_detail_id) REFERENCES transaction_details(id) ON DELETE CASCADE
 )",
@@ -98,9 +94,6 @@ foreach (['transaction_details', 'transaction_documents', 'transaction_events', 
 // Create indexes
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_date ON transaction_details(transaction_date)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_status ON transaction_details(status)");
-$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_source ON transaction_details(source)");
-$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_entry_status ON transaction_details(entry_status)");
-$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_workflow ON transaction_details(workflow_instance_id)");
 // Reference # (YY####) — non-unique so confirmed reuse is allowed
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_reference ON transaction_details(reference_number)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_documents_tx ON transaction_documents(transaction_detail_id)");

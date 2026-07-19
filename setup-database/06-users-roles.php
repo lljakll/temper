@@ -28,6 +28,7 @@ function setupSchemaUsersRoles(): array
     password VARCHAR(255) NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     must_change_password TINYINT(1) NOT NULL DEFAULT 0,
+    force_password_set_at DATETIME NULL,
     custom_permissions JSON NULL,
     last_login DATETIME NULL,
     archived_at DATETIME NULL,
@@ -110,7 +111,6 @@ $seedUsers = [
     ['admin', 'Admin', 'User', 'admin@church.org', 'Administrator'],
     ['treasurer', 'Church', 'Treasurer', 'treasurer@church.org', 'Treasurer'],
     ['finance', 'Finance', 'Manager', 'finance@church.org', 'Finance Manager'],
-    ['teller', 'First', 'Teller', 'teller@church.org', 'Teller'],
     ['board', 'Board', 'Member', 'board@church.org', 'Board Member'],
     ['member', 'Regular', 'Member', 'member@church.org', 'Member'],
 ];

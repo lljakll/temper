@@ -23,17 +23,11 @@ const TEMPER_PERMISSION_CATALOG = [
     'page.budget' => 'View budgets',
     'page.budget.write' => 'Create/edit budgets',
     'page.tasks' => 'View and manage tasks',
-    'workflow.view' => 'Access workflows hub',
-    'workflow.manage' => 'Import/delete/version workflow definitions',
-    // Per-workflow execute permissions are declared in YAML; catalog entries below
-    // are optional named capabilities for fine-grained assignment (dev / custom).
-    'workflow.contribution.create' => 'Start contribution counts (legacy/capability)',
-    'workflow.contribution.second_sign' => 'Second-sign contribution counts (legacy/capability)',
-    'workflow.contribution.official' => 'Official contribution validation (legacy/capability)',
-    'admin.access' => 'Access Admin overview',
+    'admin.access' => 'Access System overview',
     'admin.backup' => 'Backup and restore',
     'admin.database' => 'Database maintenance',
     'admin.lookups' => 'Manage lookup tables',
+    'admin.config' => 'System configuration',
     'users.manage' => 'Manage users and roles',
     'archive.import' => 'Archival data loader',
     'profile.self' => 'Manage own profile',
@@ -51,12 +45,11 @@ function temperPagePermissionMap(): array {
         'reports' => 'page.reports',
         'budget' => 'page.budget',
         'tasks' => 'page.tasks',
-        'workflows' => 'workflow.view',
-        'admin-workflows' => 'workflow.manage',
         'admin' => 'admin.access',
         'admin-backup' => 'admin.backup',
         'admin-database' => 'admin.database',
         'admin-users' => 'users.manage',
+        'admin-config' => 'admin.config',
         'setup_funds' => 'admin.lookups',
         'setup_accounts' => 'admin.lookups',
         'setup_naturalclasses' => 'admin.lookups',
@@ -79,35 +72,21 @@ function temperDefaultRoles(): array {
             'permissions' => ['*'],
         ],
         [
-            'name' => 'Workflow Manager',
-            'description' => 'Import, version, and retire workflow YAML definitions (not daily execution)',
-            'permissions' => [
-                'workflow.view',
-                'workflow.manage',
-                'admin.access',
-                'profile.self',
-            ],
-        ],
-        [
             'name' => 'Treasurer',
-            'description' => 'Church treasurer — full financial operations and official approvals',
+            'description' => 'Church treasurer — full financial operations',
             'permissions' => [
                 'page.dashboard', 'page.ledger', 'page.ledger.write',
                 'page.reports', 'page.budget', 'page.budget.write', 'page.tasks',
-                'workflow.view', 'workflow.contribution.create',
-                'workflow.contribution.second_sign', 'workflow.contribution.official',
                 'admin.access', 'admin.backup', 'admin.lookups',
                 'profile.self',
             ],
         ],
         [
             'name' => 'Financial Secretary',
-            'description' => 'Financial secretary — deposits, official contribution validation',
+            'description' => 'Financial secretary — deposits and ledger entry',
             'permissions' => [
                 'page.dashboard', 'page.ledger', 'page.ledger.write',
                 'page.reports', 'page.budget', 'page.tasks',
-                'workflow.view', 'workflow.contribution.create',
-                'workflow.contribution.second_sign', 'workflow.contribution.official',
                 'admin.access', 'admin.lookups',
                 'profile.self',
             ],
@@ -118,24 +97,7 @@ function temperDefaultRoles(): array {
             'permissions' => [
                 'page.dashboard', 'page.ledger', 'page.ledger.write',
                 'page.reports', 'page.budget', 'page.budget.write', 'page.tasks',
-                'workflow.view', 'workflow.contribution.official',
                 'admin.access', 'admin.lookups',
-                'profile.self',
-            ],
-        ],
-        [
-            'name' => 'Teller',
-            'description' => 'Performs initial contribution count and data entry',
-            'permissions' => [
-                'workflow.view', 'workflow.contribution.create',
-                'profile.self',
-            ],
-        ],
-        [
-            'name' => 'Second Teller',
-            'description' => 'Verifies dual count and signs off',
-            'permissions' => [
-                'workflow.view', 'workflow.contribution.second_sign',
                 'profile.self',
             ],
         ],
@@ -223,6 +185,22 @@ function ensureUsersRolesSchema(mysqli $db): void {
         }
         if (!temperColumnExists($db, 'users', 'archived_at')) {
             $db->query('ALTER TABLE users ADD COLUMN archived_at DATETIME NULL AFTER last_login');
+        }
+        // When must_change_password was (re)asserted — grace period starts here, not at account creation.
+        // Prevents restore/unarchive from being immediately undone by auto-archive for old accounts.
+        if (!temperColumnExists($db, 'users', 'force_password_set_at')) {
+            $db->query('ALTER TABLE users ADD COLUMN force_password_set_at DATETIME NULL AFTER must_change_password');
+            // Legacy: active force-password users inherit created_at as grace start
+            $db->query(
+                'UPDATE users SET force_password_set_at = created_at
+                 WHERE must_change_password = 1 AND force_password_set_at IS NULL AND created_at IS NOT NULL'
+            );
+        }
+        // Keep is_active and archived_at aligned for legacy rows (one-time style; safe if already aligned)
+        if (temperColumnExists($db, 'users', 'archived_at')) {
+            $db->query('UPDATE users SET archived_at = COALESCE(archived_at, updated_at, created_at, NOW()) WHERE is_active = 0 AND archived_at IS NULL');
+            $db->query('UPDATE users SET archived_at = NULL WHERE is_active = 1 AND archived_at IS NOT NULL');
+            $db->query('CREATE INDEX IF NOT EXISTS idx_users_archived_at ON users (archived_at)');
         }
     }
 
@@ -798,10 +776,15 @@ function listRoles(mysqli $db): array {
         $res->close();
     }
 
-    // Count users per role via user_roles + legacy role_id
+    // Count active (non-archived) users per role via user_roles + legacy role_id
     $counts = [];
     if (temperTableExists($db, 'user_roles')) {
-        $cr = $db->query('SELECT role_id, COUNT(DISTINCT user_id) AS c FROM user_roles GROUP BY role_id');
+        $cr = $db->query(
+            'SELECT ur.role_id, COUNT(DISTINCT ur.user_id) AS c
+             FROM user_roles ur
+             INNER JOIN users u ON u.id = ur.user_id AND u.is_active = TRUE
+             GROUP BY ur.role_id'
+        );
         if ($cr) {
             while ($c = $cr->fetch_assoc()) {
                 $counts[(int)$c['role_id']] = (int)$c['c'];
@@ -950,7 +933,11 @@ function sessionMustChangePassword(): bool {
  */
 function clearMustChangePassword(mysqli $db, int $userId): void {
     if (temperColumnExists($db, 'users', 'must_change_password')) {
-        $stmt = $db->prepare('UPDATE users SET must_change_password = 0 WHERE id = ?');
+        if (temperColumnExists($db, 'users', 'force_password_set_at')) {
+            $stmt = $db->prepare('UPDATE users SET must_change_password = 0, force_password_set_at = NULL WHERE id = ?');
+        } else {
+            $stmt = $db->prepare('UPDATE users SET must_change_password = 0 WHERE id = ?');
+        }
         $stmt->bind_param('i', $userId);
         $stmt->execute();
         $stmt->close();
@@ -959,15 +946,117 @@ function clearMustChangePassword(mysqli $db, int $userId): void {
     clearUserAclCache();
 }
 
+/**
+ * Apply must_change_password flag and (re)start the auto-archive grace clock when enabling.
+ */
+function setUserMustChangePassword(mysqli $db, int $userId, bool $mustChange): void {
+    ensureUsersRolesSchema($db);
+    if (!temperColumnExists($db, 'users', 'must_change_password')) {
+        return;
+    }
+    $flag = $mustChange ? 1 : 0;
+    if ($mustChange && temperColumnExists($db, 'users', 'force_password_set_at')) {
+        $stmt = $db->prepare(
+            'UPDATE users SET must_change_password = 1, force_password_set_at = NOW() WHERE id = ?'
+        );
+        $stmt->bind_param('i', $userId);
+    } elseif (!$mustChange && temperColumnExists($db, 'users', 'force_password_set_at')) {
+        $stmt = $db->prepare(
+            'UPDATE users SET must_change_password = 0, force_password_set_at = NULL WHERE id = ?'
+        );
+        $stmt->bind_param('i', $userId);
+    } else {
+        $stmt = $db->prepare('UPDATE users SET must_change_password = ? WHERE id = ?');
+        $stmt->bind_param('ii', $flag, $userId);
+    }
+    $stmt->execute();
+    $stmt->close();
+}
+
+/**
+ * Restore (unarchive) a user: is_active=1, clear archived_at.
+ * If they still must change password, restart the force-password grace period so
+ * auto-archive does not immediately reverse an admin restore.
+ *
+ * @return string|null Error message or null on success
+ */
+function restoreArchivedUser(mysqli $db, int $userId): ?string {
+    ensureUsersRolesSchema($db);
+    $hasForceAt = temperColumnExists($db, 'users', 'force_password_set_at');
+    $hasMust = temperColumnExists($db, 'users', 'must_change_password');
+
+    if ($hasForceAt && $hasMust) {
+        // Restart grace only when force-password is still required
+        $stmt = $db->prepare(
+            'UPDATE users
+             SET is_active = 1,
+                 archived_at = NULL,
+                 force_password_set_at = CASE
+                     WHEN must_change_password = 1 THEN NOW()
+                     ELSE force_password_set_at
+                 END
+             WHERE id = ?'
+        );
+    } else {
+        $stmt = $db->prepare('UPDATE users SET is_active = 1, archived_at = NULL WHERE id = ?');
+    }
+    if (!$stmt) {
+        return 'Prepare failed: ' . $db->error;
+    }
+    $stmt->bind_param('i', $userId);
+    if (!$stmt->execute()) {
+        $msg = $stmt->error;
+        $stmt->close();
+        return 'Failed to restore user: ' . $msg;
+    }
+    $stmt->close();
+    return null;
+}
+
+/**
+ * Archive (soft-delete) a user: is_active=0, set archived_at.
+ *
+ * @return string|null Error message or null on success
+ */
+function archiveUserAccount(mysqli $db, int $userId): ?string {
+    ensureUsersRolesSchema($db);
+    $stmt = $db->prepare('UPDATE users SET is_active = 0, archived_at = NOW() WHERE id = ?');
+    if (!$stmt) {
+        return 'Prepare failed: ' . $db->error;
+    }
+    $stmt->bind_param('i', $userId);
+    if (!$stmt->execute()) {
+        $msg = $stmt->error;
+        $stmt->close();
+        return 'Failed to archive user: ' . $msg;
+    }
+    $stmt->close();
+    return null;
+}
+
 /** Default temporary password offered when creating users (changeable by admin). */
 const TEMPER_DEFAULT_TEMP_PASSWORD = 'hopebaptist';
 
-/** Hours after account creation before forced-password users are auto-archived. */
+/**
+ * Default hours for force-password auto-archive when system config is unavailable.
+ * Prefer getAutoArchiveTimerHours() at runtime.
+ */
 const TEMPER_FORCE_PASSWORD_GRACE_HOURS = 24;
 
 /**
+ * Effective auto-archive grace hours from System Configuration (fallback: constant).
+ */
+function getForcePasswordGraceHours(): int {
+    if (function_exists('getAutoArchiveTimerHours')) {
+        return getAutoArchiveTimerHours();
+    }
+    return (int)TEMPER_FORCE_PASSWORD_GRACE_HOURS;
+}
+
+/**
  * Auto-archive users who still must change password after the grace period
- * from creation (never completed first-login password change).
+ * from when force-password was last set (not from original account creation).
+ * No-op when Disable Auto-Archive is enabled in System Configuration.
  *
  * @return int Number of users archived
  */
@@ -983,13 +1072,32 @@ function archiveExpiredForcePasswordUsers(mysqli $db): int {
     }
     $ran = true;
 
-    $hours = TEMPER_FORCE_PASSWORD_GRACE_HOURS;
-    // Active users still flagged must_change_password, created more than N hours ago
-    $sql = "SELECT id, username FROM users
-            WHERE is_active = TRUE
-              AND must_change_password = 1
-              AND created_at IS NOT NULL
-              AND created_at < (NOW() - INTERVAL {$hours} HOUR)";
+    // System Configuration: Disable Auto-Archive
+    if (function_exists('isAutoArchiveEnabled') && !isAutoArchiveEnabled()) {
+        return 0;
+    }
+
+    $hours = getForcePasswordGraceHours();
+    if ($hours < 1) {
+        $hours = (int)TEMPER_FORCE_PASSWORD_GRACE_HOURS;
+    }
+    $hours = (int)$hours;
+
+    $hasForceAt = temperColumnExists($db, 'users', 'force_password_set_at');
+    // Prefer force_password_set_at (restarted on restore / password reset); fall back to created_at
+    if ($hasForceAt) {
+        $sql = "SELECT id, username FROM users
+                WHERE is_active = TRUE
+                  AND must_change_password = 1
+                  AND COALESCE(force_password_set_at, created_at) IS NOT NULL
+                  AND COALESCE(force_password_set_at, created_at) < (NOW() - INTERVAL {$hours} HOUR)";
+    } else {
+        $sql = "SELECT id, username FROM users
+                WHERE is_active = TRUE
+                  AND must_change_password = 1
+                  AND created_at IS NOT NULL
+                  AND created_at < (NOW() - INTERVAL {$hours} HOUR)";
+    }
     $res = $db->query($sql);
     if (!$res) {
         return 0;
@@ -1027,7 +1135,7 @@ function archiveExpiredForcePasswordUsers(mysqli $db): int {
                 null,
                 'system',
                 'user_auto_archive',
-                "Auto-archived user id={$id} username={$uname}: must_change_password not completed within {$hours}h of creation"
+                "Auto-archived user id={$id} username={$uname}: must_change_password not completed within {$hours}h of force-password set"
             );
         }
     }

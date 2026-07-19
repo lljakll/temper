@@ -12,7 +12,6 @@ $user = getCurrentUser();
 $navDb = getDbConnection();
 $navAcl = $user ? loadUserAcl($navDb, (int)$user['id']) : null;
 $navPerms = $navAcl['permissions'] ?? [];
-$tellerLimited = $user ? isTellerLimitedUser($navDb, (int)$user['id']) : false;
 
 function navCan(array $perms, string $permission): bool {
     return permissionSetAllows($perms, $permission);
@@ -23,21 +22,19 @@ $canLedger = navCan($navPerms, 'page.ledger');
 $canReports = navCan($navPerms, 'page.reports');
 $canBudget = navCan($navPerms, 'page.budget');
 $canTasks = navCan($navPerms, 'page.tasks');
-$canWorkflows = navCan($navPerms, 'workflow.view');
 $canAdmin = navCan($navPerms, 'admin.access');
 $canBackup = navCan($navPerms, 'admin.backup');
 $canDatabase = navCan($navPerms, 'admin.database');
 $canLookups = navCan($navPerms, 'admin.lookups');
 $canUsers = navCan($navPerms, 'users.manage');
-$canWorkflowManage = navCan($navPerms, 'workflow.manage');
-$showAdminSection = $canAdmin || $canBackup || $canDatabase || $canLookups || $canUsers || $canWorkflowManage;
+// Configuration is Administrator-only (role check, not just permission)
+$canConfig = $user && userIsAdministrator($navDb, (int)$user['id']);
+$showAdminSection = $canAdmin || $canBackup || $canDatabase || $canLookups || $canUsers || $canConfig;
 
 // Default SPA landing page by highest-priority available permission
 $temperHomePage = 'profile';
 if ($canDashboard) {
     $temperHomePage = 'dashboard';
-} elseif ($canWorkflows) {
-    $temperHomePage = 'workflows';
 } elseif ($canReports) {
     $temperHomePage = 'reports';
 } elseif ($canLedger) {
@@ -91,20 +88,18 @@ body.temper-force-password-mode #main-content-col {
  */
 if (!function_exists('temper_render_nav_links')) {
 function temper_render_nav_links(
-    bool $tellerLimited,
     bool $canDashboard,
     bool $canLedger,
     bool $canReports,
     bool $canBudget,
     bool $canTasks,
-    bool $canWorkflows,
     bool $showAdminSection,
     bool $canAdmin,
     bool $canBackup,
     bool $canDatabase,
     bool $canLookups,
     bool $canUsers,
-    bool $canWorkflowManage = false
+    bool $canConfig = false
 ): void {
 ?>
         <ul class="nav flex-column w-100">
@@ -136,13 +131,6 @@ function temper_render_nav_links(
                 </a>
             </li>
             <?php endif; ?>
-            <?php if ($canWorkflows): ?>
-            <li class="nav-item">
-                <a href="javascript:void(0)" onclick="loadPage('workflows')" class="nav-link" data-nav-page="workflows">
-                    <i class="bi bi-diagram-3"></i> Workflows
-                </a>
-            </li>
-            <?php endif; ?>
             <?php if ($canTasks): ?>
             <li class="nav-item">
                 <a href="javascript:void(0)" onclick="loadPage('tasks')" class="nav-link" data-nav-page="tasks">
@@ -152,10 +140,10 @@ function temper_render_nav_links(
             <?php endif; ?>
 
             <?php if ($showAdminSection): ?>
-            <!-- Admin Section -->
+            <!-- System Section (formerly Admin) -->
             <li class="nav-item">
                 <a class="nav-link" data-bs-toggle="collapse" href="#adminCollapse" role="button" aria-expanded="false" aria-controls="adminCollapse">
-                    <i class="bi bi-gear"></i> Admin
+                    <i class="bi bi-gear"></i> System
                 </a>
                 <div class="collapse" id="adminCollapse">
                     <ul class="nav flex-column ms-3">
@@ -166,17 +154,17 @@ function temper_render_nav_links(
                             </a>
                         </li>
                         <?php endif; ?>
+                        <?php if ($canConfig): ?>
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('admin-config')" class="nav-link" data-nav-page="admin-config">
+                                <i class="bi bi-sliders"></i> Configuration
+                            </a>
+                        </li>
+                        <?php endif; ?>
                         <?php if ($canUsers): ?>
                         <li class="nav-item">
                             <a href="javascript:void(0)" onclick="loadPage('admin-users')" class="nav-link" data-nav-page="admin-users">
                                 <i class="bi bi-people"></i> Users &amp; Roles
-                            </a>
-                        </li>
-                        <?php endif; ?>
-                        <?php if ($canWorkflowManage): ?>
-                        <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin-workflows')" class="nav-link" data-nav-page="admin-workflows">
-                                <i class="bi bi-diagram-3"></i> Workflow Definitions
                             </a>
                         </li>
                         <?php endif; ?>
@@ -274,20 +262,18 @@ function temper_render_nav_links(
                 </div>
 
                 <?php temper_render_nav_links(
-                    $tellerLimited,
                     $canDashboard,
                     $canLedger,
                     $canReports,
                     $canBudget,
                     $canTasks,
-                    $canWorkflows,
                     $showAdminSection,
                     $canAdmin,
                     $canBackup,
                     $canDatabase,
                     $canLookups,
                     $canUsers,
-                    $canWorkflowManage
+                    $canConfig
                 ); ?>
 
                 <!-- Bottom: footer note + user info + logout -->

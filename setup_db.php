@@ -13,14 +13,9 @@ $setupFiles = [
     'setup-database/05-budgeting.php',
     'setup-database/06-users-roles.php',
     'setup-database/07-tasks.php',
-    'setup-database/08-workflows.php',
 ];
 
 $dropQueries = [
-    'workflow_events',
-    'workflow_steps',
-    'workflow_instances',
-    'workflow_definitions',
     'transaction_documents',
     'transaction_events',
     'transaction_lines',
@@ -44,7 +39,6 @@ $schemaProviders = [
     'setupSchemaBudgeting',
     'setupSchemaUsersRoles',
     'setupSchemaTasks',
-    'setupSchemaWorkflows',
 ];
 
 /**

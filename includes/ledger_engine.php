@@ -311,12 +311,12 @@ function ledgerSuggestNextSequenceNumber(mysqli $db, ?string $asOfDate = null, s
 /**
  * All used YY#### Reference # values for the lookup modal (highest first).
  *
- * @return list<array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,memo:?string,description:string,source:?string}>
+ * @return list<array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,memo:?string,description:string}>
  */
 function ledgerListUsedReferenceNumbers(mysqli $db, int $limit = 1000): array {
     ledgerRequireTables($db);
     $limit = max(1, min(5000, $limit));
-    $sql = "SELECT id, reference_number, transaction_date, pay_to, memo, source
+    $sql = "SELECT id, reference_number, transaction_date, pay_to, memo
             FROM transaction_details
             WHERE reference_number IS NOT NULL
               AND reference_number <> ''
@@ -344,7 +344,6 @@ function ledgerListUsedReferenceNumbers(mysqli $db, int $limit = 1000): array {
             'pay_to' => $row['pay_to'] ?? null,
             'memo' => $row['memo'] ?? null,
             'description' => $desc,
-            'source' => $row['source'] ?? null,
         ];
     }
     return $rows;
@@ -698,11 +697,8 @@ function ledgerCreateHeader(
     string $payTo,
     string $referenceNumber,
     string $memo,
-    string $source = 'manual',
-    string $entryStatus = 'finalized',
     ?int $createdByUserId = null,
-    ?array $transactionData = null,
-    ?int $workflowInstanceId = null
+    ?array $transactionData = null
 ): int {
     ledgerRequireTables($db);
     $dataJson = $transactionData ? json_encode($transactionData) : null;
@@ -711,18 +707,15 @@ function ledgerCreateHeader(
     $stmt = $db->prepare(
         "INSERT INTO transaction_details (
             transaction_date, pay_to, reference_number, memo, status,
-            source, entry_status, workflow_instance_id, created_by_user_id, transaction_data
-         ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)"
+            created_by_user_id, transaction_data
+         ) VALUES (?, ?, ?, ?, 'pending', ?, ?)"
     );
     $stmt->bind_param(
-        'ssssssiis',
+        'ssssis',
         $transactionDate,
         $payTo,
         $refParam,
         $memo,
-        $source,
-        $entryStatus,
-        $workflowInstanceId,
         $createdByUserId,
         $dataJson
     );
@@ -739,8 +732,7 @@ function ledgerUpdateHeader(
     ?string $payTo = null,
     ?string $referenceNumber = null,
     ?string $memo = null,
-    ?array $transactionData = null,
-    ?int $workflowInstanceId = null
+    ?array $transactionData = null
 ): void {
     $sets = [];
     $types = '';
@@ -772,11 +764,6 @@ function ledgerUpdateHeader(
         $types .= 's';
         $params[] = json_encode($transactionData);
     }
-    if ($workflowInstanceId !== null) {
-        $sets[] = 'workflow_instance_id = ?';
-        $types .= 'i';
-        $params[] = $workflowInstanceId;
-    }
 
     if ($sets === []) {
         return;
@@ -800,10 +787,9 @@ function ledgerSetValidated(
     string $actorUsername
 ): void {
     $stmt = $db->prepare(
-        'UPDATE transaction_details SET validated_by_user_id = ?, validated_at = NOW(), entry_status = ? WHERE id = ?'
+        'UPDATE transaction_details SET validated_by_user_id = ?, validated_at = NOW() WHERE id = ?'
     );
-    $finalized = 'finalized';
-    $stmt->bind_param('isi', $validatedByUserId, $finalized, $transactionId);
+    $stmt->bind_param('ii', $validatedByUserId, $transactionId);
     $stmt->execute();
     $stmt->close();
 
@@ -892,9 +878,6 @@ function ledgerIsEditable(array $transaction): bool {
     if (($transaction['status'] ?? '') === 'cleared' || ($transaction['status'] ?? '') === 'reconciled') {
         return false;
     }
-    if (($transaction['source'] ?? 'manual') === 'workflow' && ($transaction['entry_status'] ?? '') === 'finalized') {
-        return false;
-    }
     return true;
 }
 
@@ -918,7 +901,7 @@ function ledgerFetchDocuments(mysqli $db, int $transactionId): array {
     $docs = [];
     $stmt = $db->prepare(
         'SELECT id, stored_filename, original_filename, mime_type, file_size,
-                uploaded_by_user_id, workflow_step_key, created_at
+                uploaded_by_user_id, created_at
          FROM transaction_documents WHERE transaction_detail_id = ? ORDER BY created_at DESC'
     );
     $stmt->bind_param('i', $transactionId);
@@ -1093,8 +1076,7 @@ function ledgerStoreDocument(
     int $userId,
     string $originalName,
     string $tmpPath,
-    string $mimeType,
-    ?string $workflowStepKey = null
+    string $mimeType
 ): array {
     ledgerRequireTables($db);
 
@@ -1151,30 +1133,25 @@ function ledgerStoreDocument(
     $size = (int)filesize($dest);
     $safeOriginal = mb_substr(basename($originalName), 0, 255);
     $safeMime = mb_substr($mimeType !== '' ? $mimeType : 'application/octet-stream', 0, 120);
-    // Empty string for bind_param stability; NULLIF stores SQL NULL when empty.
-    $stepKey = ($workflowStepKey !== null && $workflowStepKey !== '')
-        ? mb_substr($workflowStepKey, 0, 80)
-        : '';
 
     $stmt = $db->prepare(
         'INSERT INTO transaction_documents (
             transaction_detail_id, stored_filename, original_filename, mime_type,
-            file_size, uploaded_by_user_id, workflow_step_key
-         ) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, \'\'))'
+            file_size, uploaded_by_user_id
+         ) VALUES (?, ?, ?, ?, ?, ?)'
     );
     if (!$stmt) {
         @unlink($dest);
         return ['success' => false, 'error' => 'Database error preparing document record.'];
     }
     $stmt->bind_param(
-        'isssiis',
+        'isssii',
         $transactionId,
         $stored,
         $safeOriginal,
         $safeMime,
         $size,
-        $userId,
-        $stepKey
+        $userId
     );
     if (!$stmt->execute()) {
         $err = $stmt->error;
@@ -1206,8 +1183,7 @@ function ledgerStoreDocumentFromUpload(
     mysqli $db,
     int $transactionId,
     int $userId,
-    array $file,
-    ?string $workflowStepKey = null
+    array $file
 ): array {
     $check = ledgerValidateUploadedDocument($file);
     if (empty($check['success'])) {
@@ -1219,8 +1195,7 @@ function ledgerStoreDocumentFromUpload(
         $userId,
         $check['original_name'],
         $check['tmp_path'],
-        $check['mime_type'],
-        $workflowStepKey
+        $check['mime_type']
     );
 }
 
@@ -1277,7 +1252,7 @@ function ledgerFetchDocument(mysqli $db, int $documentId): ?array {
     ledgerRequireTables($db);
     $stmt = $db->prepare(
         'SELECT d.id, d.transaction_detail_id, d.stored_filename, d.original_filename, d.mime_type,
-                d.file_size, d.uploaded_by_user_id, d.workflow_step_key, d.created_at,
+                d.file_size, d.uploaded_by_user_id, d.created_at,
                 t.reference_number
          FROM transaction_documents d
          LEFT JOIN transaction_details t ON t.id = d.transaction_detail_id

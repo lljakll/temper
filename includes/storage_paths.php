@@ -183,7 +183,7 @@ function getLogsDir(): string {
 }
 
 /**
- * Directory for ledger/workflow file attachments.
+ * Directory for ledger file attachments.
  * Preferred layout: storage/attachments/{YY####}/ (manual Reference #).
  * Legacy: storage/attachments/{transactionId}/ and storage/transaction_documents/{id}/.
  */
@@ -191,47 +191,9 @@ function getTransactionDocumentsDir(): string {
     return ensureStorageSubdir('attachments')['path'];
 }
 
-/** @deprecated Use getTransactionDocumentsDir() */
-function getWorkflowDocumentsDir(): string {
-    return getTransactionDocumentsDir();
-}
-
 /** Alias for clarity in newer call sites. */
 function getAttachmentsDir(): string {
     return getTransactionDocumentsDir();
-}
-
-/**
- * Immutable YAML workflow definitions.
- * Layout: storage/workflow-definitions/{id}.v{version}.yaml
- *
- * @return array{path:string,error:?string,root?:array}
- */
-function getWorkflowDefinitionsDir(): array {
-    return ensureStorageSubdir('workflow-definitions');
-}
-
-/**
- * Absolute path helper for a relative storage path (e.g. workflow-definitions/foo.v1.yaml).
- */
-function storageAbsolutePath(string $relativePath): string {
-    return rtrim(getStoragePath(), '/\\') . '/' . ltrim(str_replace('\\', '/', $relativePath), '/');
-}
-
-/**
- * Ledger attachment directory for a reference / sequence number.
- * Layout: storage/attachments/{ledger sequence number}/
- */
-function getLedgerAttachmentDir(string $ledgerSequence): array {
-    $seq = preg_replace('/[^A-Za-z0-9_-]/', '', $ledgerSequence);
-    if ($seq === '') {
-        return [
-            'path' => '',
-            'error' => 'Invalid ledger sequence for attachment path.',
-            'root' => resolveStorageRoot(),
-        ];
-    }
-    return ensureStorageSubdir('attachments/' . $seq);
 }
 
 function describeFileOperationFailure(string $operation, string $path): string {

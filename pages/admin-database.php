@@ -477,7 +477,7 @@ define('MAINTENANCE_PIN', '464546');
     </div>
     <div class="col-md-4 text-md-end mt-2 mt-md-0">
         <a href="javascript:void(0)" onclick="loadPage('admin')" class="small text-decoration-none">
-            <i class="bi bi-arrow-left"></i> Back to Admin
+            <i class="bi bi-arrow-left"></i> Back to System
         </a>
     </div>
 </div>

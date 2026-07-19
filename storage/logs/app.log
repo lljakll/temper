@@ -562,3 +562,23 @@ Stack trace:
 [17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: set_status ip=unknown
 [17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.action details=instance=1 Action: log_event ip=unknown
 [17-Jul-2026 11:33:05 UTC] [AUDIT] user=admin action=workflow.completed details=instance=1 Workflow completed ip=unknown
+[19-Jul-2026 02:43:01 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/pages/admin-users.php on line 136
+[19-Jul-2026 02:43:01 UTC] [AUDIT] user=admin action=user_update details=Updated user id=10 username=jakadair roles=[8,9,2,7,6] must_change=0 custom_perms=0 ip=::1
+[19-Jul-2026 12:04:19 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from Command line code on line 18) in /var/www/temper/auth.php on line 3
+[19-Jul-2026 12:04:19 UTC] PHP Warning:  session_start(): Session cannot be started after headers have already been sent (sent from Command line code on line 18) in /var/www/temper/auth.php on line 216
+[19-Jul-2026 12:04:19 UTC] PHP Warning:  Cannot modify header information - headers already sent by (output started at Command line code:18) in /var/www/temper/auth.php on line 176
+[19-Jul-2026 12:22:16 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=true ip=::1
+[19-Jul-2026 12:22:39 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=false ip=::1
+[19-Jul-2026 12:22:57 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=12 username=blueelephant ip=::1
+[19-Jul-2026 12:23:04 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=12 username=blueelephant: must_change_password not completed within 24h of creation ip=::1
+[19-Jul-2026 12:23:04 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=11 username=heathet ip=::1
+[19-Jul-2026 12:23:13 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=11 username=heathet: must_change_password not completed within 24h of creation ip=::1
+[19-Jul-2026 12:23:13 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=12 username=blueelephant ip=::1
+[19-Jul-2026 12:23:17 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=12 username=blueelephant: must_change_password not completed within 24h of creation ip=::1
+[19-Jul-2026 12:23:25 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=11 username=heathet ip=::1
+[19-Jul-2026 12:23:28 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=11 username=heathet: must_change_password not completed within 24h of creation ip=::1
+[19-Jul-2026 12:25:46 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=11 username=heathet: must_change_password not completed within 24h of creation ip=unknown
+[19-Jul-2026 12:30:16 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=12 username=blueelephant (force-password grace restarted) ip=::1
+[19-Jul-2026 12:30:19 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=11 username=heathet (force-password grace restarted) ip=::1
+[19-Jul-2026 12:37:42 UTC] [AUDIT] user=admin action=user_archive details=Archived user id=12 username=blueelephant ip=::1
+[19-Jul-2026 12:37:56 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=12 username=blueelephant (force-password grace restarted) ip=::1

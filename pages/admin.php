@@ -9,8 +9,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     $canDatabase = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.database');
     $canBackup = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.backup');
     $canLookups = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.lookups');
-    require_once __DIR__ . '/../includes/workflow_bootstrap.php';
-    $canWorkflowManage = $adminUser && userCanManageWorkflows($db, (int)$adminUser['id']);
+    $canConfig = $adminUser && userIsAdministrator($db, (int)$adminUser['id']);
 
     $lookupLinks = $canLookups ? [
         ['page' => 'setup_funds', 'title' => 'Funds', 'icon' => 'bi-wallet2'],
@@ -22,20 +21,20 @@ require_once __DIR__ . '/../includes/permissions.php';
     $recentBackups = $canBackup ? listRecentBackupSummaries(getBackupDir(), 4) : [];
 
     $activeCards = [];
+    if ($canConfig) {
+        $activeCards[] = [
+            'title' => 'Configuration',
+            'description' => 'Developer Mode and other application settings.',
+            'icon' => 'bi-sliders',
+            'page' => 'admin-config',
+        ];
+    }
     if ($canManageUsers) {
         $activeCards[] = [
             'title' => 'Users & Roles',
-            'description' => 'Create users, assign roles, reset passwords, and deactivate accounts.',
+            'description' => 'Create users, assign roles, reset passwords, and archive accounts.',
             'icon' => 'bi-people',
             'page' => 'admin-users',
-        ];
-    }
-    if ($canWorkflowManage) {
-        $activeCards[] = [
-            'title' => 'Workflow Definitions',
-            'description' => 'Import and version immutable YAML workflow definitions.',
-            'icon' => 'bi-diagram-3',
-            'page' => 'admin-workflows',
         ];
     }
     if ($canDatabase) {
@@ -48,11 +47,6 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     $placeholderCards = [
-        [
-            'title' => 'System Settings',
-            'description' => 'Configure application preferences and organization details.',
-            'icon' => 'bi-sliders',
-        ],
         [
             'title' => 'Audit Log',
             'description' => 'Review system activity and administrative changes.',
@@ -117,8 +111,8 @@ require_once __DIR__ . '/../includes/permissions.php';
 
 <div class="row mb-3">
     <div class="col-12">
-        <h2 class="h4 mb-0">Admin</h2>
-        <p class="text-muted small mb-0">System configuration and administration</p>
+        <h2 class="h4 mb-0">System</h2>
+        <p class="text-muted small mb-0">Configuration and administration</p>
     </div>
 </div>
 

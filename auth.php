@@ -363,56 +363,6 @@ function verifyUserPassword(mysqli $db, int $userId, string $password): bool {
 }
 
 /**
- * Workflow capability check — permission-first via RBAC.
- * Definition management uses workflow.manage / Workflow Manager role
- * (see userCanManageWorkflows in workflow_bootstrap.php).
- * Per-workflow execute rights come from the YAML definition.
- */
-function userHasWorkflowCapability(mysqli $db, int $userId, string $capability): bool {
-    require_once __DIR__ . '/includes/permissions.php';
-
-    if (userHasPermission($db, $userId, $capability)) {
-        return true;
-    }
-
-    // Management capabilities also honor Workflow Manager role
-    if ($capability === 'workflow.manage') {
-        require_once __DIR__ . '/includes/workflow_bootstrap.php';
-        return userCanManageWorkflows($db, $userId);
-    }
-
-    return false;
-}
-
-/**
- * Tellers only see workflows (limited nav). Driven by permissions when possible.
- */
-function isTellerLimitedUser(mysqli $db, int $userId): bool {
-    require_once __DIR__ . '/includes/permissions.php';
-    $acl = loadUserAcl($db, $userId);
-    if (!$acl) {
-        return false;
-    }
-    $names = $acl['role_names'] ?? [($acl['role_name'] ?? '')];
-    foreach ($names as $name) {
-        if (in_array($name, ['Teller', 'Second Teller'], true)) {
-            // Only treat as limited if they lack broader staff access via other roles/custom perms
-            $hasStaffPage = permissionSetAllows($acl['permissions'], 'page.dashboard')
-                || permissionSetAllows($acl['permissions'], 'page.ledger')
-                || permissionSetAllows($acl['permissions'], 'page.reports');
-            if (!$hasStaffPage) {
-                return true;
-            }
-        }
-    }
-    $hasWorkflow = permissionSetAllows($acl['permissions'], 'workflow.view');
-    $hasStaffPage = permissionSetAllows($acl['permissions'], 'page.dashboard')
-        || permissionSetAllows($acl['permissions'], 'page.ledger')
-        || permissionSetAllows($acl['permissions'], 'page.reports');
-    return $hasWorkflow && !$hasStaffPage;
-}
-
-/**
  * Pages under /pages/ allowed while must_change_password is set.
  * Shell scripts (index, header, nav, footer) are never blocked.
  */

@@ -3,14 +3,12 @@
     // Security and DB connection already handled by index.php
     // Light fallback in case
 require_once __DIR__ . '/../includes/page_bootstrap.php';
-require_once __DIR__ . '/../includes/workflow_bootstrap.php';
 
 $today = date('Y-m-d');
     $tasksHorizon = date('Y-m-d', strtotime('+30 days'));
     $upcoming_tasks_limit = 10;
     $actorUser = getCurrentUser();
     require_once __DIR__ . '/../includes/permissions.php';
-    $tellerLimited = $actorUser ? isTellerLimitedUser($db, (int)$actorUser['id']) : false;
     $dashAcl = $actorUser ? loadUserAcl($db, (int)$actorUser['id']) : null;
     $dashPerms = $dashAcl['permissions'] ?? [];
 
@@ -55,14 +53,6 @@ function dashboardQuickLinks(): array {
             'permission' => 'page.tasks',
         ],
         [
-            'label' => 'Workflows Hub',
-            'description' => 'Guided processes',
-            'page' => 'workflows',
-            'icon' => 'bi-diagram-3',
-            'variant' => 'outline-secondary',
-            'permission' => 'workflow.view',
-        ],
-        [
             'label' => 'Funds Setup',
             'description' => 'Lookups · funds',
             'page' => 'setup_funds',
@@ -87,50 +77,6 @@ function dashboardQuickLinks(): array {
             'permission' => 'admin.backup',
         ],
     ];
-}
-
-/**
- * Running workflow instances for the dashboard (definition-driven engine).
- *
- * @return list<array{
- *   priority:int,type:string,title:string,action:string,action_badge:string,
- *   personnel:list<string>,page:string,instance_id:int,updated_at:?string
- * }>
- */
-function dashboardWorkflowPendingItems(mysqli $db): array {
-    $items = [];
-    try {
-        $engine = workflowEngine($db);
-        $engine->requireTables();
-        $instances = $engine->listInstances(null, 'running', 40);
-    } catch (Throwable $e) {
-        return [];
-    }
-
-    foreach ($instances as $inst) {
-        $id = (int)($inst['id'] ?? 0);
-        if ($id <= 0) {
-            continue;
-        }
-        $step = (string)($inst['current_step'] ?? '');
-        $items[] = [
-            'priority' => 30,
-            'type' => (string)($inst['workflow_id'] ?? ''),
-            'title' => (string)($inst['title'] ?? 'Workflow'),
-            'action' => $step !== '' ? ('Step: ' . $step) : 'In progress',
-            'action_badge' => 'warning',
-            'personnel' => [],
-            'page' => 'workflows',
-            'instance_id' => $id,
-            'updated_at' => $inst['updated_at'] ?? null,
-        ];
-    }
-
-    usort($items, static function ($a, $b) {
-        return strcmp((string)($b['updated_at'] ?? ''), (string)($a['updated_at'] ?? ''));
-    });
-
-    return $items;
 }
 
     $fundBalanceSql = "
@@ -258,7 +204,6 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
         $tasksCheck->close();
     }
 
-    $workflowPending = dashboardWorkflowPendingItems($db);
     $quickLinks = array_values(array_filter(
         dashboardQuickLinks(),
         static function (array $link) use ($dashPerms): bool {
@@ -316,71 +261,9 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
     </div>
 </div>
 
-<!-- Workflow summary + quick links -->
+<!-- Quick links -->
 <div class="row mb-3 mb-md-4 g-2 g-md-3">
-    <div class="col-12 col-lg-7">
-        <div class="card h-100 shadow-sm border-warning border-opacity-25">
-            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-1 py-2">
-                <h5 class="mb-0 h6">
-                    <i class="bi bi-diagram-3 text-warning"></i> Workflow Summary
-                </h5>
-                <a href="javascript:void(0)" onclick="loadPage('workflows')" class="small text-decoration-none">All workflows &rarr;</a>
-            </div>
-            <div class="card-body py-2">
-                <?php if (count($workflowPending) === 0): ?>
-                    <div class="d-flex align-items-start gap-2 text-success small py-1">
-                        <i class="bi bi-check-circle-fill mt-1"></i>
-                        <div>
-                            <strong>No running workflows.</strong>
-                            <div class="text-body-secondary">Import a definition and start an instance from the Workflows hub.</div>
-                        </div>
-                    </div>
-                <?php else: ?>
-                    <p class="small text-body-secondary mb-2">
-                        <?= count($workflowPending) ?> item<?= count($workflowPending) === 1 ? '' : 's' ?> need attention
-                        (highest priority first).
-                    </p>
-                    <ul class="list-group list-group-flush">
-                        <?php foreach (array_slice($workflowPending, 0, 8) as $item): ?>
-                            <li class="list-group-item px-0 py-2">
-                                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
-                                    <div class="min-w-0">
-                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-                                            <span class="badge text-bg-<?= htmlspecialchars($item['action_badge']) ?>">
-                                                <?= htmlspecialchars($item['action']) ?>
-                                            </span>
-                                            <span class="small text-body-secondary text-truncate">
-                                                <?= htmlspecialchars($item['title']) ?>
-                                            </span>
-                                        </div>
-                                        <?php if (!empty($item['personnel'])): ?>
-                                            <div class="small text-body-secondary">
-                                                <?php foreach ($item['personnel'] as $pLine): ?>
-                                                    <span class="me-2"><i class="bi bi-person"></i> <?= htmlspecialchars($pLine) ?></span>
-                                                <?php endforeach; ?>
-                                            </div>
-                                        <?php endif; ?>
-                                    </div>
-                                    <a href="javascript:void(0)"
-                                       class="btn btn-sm btn-outline-primary text-nowrap"
-                                       onclick="loadPage('<?= htmlspecialchars($item['page'], ENT_QUOTES) ?>')">
-                                        Open
-                                    </a>
-                                </div>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                    <?php if (count($workflowPending) > 8): ?>
-                        <div class="small text-body-secondary mt-2">
-                            +<?= count($workflowPending) - 8 ?> more —
-                            <a href="javascript:void(0)" onclick="loadPage('workflows')">view hub</a>
-                        </div>
-                    <?php endif; ?>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
-    <div class="col-12 col-lg-5">
+    <div class="col-12">
         <div class="card h-100 shadow-sm">
             <div class="card-header py-2">
                 <h5 class="mb-0 h6"><i class="bi bi-lightning-charge text-primary"></i> Quick Links</h5>
@@ -396,7 +279,7 @@ function dashboardWorkflowPendingItems(mysqli $db): array {
                             $page = $link['page'] ?? '';
                             $href = $link['href'] ?? '';
                         ?>
-                        <div class="col-6">
+                        <div class="col-6 col-md-4 col-lg-3">
                             <?php if ($page !== ''): ?>
                                 <a href="javascript:void(0)"
                                    onclick="loadPage('<?= htmlspecialchars($page, ENT_QUOTES) ?>')"
