@@ -148,10 +148,15 @@ require_once __DIR__ . '/../includes/permissions.php';
         }
         $lines = [];
         foreach ($det['lines'] as $l) {
+            $lineType = strtolower(trim((string)($l['type'] ?? 'debit')));
+            if ($lineType !== 'debit' && $lineType !== 'credit') {
+                $lineType = 'debit';
+            }
             $lines[] = [
                 'account_id' => (int)$l['account_id'],
                 'fund_id' => $l['fund_id'] !== null ? (int)$l['fund_id'] : '',
                 'amount' => $l['amount'],
+                'type' => $lineType,
                 'natural_category_id' => $l['natural_category_id'] !== null ? (int)$l['natural_category_id'] : '',
                 'functional_category_id' => $l['functional_category_id'] !== null ? (int)$l['functional_category_id'] : ''
             ];
@@ -433,26 +438,19 @@ require_once __DIR__ . '/../includes/permissions.php';
             } elseif (count($lines) < 2) {
                 $error = "Every transaction must have at least 2 lines.";
             } else {
-                $atypes = [];
-                $ids = array_unique(array_map(fn($l) => (int)$l['account_id'], $lines));
-                if ($ids) {
-                    $in = implode(',', array_fill(0, count($ids), '?'));
-                    $st = $db->prepare("SELECT id, normal_balance FROM accounts WHERE id IN ($in)");
-                    $st->bind_param(str_repeat('i', count($ids)), ...$ids);
-                    $st->execute();
-                    $rs = $st->get_result();
-                    while ($r = $rs->fetch_assoc()) {
-                        $atypes[(int)$r['id']] = $r['normal_balance'];
-                    }
-                    $st->close();
-                }
                 $dt = $ct = 0.0;
                 $vlines = [];
+                $typeError = false;
                 foreach ($lines as $l) {
                     $aid = (int)($l['account_id'] ?? 0);
                     $am = (float)($l['amount'] ?? 0);
                     if ($aid <= 0 || $am <= 0) continue;
-                    $t = $atypes[$aid] ?? 'debit';
+                    // Line type is chosen by the user (debit or credit column), not locked to account normal_balance
+                    $t = strtolower(trim((string)($l['type'] ?? '')));
+                    if ($t !== 'debit' && $t !== 'credit') {
+                        $typeError = true;
+                        break;
+                    }
                     if ($t === 'debit') $dt += $am; else $ct += $am;
                     $vlines[] = [
                         'aid' => $aid,
@@ -463,7 +461,9 @@ require_once __DIR__ . '/../includes/permissions.php';
                         't' => $t
                     ];
                 }
-                if (count($vlines) < 2) {
+                if ($typeError) {
+                    $error = "Each line must be either Debit or Credit.";
+                } elseif (count($vlines) < 2) {
                     $error = "At least two valid lines are required.";
                 } elseif (abs($dt - $ct) > 0.005) {
                     $error = "Debits do not equal Credits.";
@@ -1182,13 +1182,16 @@ require_once __DIR__ . '/../includes/permissions.php';
         const credIn = row.querySelector('.line-credit-amt');
         const deb = parseFloat(debIn?.value || '0') || 0;
         const cred = parseFloat(credIn?.value || '0') || 0;
-        // Prefer the column that has a value; account type guides which is active
-        const typeHint = row.dataset.lineType || '';
-        if (typeHint === 'credit' && cred > 0) return { amount: cred, type: 'credit' };
-        if (typeHint === 'debit' && deb > 0) return { amount: deb, type: 'debit' };
+        // Debit/Credit is chosen by which column has the amount (not locked to account type)
         if (cred > 0 && deb <= 0) return { amount: cred, type: 'credit' };
-        if (deb > 0) return { amount: deb, type: 'debit' };
-        return { amount: 0, type: typeHint || '' };
+        if (deb > 0 && cred <= 0) return { amount: deb, type: 'debit' };
+        if (deb > 0 && cred > 0) {
+            // Both filled: prefer the last-edited column if known, else debit
+            const prefer = row.dataset.lineType || 'debit';
+            if (prefer === 'credit') return { amount: cred, type: 'credit' };
+            return { amount: deb, type: 'debit' };
+        }
+        return { amount: 0, type: '' };
     }
 
     function recalcTotals() {
@@ -1224,39 +1227,16 @@ require_once __DIR__ . '/../includes/permissions.php';
         const credIn = row.querySelector('.line-credit-amt');
         const remBtn = row.querySelector('.remove-line');
 
-        function syncAmountColumns() {
-            const opt = accSel ? accSel.selectedOptions[0] : null;
-            const nb = opt ? (opt.dataset.normalBalance || '') : '';
-            row.dataset.lineType = nb || '';
-            const isDebit = nb === 'debit' || nb === '';
-            const isCredit = nb === 'credit';
-            if (debIn) {
-                debIn.disabled = debIn.readOnly || (nb !== '' && !isDebit);
-                debIn.classList.toggle('bg-body-secondary', debIn.disabled);
-                if (nb === 'credit' && debIn.value) {
-                    // Move amount to the correct column when account type changes
-                    if (credIn && !credIn.value) credIn.value = debIn.value;
-                    debIn.value = '';
-                }
-            }
-            if (credIn) {
-                credIn.disabled = credIn.readOnly || (nb !== '' && !isCredit);
-                credIn.classList.toggle('bg-body-secondary', credIn.disabled);
-                if (nb === 'debit' && credIn.value) {
-                    if (debIn && !debIn.value) debIn.value = credIn.value;
-                    credIn.value = '';
-                }
-            }
-            recalcTotals();
-        }
-
-        if (accSel) accSel.addEventListener('change', syncAmountColumns);
+        // Account selection no longer locks Debit/Credit — user may debit or credit any account
+        if (accSel) accSel.addEventListener('change', () => recalcTotals());
         if (debIn) debIn.addEventListener('input', () => {
             if (credIn && parseFloat(debIn.value || '0') > 0) credIn.value = '';
+            row.dataset.lineType = parseFloat(debIn.value || '0') > 0 ? 'debit' : (row.dataset.lineType || '');
             recalcTotals();
         });
         if (credIn) credIn.addEventListener('input', () => {
             if (debIn && parseFloat(credIn.value || '0') > 0) debIn.value = '';
+            row.dataset.lineType = parseFloat(credIn.value || '0') > 0 ? 'credit' : (row.dataset.lineType || '');
             recalcTotals();
         });
         if (remBtn) remBtn.addEventListener('click', () => {
@@ -1264,15 +1244,14 @@ require_once __DIR__ . '/../includes/permissions.php';
             recalcTotals();
         });
 
-        // initial
-        syncAmountColumns();
+        recalcTotals();
     }
 
     function createLineRow(prefill = null, readonly = false) {
         const ro = readonly ? ' disabled' : '';
         const remStyle = readonly ? ' style="display:none"' : '';
         const row = document.createElement('tr');
-        // Debit / Credit columns: amount is entered in the column matching the account type
+        // Debit / Credit columns: user enters amount in either column for any account
         row.innerHTML = `
             <td><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
             <td><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
@@ -1286,7 +1265,6 @@ require_once __DIR__ . '/../includes/permissions.php';
             </td>
             <td><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
         `;
-        // Hidden type marker for totals/save
         row.dataset.lineType = '';
         if (prefill) {
             const acc = row.querySelector('.line-account');
@@ -1297,14 +1275,18 @@ require_once __DIR__ . '/../includes/permissions.php';
             if (prefill.natural_category_id !== undefined && prefill.natural_category_id !== '') nat.value = prefill.natural_category_id;
             const func = row.querySelector('.line-func');
             if (prefill.functional_category_id !== undefined && prefill.functional_category_id !== '') func.value = prefill.functional_category_id;
-            // Place amount in debit or credit column from account normal balance when known
-            const opt = acc.selectedOptions[0];
-            const nb = opt ? (opt.dataset.normalBalance || '') : '';
+            // Place amount in debit or credit column from saved line type (not account normal_balance)
             const debIn = row.querySelector('.line-debit-amt');
             const credIn = row.querySelector('.line-credit-amt');
             if (prefill.amount !== undefined && prefill.amount !== '') {
-                if (nb === 'credit') credIn.value = prefill.amount;
-                else debIn.value = prefill.amount; // default debit column
+                const t = String(prefill.type || '').toLowerCase();
+                if (t === 'credit') {
+                    credIn.value = prefill.amount;
+                    row.dataset.lineType = 'credit';
+                } else {
+                    debIn.value = prefill.amount;
+                    row.dataset.lineType = 'debit';
+                }
             }
         }
         if (readonly) {
@@ -2467,15 +2449,16 @@ require_once __DIR__ . '/../includes/permissions.php';
             const lines = [];
             linesBody.querySelectorAll('tr').forEach(row => {
                 const acc = row.querySelector('.line-account')?.value;
-                const { amount: amt } = getLineAmountAndType(row);
-                if (!acc || !amt) return;
+                const { amount: amt, type: lineType } = getLineAmountAndType(row);
+                if (!acc || !amt || (lineType !== 'debit' && lineType !== 'credit')) return;
 
                 lines.push({
                     account_id: acc,
                     fund_id: row.querySelector('.line-fund')?.value || '',
                     natural_category_id: row.querySelector('.line-nat')?.value || '',
                     functional_category_id: row.querySelector('.line-func')?.value || '',
-                    amount: amt
+                    amount: amt,
+                    type: lineType
                 });
             });
 

@@ -4,6 +4,8 @@
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/budget_utils.php';
 
+    budgetEnsureSimplifiedSchema($db);
+
     $today = date('Y-m-d');
     $yearStart = date('Y') . '-01-01';
 
@@ -214,19 +216,19 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                     $pEnd   = min($today, $bEnd);
                 }
 
-                // Budget lines grouped
+                // Budget lines grouped — categories come from the linked account
                 $groupCol = match ($groupBy) {
                     'account'            => 'bl.account_id',
-                    'functional_category'=> 'bl.functional_category_id',
-                    default              => 'bl.natural_category_id',
+                    'functional_category'=> 'a.functional_category_id',
+                    default              => 'a.natural_category_id',
                 };
                 $labelJoin = match ($groupBy) {
-                    'account'            => 'LEFT JOIN accounts lbl ON lbl.id = bl.account_id',
-                    'functional_category'=> 'LEFT JOIN functional_categories lbl ON lbl.id = bl.functional_category_id',
-                    default              => 'LEFT JOIN natural_categories lbl ON lbl.id = bl.natural_category_id',
+                    'account'            => 'LEFT JOIN accounts a ON a.id = bl.account_id',
+                    'functional_category'=> 'LEFT JOIN accounts a ON a.id = bl.account_id LEFT JOIN functional_categories lbl ON lbl.id = a.functional_category_id',
+                    default              => 'LEFT JOIN accounts a ON a.id = bl.account_id LEFT JOIN natural_categories lbl ON lbl.id = a.natural_category_id',
                 };
                 $labelField = match ($groupBy) {
-                    'account'            => "COALESCE(lbl.name, 'Unassigned Account')",
+                    'account'            => "COALESCE(a.name, 'Unassigned Account')",
                     'functional_category'=> "COALESCE(lbl.name, 'Unassigned Class')",
                     default              => "COALESCE(lbl.name, 'Uncategorized')",
                 };

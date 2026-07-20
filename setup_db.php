@@ -5,9 +5,10 @@ require_once 'setup-database/setup_cli.php';
 
 $cli = SetupDbCli::parse($argv ?? []);
 
+// Categories before accounts so account natural/functional FKs can be created.
 $setupFiles = [
-    'setup-database/01-accounts.php',
     'setup-database/02-categories.php',
+    'setup-database/01-accounts.php',
     'setup-database/03-funds.php',
     'setup-database/04-transactions.php',
     'setup-database/05-budgeting.php',

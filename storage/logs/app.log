@@ -582,3 +582,10 @@ Stack trace:
 [19-Jul-2026 12:30:19 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=11 username=heathet (force-password grace restarted) ip=::1
 [19-Jul-2026 12:37:42 UTC] [AUDIT] user=admin action=user_archive details=Archived user id=12 username=blueelephant ip=::1
 [19-Jul-2026 12:37:56 UTC] [AUDIT] user=admin action=user_activate details=Restored user id=12 username=blueelephant (force-password grace restarted) ip=::1
+[20-Jul-2026 11:06:58 UTC] [AUDIT] user=admin action=ledger.created details=transaction=37 Transaction created for "543" totaling $200.00 (2 lines). {"debits":200,"credits":200,"changes":["Transaction created for \"543\" totaling $200.00 (2 lines).","Fund \"General Operating Fund\" $400.00."]} ip=::1
+[20-Jul-2026 11:23:05 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Column 'account_id' cannot be NOT NULL: needed in a foreign key constraint 'budget_lines_ibfk_4' SET NULL in /var/www/temper/includes/budget_utils.php:102
+Stack trace:
+#0 /var/www/temper/includes/budget_utils.php(102): mysqli->query()
+#1 Command line code(5): budgetEnsureSimplifiedSchema()
+#2 {main}
+  thrown in /var/www/temper/includes/budget_utils.php on line 102

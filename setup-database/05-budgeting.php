@@ -22,20 +22,17 @@ function setupSchemaBudgeting(): array
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 )",
+            // Categories come from the linked account (accounts.natural/functional_category_id).
             'budget_lines' => "CREATE TABLE IF NOT EXISTS budget_lines (
     id INT AUTO_INCREMENT PRIMARY KEY,
     budget_id INT NOT NULL,
-    natural_category_id INT NULL,
-    functional_category_id INT NULL,
-    account_id INT NULL,
+    account_id INT NOT NULL,
     budgeted_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE,
-    FOREIGN KEY (natural_category_id) REFERENCES natural_categories(id) ON DELETE SET NULL,
-    FOREIGN KEY (functional_category_id) REFERENCES functional_categories(id) ON DELETE SET NULL,
-    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
 )",
         ],
     ];
@@ -71,8 +68,6 @@ if ($db->query($schema['budget_lines']) === TRUE) {
 $db->query("CREATE INDEX idx_budgets_fiscal_year ON budgets(fiscal_year)");
 $db->query("CREATE INDEX idx_budgets_status ON budgets(status)");
 $db->query("CREATE INDEX idx_budget_lines_budget_id ON budget_lines(budget_id)");
-$db->query("CREATE INDEX idx_budget_lines_natural_category_id ON budget_lines(natural_category_id)");
-$db->query("CREATE INDEX idx_budget_lines_functional_category_id ON budget_lines(functional_category_id)");
 $db->query("CREATE INDEX idx_budget_lines_account_id ON budget_lines(account_id)");
 $db->query("CREATE INDEX idx_budget_lines_budgeted_amount ON budget_lines(budgeted_amount)");
 
@@ -87,12 +82,12 @@ if ($db->query($budgets) === TRUE) {
     exit(1);
 }
 
-// Insert seed data: Budget lines
-$budget_lines = "INSERT INTO budget_lines (budget_id, natural_category_id, functional_category_id, account_id, budgeted_amount, notes) VALUES 
-    (1, 1, 1, 1, 200000.00, 'Contributions for worship and programs'),
-    (1, 2, 2, 2, 150000.00, 'Program expenses'),
-    (1, 3, 3, 3, 50000.00, 'Administrative expenses'),
-    (1, 4, 4, 4, 100000.00, 'Capital expenditures')";
+// Insert seed data: Budget lines (categories are derived from the linked account)
+$budget_lines = "INSERT INTO budget_lines (budget_id, account_id, budgeted_amount, notes) VALUES 
+    (1, 10, 200000.00, 'Contributions income'),
+    (1, 2, 150000.00, 'Program / operating via bank'),
+    (1, 4, 50000.00, 'Administrative prepaid / insurance'),
+    (1, 5, 100000.00, 'Capital / fixed assets')";
 
 if ($db->query($budget_lines) === TRUE) {
     echo "Seed data for 'budget_lines' inserted successfully\n";

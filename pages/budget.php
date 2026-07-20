@@ -5,6 +5,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/budget_utils.php';
 require_once __DIR__ . '/../includes/permissions.php';
 
+    budgetEnsureSimplifiedSchema($db);
+
     $budgetActor = getCurrentUser();
     $canWriteBudget = $budgetActor && userHasPermission($db, (int)$budgetActor['id'], 'page.budget.write');
 
@@ -18,7 +20,20 @@ require_once __DIR__ . '/../includes/permissions.php';
         $budget = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         if (!$budget) { echo json_encode(['error' => 'Budget not found']); exit; }
-        $lst = $db->prepare("SELECT id, natural_category_id, functional_category_id, account_id, budgeted_amount, notes FROM budget_lines WHERE budget_id = ? ORDER BY id");
+        // Categories come from the linked account lookup, not budget_lines columns
+        $lst = $db->prepare(
+            "SELECT bl.id, bl.account_id, bl.budgeted_amount, bl.notes,
+                    a.natural_category_id, a.functional_category_id,
+                    COALESCE(nc.name, '') AS natural_name,
+                    COALESCE(fc.name, '') AS functional_name,
+                    COALESCE(a.name, '') AS account_name
+             FROM budget_lines bl
+             LEFT JOIN accounts a ON a.id = bl.account_id
+             LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
+             LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
+             WHERE bl.budget_id = ?
+             ORDER BY bl.id"
+        );
         $lst->bind_param('i', $id);
         $lst->execute();
         $lines = [];
@@ -26,9 +41,12 @@ require_once __DIR__ . '/../includes/permissions.php';
         while ($l = $res->fetch_assoc()) {
             $lines[] = [
                 'id' => (int)$l['id'],
+                'account_id' => $l['account_id'] ? (int)$l['account_id'] : '',
+                'account_name' => $l['account_name'] ?? '',
                 'natural_category_id' => $l['natural_category_id'] ? (int)$l['natural_category_id'] : '',
                 'functional_category_id' => $l['functional_category_id'] ? (int)$l['functional_category_id'] : '',
-                'account_id' => $l['account_id'] ? (int)$l['account_id'] : '',
+                'natural_name' => $l['natural_name'] !== '' ? $l['natural_name'] : '—',
+                'functional_name' => $l['functional_name'] !== '' ? $l['functional_name'] : '—',
                 'budgeted_amount' => $l['budgeted_amount'],
                 'notes' => $l['notes'] ?? ''
             ];
@@ -208,9 +226,37 @@ require_once __DIR__ . '/../includes/permissions.php';
                 } else {
                 $desc = trim($_POST['description'] ?? '');
                 $lines = json_decode($_POST['lines_json'] ?? '[]', true) ?: [];
-                $total = 0.0;
-                foreach ($lines as $l) { $total += (float)($l['budgeted_amount'] ?? 0); }
 
+                // Validate lines: each must reference a non-archived account from the lookup
+                $vlines = [];
+                $lineError = null;
+                $total = 0.0;
+                foreach ($lines as $l) {
+                    $aid = !empty($l['account_id']) ? (int)$l['account_id'] : 0;
+                    $amt = (float)($l['budgeted_amount'] ?? 0);
+                    $notes = trim($l['notes'] ?? '');
+                    if ($aid <= 0 && $amt <= 0 && $notes === '') {
+                        continue; // empty row
+                    }
+                    if ($aid <= 0) {
+                        $lineError = 'Each budget line must select an account from the lookup.';
+                        break;
+                    }
+                    if (!budgetIsValidAccountId($db, $aid)) {
+                        $lineError = 'Budget lines may only use active accounts from Accounts setup.';
+                        break;
+                    }
+                    if ($amt <= 0) {
+                        $lineError = 'Each budget line must have an amount greater than zero.';
+                        break;
+                    }
+                    $total += $amt;
+                    $vlines[] = ['account_id' => $aid, 'budgeted_amount' => $amt, 'notes' => $notes];
+                }
+
+                if ($lineError) {
+                    $pageFlash = ['message' => $lineError, 'type' => 'warning'];
+                } else {
                 if ($id > 0) {
                     $stmt = $db->prepare("UPDATE budgets SET fiscal_year=?, name=?, start_date=?, end_date=?, approved_date=?, reference_number=?, status=?, total_budgeted=?, description=? WHERE id=?");
                     $stmt->bind_param('issssssdsi', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc, $id);
@@ -232,23 +278,21 @@ require_once __DIR__ . '/../includes/permissions.php';
                     }
                     $stmt->close();
                 }
-                $ins = $db->prepare("INSERT INTO budget_lines (budget_id, natural_category_id, functional_category_id, account_id, budgeted_amount, notes) VALUES (?,?,?,?,?,?)");
-                foreach ($lines as $l) {
-                    $nid = !empty($l['natural_category_id']) ? (int)$l['natural_category_id'] : null;
-                    $fid = !empty($l['functional_category_id']) ? (int)$l['functional_category_id'] : null;
-                    $aid = !empty($l['account_id']) ? (int)$l['account_id'] : null;
-                    $amt = (float)($l['budgeted_amount'] ?? 0);
-                    $notes = trim($l['notes'] ?? '');
-                    if ($amt <= 0) continue;
-                    $ins->bind_param('iiiids', $id, $nid, $fid, $aid, $amt, $notes);
-                    $ins->execute();
-                }
-                $ins->close();
-                if (!$pageFlash) {
+                if ($id > 0 && !$pageFlash) {
+                    $ins = $db->prepare("INSERT INTO budget_lines (budget_id, account_id, budgeted_amount, notes) VALUES (?,?,?,?)");
+                    foreach ($vlines as $v) {
+                        $aid = $v['account_id'];
+                        $amt = $v['budgeted_amount'];
+                        $notes = $v['notes'];
+                        $ins->bind_param('iids', $id, $aid, $amt, $notes);
+                        $ins->execute();
+                    }
+                    $ins->close();
                     $pageFlash = [
                         'message' => $status === 'approved' ? 'Budget approved and saved successfully.' : 'Budget saved successfully.',
                         'type' => 'success',
                     ];
+                }
                 }
                 }
             } else {
@@ -258,11 +302,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     $statusBadges = ['draft' => 'warning', 'approved' => 'info', 'active' => 'success', 'closed' => 'secondary'];
-    $lookups = ['accounts' => [], 'natural' => [], 'functional' => []];
-    foreach (['accounts' => 'accounts', 'natural' => 'natural_categories', 'functional' => 'functional_categories'] as $k => $tbl) {
-        $r = $db->query("SELECT id, name FROM $tbl WHERE archived = FALSE ORDER BY name");
-        while ($row = $r->fetch_assoc()) $lookups[$k][] = $row;
-    }
+    $lookups = ['accounts' => budgetFetchAccountLookups($db)];
     $budgetSummary = budgetActiveSummary($db);
     $currentFiscalYear = $budgetSummary['current_fiscal_year'];
     $activeBudgets = $budgetSummary['active'];
@@ -274,13 +314,22 @@ require_once __DIR__ . '/../includes/permissions.php';
     #linesTable {
         table-layout: fixed;
         width: 100%;
-        min-width: 860px;
+        min-width: 760px;
     }
-    #linesTable col.col-cat { width: 18%; }
+    #linesTable col.col-account { width: 26%; }
+    #linesTable col.col-cat { width: 14%; }
     #linesTable col.col-amount,
     #linesTable col.col-remaining { width: 108px; }
-    #linesTable col.col-notes { width: 22%; }
+    #linesTable col.col-notes { width: 20%; }
     #linesTable col.col-actions { width: 42px; }
+    #linesTable .line-cat-label {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--bs-secondary-color);
+        font-size: 0.875rem;
+    }
     #linesTable th,
     #linesTable td {
         overflow: hidden;
@@ -457,15 +506,16 @@ require_once __DIR__ . '/../includes/permissions.php';
                         <div class="budget-lines-table-wrap">
                             <table class="table table-sm table-bordered mb-0" id="linesTable">
                                 <colgroup>
-                                    <col class="col-cat"><col class="col-cat"><col class="col-cat">
+                                    <col class="col-account">
+                                    <col class="col-cat"><col class="col-cat">
                                     <col class="col-amount"><col class="col-remaining">
                                     <col class="col-notes"><col class="col-actions">
                                 </colgroup>
                                 <thead class="table-light">
                                     <tr>
-                                        <th class="line-cell-cat">Natural Category</th>
-                                        <th class="line-cell-cat">Functional Category</th>
                                         <th class="line-cell-cat">Account</th>
+                                        <th class="line-cell-cat">Natural</th>
+                                        <th class="line-cell-cat">Functional</th>
                                         <th class="text-end line-cell-amount">Amount</th>
                                         <th class="text-end line-cell-remaining">Remaining</th>
                                         <th class="line-cell-notes">Notes</th>
@@ -555,7 +605,6 @@ require_once __DIR__ . '/../includes/permissions.php';
 (function() {
     const page = 'budget';
     const lookups = JSON.parse(document.getElementById('lookups-data').textContent);
-    const lookupName = (list, id) => (list.find(o => o.id == id) || {}).name || '—';
     const tableBody = document.getElementById('budgetTableBody');
     const form = document.getElementById('budgetForm');
     const formEl = document.getElementById('budgetFormContent');
@@ -576,8 +625,29 @@ require_once __DIR__ . '/../includes/permissions.php';
     let cycleData = { active: [], approved: [], current_fiscal_year: <?= (int)$currentFiscalYear ?> };
 
     function fmt(n) { return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
-    function opts(list, val) {
-        return '<option value="">—</option>' + list.map(o => `<option value="${o.id}"${o.id == val ? ' selected' : ''}>${o.name}</option>`).join('');
+    function escAttr(s) {
+        return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+    function accountById(id) {
+        return (lookups.accounts || []).find(o => String(o.id) === String(id)) || null;
+    }
+    function accountOpts(val) {
+        return '<option value="">— Select account —</option>' + (lookups.accounts || []).map(o =>
+            `<option value="${o.id}"${o.id == val ? ' selected' : ''} data-natural-name="${escAttr(o.natural_name)}" data-functional-name="${escAttr(o.functional_name)}">${escAttr(o.name)}</option>`
+        ).join('');
+    }
+    function syncLineCategoryLabels(tr) {
+        const sel = tr.querySelector('.line-account');
+        const natEl = tr.querySelector('.line-natural-label');
+        const funEl = tr.querySelector('.line-functional-label');
+        if (!natEl || !funEl) return;
+        const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+        const nat = (opt && opt.value) ? (opt.dataset.naturalName || '—') : '—';
+        const fun = (opt && opt.value) ? (opt.dataset.functionalName || '—') : '—';
+        natEl.textContent = nat;
+        natEl.title = nat;
+        funEl.textContent = fun;
+        funEl.title = fun;
     }
     function withinOneWeek(dateStr) {
         if (!dateStr) return false;
@@ -610,10 +680,8 @@ require_once __DIR__ . '/../includes/permissions.php';
     function collectLines() {
         return [...linesBody.querySelectorAll('tr')].map(tr => ({
             id: tr.dataset.lineId || '',
-            natural_category_id: tr.querySelector('.line-natural')?.value || '',
-            functional_category_id: tr.querySelector('.line-functional')?.value || '',
-            account_id: tr.querySelector('.line-account')?.value || '',
-            budgeted_amount: tr.querySelector('.line-amount')?.dataset.amount || '0',
+            account_id: tr.querySelector('.line-account')?.value || tr.dataset.accountId || '',
+            budgeted_amount: tr.querySelector('.line-amount')?.dataset.amount || tr.dataset.amount || '0',
             notes: tr.querySelector('.line-notes')?.value ?? tr.querySelector('.line-notes-readonly')?.value ?? ''
         }));
     }
@@ -659,37 +727,42 @@ require_once __DIR__ . '/../includes/permissions.php';
     function confirmApprovedStatus(newStatus) {
         if (newStatus !== 'approved' || newStatus === originalStatus) return true;
         if (!validateApprovalFields()) return false;
-        return confirm('Setting status to Approved will lock budget amounts and categories. You may still edit notes. Continue?');
+        return confirm('Setting status to Approved will lock budget amounts and accounts. You may still edit notes. Continue?');
     }
     function addLine(data, mode) {
         data = data || {};
         const tr = document.createElement('tr');
         tr.classList.add('line-row');
         if (data.id) tr.dataset.lineId = data.id;
+        if (data.account_id) tr.dataset.accountId = data.account_id;
         const amt = parseFloat(data.budgeted_amount) || 0;
+        const acctInfo = accountById(data.account_id);
+        const natLabel = data.natural_name || (acctInfo && acctInfo.natural_name) || '—';
+        const funLabel = data.functional_name || (acctInfo && acctInfo.functional_name) || '—';
+        const acctLabel = data.account_name || (acctInfo && acctInfo.name) || '—';
         if (mode === 'draft') {
             tr.innerHTML = `
-                <td class="line-cell-cat"><select class="form-select form-select-sm line-natural">${opts(lookups.natural, data.natural_category_id)}</select></td>
-                <td class="line-cell-cat"><select class="form-select form-select-sm line-functional">${opts(lookups.functional, data.functional_category_id)}</select></td>
-                <td class="line-cell-cat"><select class="form-select form-select-sm line-account">${opts(lookups.accounts, data.account_id)}</select></td>
+                <td class="line-cell-cat"><select class="form-select form-select-sm line-account" required>${accountOpts(data.account_id)}</select></td>
+                <td class="line-cell-cat"><span class="line-cat-label line-natural-label" title="">—</span></td>
+                <td class="line-cell-cat"><span class="line-cat-label line-functional-label" title="">—</span></td>
                 <td class="line-cell-amount"><input type="text" class="form-control form-control-sm text-end line-amount" inputmode="numeric"></td>
                 <td class="text-end text-muted line-cell-remaining">—</td>
-                <td class="line-cell-notes"><input type="text" class="form-control form-control-sm line-notes" value="${data.notes || ''}"></td>
+                <td class="line-cell-notes"><input type="text" class="form-control form-control-sm line-notes" value="${escAttr(data.notes || '')}"></td>
                 <td class="line-actions"><button type="button" class="btn btn-sm btn-outline-danger rm-line"><i class="bi bi-x"></i></button></td>`;
             bindAmountInput(tr.querySelector('.line-amount'), data.budgeted_amount);
+            const accSel = tr.querySelector('.line-account');
+            accSel.addEventListener('change', () => syncLineCategoryLabels(tr));
+            syncLineCategoryLabels(tr);
             tr.querySelector('.rm-line').addEventListener('click', () => { tr.remove(); updateTotal(); });
         } else {
-            const nat = lookupName(lookups.natural, data.natural_category_id);
-            const fun = lookupName(lookups.functional, data.functional_category_id);
-            const acct = lookupName(lookups.accounts, data.account_id);
             const notesVal = data.notes || '';
             const notesCell = mode === 'approved'
-                ? `<input type="text" class="form-control form-control-sm line-notes" value="${notesVal.replace(/"/g, '&quot;')}">`
-                : `<span class="line-cell-text" title="${notesVal.replace(/"/g, '&quot;')}">${notesVal}</span>`;
+                ? `<input type="text" class="form-control form-control-sm line-notes" value="${escAttr(notesVal)}">`
+                : `<span class="line-cell-text" title="${escAttr(notesVal)}">${escAttr(notesVal)}</span>`;
             tr.innerHTML = `
-                <td class="line-cell-cat"><span class="line-cell-text" title="${nat}">${nat}</span></td>
-                <td class="line-cell-cat"><span class="line-cell-text" title="${fun}">${fun}</span></td>
-                <td class="line-cell-cat"><span class="line-cell-text" title="${acct}">${acct}</span></td>
+                <td class="line-cell-cat"><span class="line-cell-text" title="${escAttr(acctLabel)}">${escAttr(acctLabel)}</span></td>
+                <td class="line-cell-cat"><span class="line-cat-label" title="${escAttr(natLabel)}">${escAttr(natLabel)}</span></td>
+                <td class="line-cell-cat"><span class="line-cat-label" title="${escAttr(funLabel)}">${escAttr(funLabel)}</span></td>
                 <td class="text-end line-cell-amount">${fmt(amt)}</td>
                 <td class="text-end text-muted line-cell-remaining">—</td>
                 <td class="line-cell-notes">${notesCell}</td><td class="line-actions"></td>`;

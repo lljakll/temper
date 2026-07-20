@@ -3,6 +3,34 @@
     // Security and DB connection already handled by index.php
     // Light fallback in case
 require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/budget_utils.php';
+
+budgetEnsureSimplifiedSchema($db);
+
+// Category lookups for account form
+$naturalOpts = [];
+$functionalOpts = [];
+$nr = $db->query("SELECT id, name FROM natural_categories WHERE archived = FALSE ORDER BY name");
+if ($nr) {
+    while ($row = $nr->fetch_assoc()) {
+        $naturalOpts[] = $row;
+    }
+}
+$fr = $db->query("SELECT id, name FROM functional_categories WHERE archived = FALSE ORDER BY name");
+if ($fr) {
+    while ($row = $fr->fetch_assoc()) {
+        $functionalOpts[] = $row;
+    }
+}
+
+function setupAccountsParseCategoryId($raw): ?int {
+    if ($raw === null || $raw === '' || $raw === '0') {
+        return null;
+    }
+    $id = (int)$raw;
+    return $id > 0 ? $id : null;
+}
+
 // Handle form submissions
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($_POST['action'])) {
@@ -13,6 +41,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
                 $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $natural_category_id = setupAccountsParseCategoryId($_POST['natural_category_id'] ?? null);
+                $functional_category_id = setupAccountsParseCategoryId($_POST['functional_category_id'] ?? null);
                 $archived = isset($_POST['archived']) ? 1 : 0;
                 $mutable_fund = isset($_POST['mutable_fund']) ? 1 : 0;
                 
@@ -20,8 +50,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
                 if (empty($name)) {
                     echo "Error: Account name is required\n";
                 } else {
-                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, archived, mutable_fund) VALUES (?, ?, ?, ?, ?)");
-                    $stmt->bind_param("sssii", $name, $description, $normal_balance, $archived, $mutable_fund);
+                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, natural_category_id, functional_category_id, archived, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param("sssiiii", $name, $description, $normal_balance, $natural_category_id, $functional_category_id, $archived, $mutable_fund);
                     if ($stmt->execute() === TRUE) {
                         echo "Account added successfully\n";
                     } else {
@@ -36,6 +66,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
                 $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $natural_category_id = setupAccountsParseCategoryId($_POST['natural_category_id'] ?? null);
+                $functional_category_id = setupAccountsParseCategoryId($_POST['functional_category_id'] ?? null);
                 $archived = isset($_POST['archived']) ? 1 : 0;
                 $mutable_fund = isset($_POST['mutable_fund']) ? 1 : 0;
                 
@@ -50,8 +82,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
                     $result = $check_stmt->get_result();
                     
                     if ($result->num_rows > 0) {
-                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, archived=?, mutable_fund=? WHERE id=?");
-                        $stmt->bind_param("sssiii", $name, $description, $normal_balance, $archived, $mutable_fund, $id);
+                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, natural_category_id=?, functional_category_id=?, archived=?, mutable_fund=? WHERE id=?");
+                        $stmt->bind_param("sssiiiii", $name, $description, $normal_balance, $natural_category_id, $functional_category_id, $archived, $mutable_fund, $id);
                         if ($stmt->execute() === TRUE) {
                             echo "Account updated successfully\n";
                         } else {
@@ -119,11 +151,26 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     // Check if 'show_archived' parameter is set
     $show_archived = isset($_GET['show_archived']) && $_GET['show_archived'] == '1';
 
-    // Build query for accounts
+    // Build query for accounts with category names
     if ($show_archived) {
-        $accounts_query = "SELECT id, name, description, normal_balance, archived, mutable_fund FROM accounts ORDER BY name";
+        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.archived, a.mutable_fund,
+                                  a.natural_category_id, a.functional_category_id,
+                                  COALESCE(nc.name, '') AS natural_name,
+                                  COALESCE(fc.name, '') AS functional_name
+                           FROM accounts a
+                           LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
+                           LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
+                           ORDER BY a.name";
     } else {
-        $accounts_query = "SELECT id, name, description, normal_balance, archived, mutable_fund FROM accounts WHERE archived = FALSE ORDER BY name";
+        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.archived, a.mutable_fund,
+                                  a.natural_category_id, a.functional_category_id,
+                                  COALESCE(nc.name, '') AS natural_name,
+                                  COALESCE(fc.name, '') AS functional_name
+                           FROM accounts a
+                           LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
+                           LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
+                           WHERE a.archived = FALSE
+                           ORDER BY a.name";
     }
 
     $accounts_result = $db->query($accounts_query);
@@ -155,6 +202,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
                     <th>Name</th>
                     <th>Description</th>
                     <th>Normal Balance</th>
+                    <th>Natural</th>
+                    <th>Functional</th>
                     <th>Archived</th>
                     <th>Mut. Fund</th>
                 </tr>
@@ -162,17 +211,21 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             <tbody id="accountsTableBody">
                 <?php if ($accounts_result && $accounts_result->num_rows > 0): ?>
                     <?php while ($account = $accounts_result->fetch_assoc()): ?>
-                        <tr data-id="<?= $account['id'] ?>">
+                        <tr data-id="<?= $account['id'] ?>"
+                            data-natural-id="<?= $account['natural_category_id'] !== null ? (int)$account['natural_category_id'] : '' ?>"
+                            data-functional-id="<?= $account['functional_category_id'] !== null ? (int)$account['functional_category_id'] : '' ?>">
                             <td><?= htmlspecialchars($account['name']) ?></td>
                             <td><?= htmlspecialchars($account['description'] ?? '') ?></td>
                             <td><?= htmlspecialchars($account['normal_balance']) ?></td>
+                            <td><?= htmlspecialchars($account['natural_name'] !== '' ? $account['natural_name'] : '—') ?></td>
+                            <td><?= htmlspecialchars($account['functional_name'] !== '' ? $account['functional_name'] : '—') ?></td>
                             <td><?= $account['archived'] ? 'Yes' : 'No' ?></td>
                             <td><?= $account['mutable_fund'] ? 'Yes' : 'No' ?></td>
                         </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="5" class="text-center">No accounts found.</td>
+                        <td colspan="7" class="text-center">No accounts found.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -202,6 +255,28 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
                     <option value="debit">Debit</option>
                     <option value="credit">Credit</option>
                 </select>
+            </div>
+
+            <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                    <label for="natural_category_id" class="form-label">Natural Category</label>
+                    <select class="form-select" id="natural_category_id" name="natural_category_id">
+                        <option value="">— Optional —</option>
+                        <?php foreach ($naturalOpts as $opt): ?>
+                            <option value="<?= (int)$opt['id'] ?>"><?= htmlspecialchars($opt['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">Shown as a read-only label on budget lines.</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="functional_category_id" class="form-label">Functional Category</label>
+                    <select class="form-select" id="functional_category_id" name="functional_category_id">
+                        <option value="">— Optional —</option>
+                        <?php foreach ($functionalOpts as $opt): ?>
+                            <option value="<?= (int)$opt['id'] ?>"><?= htmlspecialchars($opt['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
             </div>
             
             <div class="mb-3 form-check">
@@ -242,7 +317,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     // Enable/disable buttons based on row selection
     tableBody.addEventListener('click', function(event) {
         const row = event.target.closest('tr');
-        if (row) {
+        if (row && row.dataset.id) {
             // Deselect previous row
             if (selectedRow) {
                 selectedRow.classList.remove('table-primary');
@@ -285,14 +360,16 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         const name = selectedRow.cells[0].textContent;
         const description = selectedRow.cells[1].textContent;
         const normal_balance = selectedRow.cells[2].textContent;
-        const archived = selectedRow.cells[3].textContent === 'Yes';
-        const mutable_fund = selectedRow.cells[4].textContent === 'Yes';
+        const archived = selectedRow.cells[5].textContent === 'Yes';
+        const mutable_fund = selectedRow.cells[6].textContent === 'Yes';
         
         // Fill form
         accountId.value = id;
         document.getElementById('name').value = name;
         document.getElementById('description').value = description;
         document.getElementById('normal_balance').value = normal_balance;
+        document.getElementById('natural_category_id').value = selectedRow.dataset.naturalId || '';
+        document.getElementById('functional_category_id').value = selectedRow.dataset.functionalId || '';
         document.getElementById('archived').checked = archived;
         document.getElementById('mutable_fund').checked = mutable_fund;
         
@@ -330,7 +407,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         }
         
         const id = selectedRow.getAttribute('data-id');
-        const isCurrentlyArchived = selectedRow.cells[3].textContent.trim() === 'Yes';
+        const isCurrentlyArchived = selectedRow.cells[5].textContent.trim() === 'Yes';
         const newArchivedState = !isCurrentlyArchived;
         
         if (confirm(`Are you sure you want to ${newArchivedState ? 'archive' : 'unarchive'} this account?`)) {
