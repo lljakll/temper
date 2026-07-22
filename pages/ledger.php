@@ -3,12 +3,15 @@
 
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/ledger_engine.php';
+require_once __DIR__ . '/../includes/budget_utils.php';
 require_once __DIR__ . '/../includes/permissions.php';
 
     $success = null;
     $error = null;
     $ledgerActor = getCurrentUser();
     $canWriteLedger = $ledgerActor && userHasPermission($db, (int)$ledgerActor['id'], 'page.ledger.write');
+    // Ensure budget_id column exists before any ledger queries
+    ledgerRequireTables($db);
 
     if (isset($_GET['download_document']) || isset($_GET['preview_document'])) {
         $isPreview = isset($_GET['preview_document']);
@@ -146,6 +149,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             $det['description'] = '';
             $det['memo'] = $fullMemo;
         }
+        $det['budget_id'] = !empty($det['budget_id']) ? (int)$det['budget_id'] : '';
         $lines = [];
         foreach ($det['lines'] as $l) {
             $lineType = strtolower(trim((string)($l['type'] ?? 'debit')));
@@ -406,6 +410,13 @@ require_once __DIR__ . '/../includes/permissions.php';
             $c = trim($_POST['check_number'] ?? '');
             $desc = trim($_POST['description'] ?? '');
             $mem = trim($_POST['memo'] ?? '');
+            $budgetIdRaw = (int)($_POST['budget_id'] ?? 0);
+            $budgetId = $budgetIdRaw > 0 ? $budgetIdRaw : null;
+            $allowBudgetOutOfPeriod = in_array(
+                (string)($_POST['allow_budget_out_of_period'] ?? '0'),
+                ['1', 'true'],
+                true
+            );
             $tx_id = (int)($_POST['tx_id'] ?? 0);
             $lines = json_decode($_POST['lines_json'] ?? '[]', true) ?: [];
 
@@ -417,7 +428,114 @@ require_once __DIR__ . '/../includes/permissions.php';
                 true
             );
 
-            if (!$d) {
+            $budgetRow = null;
+            $budgetPeriodError = null;
+            if ($budgetId !== null) {
+                if (!budgetIsAssignableId($db, $budgetId)) {
+                    $budgetPeriodError = 'Selected budget is not available for transactions.';
+                } else {
+                    $budgetRow = budgetFetchById($db, $budgetId);
+                    if ($budgetRow && $d && !budgetDateInPeriod($d, $budgetRow['start_date'], $budgetRow['end_date'])) {
+                        if (!$allowBudgetOutOfPeriod) {
+                            $budgetPeriodError = 'Transaction date is outside the selected budget period ('
+                                . budgetFormatPeriodLabel($budgetRow['start_date'], $budgetRow['end_date'])
+                                . '). Confirm in the form if this is intentional.';
+                        }
+                    }
+                }
+            }
+
+            // Cleared/reconciled: allow budget-only update without re-validating locked header/lines
+            $handledBudgetOnly = false;
+            if ($tx_id > 0 && empty($error)) {
+                $lockedTx = ledgerFetchTransaction($db, $tx_id);
+                if ($lockedTx && !ledgerIsEditable($lockedTx)) {
+                    $handledBudgetOnly = true;
+                    $oldBudgetId = !empty($lockedTx['budget_id']) ? (int)$lockedTx['budget_id'] : 0;
+                    $newBudgetId = $budgetId !== null ? (int)$budgetId : 0;
+                    if ($oldBudgetId === $newBudgetId) {
+                        $error = 'This transaction is read-only (cleared or reconciled). Only the budget may be changed.';
+                    } else {
+                        // Period check uses the locked transaction date, not a tampered POST date
+                        $lockedDate = (string)($lockedTx['transaction_date'] ?? '');
+                        if ($budgetId !== null && $lockedDate !== '') {
+                            if (!budgetIsAssignableId($db, $budgetId)) {
+                                $error = 'Selected budget is not available for transactions.';
+                            } else {
+                                $bRow = budgetFetchById($db, $budgetId);
+                                if (
+                                    $bRow
+                                    && !budgetDateInPeriod($lockedDate, $bRow['start_date'], $bRow['end_date'])
+                                    && !$allowBudgetOutOfPeriod
+                                ) {
+                                    $error = 'Transaction date is outside the selected budget period ('
+                                        . budgetFormatPeriodLabel($bRow['start_date'], $bRow['end_date'])
+                                        . '). Confirm in the form if this is intentional.';
+                                }
+                            }
+                        }
+                        if (empty($error)) {
+                            try {
+                                ledgerUpdateHeader(
+                                    $db,
+                                    $tx_id,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    $budgetId,
+                                    true
+                                );
+                                $describe = ledgerDescribeTransactionUpdate(
+                                    $db,
+                                    $lockedTx,
+                                    [
+                                        'transaction_date' => (string)($lockedTx['transaction_date'] ?? ''),
+                                        'pay_to' => (string)($lockedTx['pay_to'] ?? ''),
+                                        'reference_number' => (string)($lockedTx['reference_number'] ?? ''),
+                                        'check_number' => (string)($lockedTx['check_number'] ?? ''),
+                                        'memo' => (string)($lockedTx['memo'] ?? ''),
+                                        'budget_id' => $newBudgetId,
+                                    ],
+                                    array_map(static function ($ol) {
+                                        return [
+                                            'aid' => (int)($ol['account_id'] ?? 0),
+                                            'fid' => $ol['fund_id'] ?? null,
+                                            'am' => (float)($ol['amount'] ?? 0),
+                                            't' => (string)($ol['type'] ?? 'debit'),
+                                            'nid' => $ol['natural_category_id'] ?? null,
+                                            'fid2' => $ol['functional_category_id'] ?? null,
+                                        ];
+                                    }, $lockedTx['lines'] ?? [])
+                                );
+                                ledgerLogEvent(
+                                    $db,
+                                    $tx_id,
+                                    'updated',
+                                    $actor ? (int)$actor['id'] : null,
+                                    $actor['username'] ?? 'system',
+                                    $describe['summary'] !== ''
+                                        ? $describe['summary']
+                                        : 'Budget updated on cleared/reconciled transaction.',
+                                    [
+                                        'budget_only' => true,
+                                        'status' => (string)($lockedTx['status'] ?? ''),
+                                        'changes' => $describe['changes'],
+                                    ]
+                                );
+                                $success = "Transaction #$tx_id budget updated.";
+                            } catch (Throwable $e) {
+                                $error = 'Budget update failed: ' . $e->getMessage();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ($handledBudgetOnly) {
+                // Budget-only save finished (success or error already set)
+            } elseif (!$d) {
                 $error = "Date is required.";
             } elseif (empty($refCheck['ok'])) {
                 $error = $refCheck['error'] ?? 'Invalid Reference #.';
@@ -435,6 +553,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                     : '';
                 $error = 'Reference # ' . $ref . ' is already used' . $hint
                     . '. Confirm reuse in the form if this is intentional.';
+            } elseif ($budgetPeriodError) {
+                $error = $budgetPeriodError;
             } elseif (count($lines) < 2) {
                 $error = "Every transaction must have at least 2 lines.";
             } else {
@@ -478,8 +598,9 @@ require_once __DIR__ . '/../includes/permissions.php';
                             $error = "This transaction is read-only (cleared or reconciled).";
                         } else {
                             $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
-                            $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, memo=? WHERE id=?");
-                            $upd->bind_param("sssssi", $d, $c, $p, $ref, $mm, $tx_id);
+                            $budgetBind = $budgetId !== null ? (string)$budgetId : null;
+                            $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, memo=?, budget_id=? WHERE id=?");
+                            $upd->bind_param("ssssssi", $d, $c, $p, $ref, $mm, $budgetBind, $tx_id);
                             if ($upd->execute()) {
                                 $upd->close();
 
@@ -499,6 +620,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         'reference_number' => $ref,
                                         'check_number' => $c,
                                         'memo' => $mm,
+                                        'budget_id' => $budgetId ?? 0,
                                     ],
                                     $vlines
                                 );
@@ -543,7 +665,9 @@ require_once __DIR__ . '/../includes/permissions.php';
                             $p,
                             (string)$ref,
                             $mm,
-                            $createdBy
+                            $createdBy,
+                            null,
+                            $budgetId
                         );
                         $chk = $db->prepare('UPDATE transaction_details SET check_number = ? WHERE id = ?');
                         $chk->bind_param('si', $c, $tid);
@@ -589,6 +713,8 @@ require_once __DIR__ . '/../includes/permissions.php';
     $fr = $db->query("SELECT id,name,code FROM funds WHERE is_active=TRUE AND archived=FALSE ORDER BY name");
     $nr = $db->query("SELECT id,name FROM natural_categories WHERE archived=FALSE ORDER BY name");
     $fur = $db->query("SELECT id,name FROM functional_categories WHERE archived=FALSE ORDER BY name");
+    $budgetOptions = budgetFetchTransactionOptions($db);
+    $defaultBudgetIdToday = budgetDefaultIdForDate($db, date('Y-m-d'));
 
     $aopt = '';
     if ($ar) {
@@ -928,7 +1054,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 </div>
             </div>
             <div class="card-body flex-grow-1 overflow-auto" style="min-height: 0;">
-                <form id="txForm" method="post">
+                <form id="txForm" method="post" data-dirty-track>
                     <input type="hidden" name="tx_id" id="tx_id">
                     <input type="hidden" name="lines_json" id="lines_json">
 
@@ -963,11 +1089,22 @@ require_once __DIR__ . '/../includes/permissions.php';
                             <label class="form-label small mb-1">Check #</label>
                             <input type="text" class="form-control form-control-sm" name="check_number" id="check_number">
                         </div>
+                        <div class="col-12 col-sm-8 col-md-4 col-xl-2">
+                            <label class="form-label small mb-1" for="budget_id">Budget</label>
+                            <select class="form-select form-select-sm" name="budget_id" id="budget_id"
+                                    data-bs-toggle="tooltip" data-bs-placement="top"
+                                    data-bs-html="true" title="">
+                                <option value="">— None —</option>
+                            </select>
+                            <div class="form-text small text-warning d-none lh-sm" id="budgetPeriodWarn" style="font-size:0.7rem;"></div>
+                            <div class="form-text small text-warning d-none lh-sm" id="budgetStatusWarn" style="font-size:0.7rem;"></div>
+                            <input type="hidden" name="allow_budget_out_of_period" id="allow_budget_out_of_period" value="0">
+                        </div>
                         <div class="col-12 col-sm-4 col-md-3 col-xl-2">
                             <label class="form-label small mb-1">Description</label>
                             <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Short description">
                         </div>
-                        <div class="col-12 col-md-12 col-xl-4">
+                        <div class="col-12 col-md-12 col-xl-3">
                             <label class="form-label small mb-1">Memo</label>
                             <input type="text" class="form-control form-control-sm" name="memo" id="memo" placeholder="Additional notes">
                         </div>
@@ -1155,6 +1292,142 @@ require_once __DIR__ . '/../includes/permissions.php';
     const fundOpts = `<?= $fopt ?>`;
     const natOpts = `<?= $nopt ?>`;
     const funcOpts = `<?= $fuopt ?>`;
+    const budgetOptions = <?= json_encode($budgetOptions, JSON_UNESCAPED_UNICODE) ?> || [];
+    const defaultBudgetIdToday = <?= $defaultBudgetIdToday !== null ? (int)$defaultBudgetIdToday : 'null' ?>;
+    const budgetSelect = document.getElementById('budget_id');
+    const budgetPeriodWarn = document.getElementById('budgetPeriodWarn');
+    const budgetStatusWarn = document.getElementById('budgetStatusWarn');
+    const budgetOutOfPeriodFlag = document.getElementById('allow_budget_out_of_period');
+    /** When true, date changes auto-pick the covering active budget. Cleared after manual budget change. */
+    let budgetAutoMode = true;
+    /** Cleared/reconciled edit: only budget may change; other header/line fields stay locked. */
+    let budgetOnlyEditMode = false;
+    const BUDGET_STATUS_WARN_MSG = 'This transaction is already cleared/reconciled. Changing budget will not affect the audit trail but may impact reporting.';
+
+    function budgetById(id) {
+        if (!id) return null;
+        return budgetOptions.find(b => String(b.id) === String(id)) || null;
+    }
+    /** Standard Bootstrap tooltip title: period, then description (HTML for line break). */
+    function budgetTooltipTitle(b) {
+        if (!b) return '';
+        const period = b.period_label || formatPeriodMdY(b.start_date || '', b.end_date || '');
+        if (!period) return '';
+        const desc = (b.description || '').trim();
+        return desc ? (escHtml(period) + '<br>' + escHtml(desc)) : escHtml(period);
+    }
+    /** Refresh Bootstrap tooltip on #budget_id for the current selection. */
+    function syncBudgetSelectTooltip() {
+        if (!budgetSelect || typeof bootstrap === 'undefined' || !bootstrap.Tooltip) return;
+        const existing = bootstrap.Tooltip.getInstance(budgetSelect);
+        if (existing) existing.dispose();
+        const title = budgetTooltipTitle(budgetById(budgetSelect.value));
+        if (!title) {
+            budgetSelect.removeAttribute('title');
+            budgetSelect.removeAttribute('data-bs-original-title');
+            return;
+        }
+        budgetSelect.setAttribute('title', title);
+        new bootstrap.Tooltip(budgetSelect);
+    }
+    function fillBudgetSelect(selectedId) {
+        if (!budgetSelect) return;
+        const keep = selectedId != null && selectedId !== '' ? String(selectedId) : '';
+        budgetSelect.innerHTML = '<option value="">— None —</option>';
+        budgetOptions.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = String(b.id);
+            // Dropdown shows Name only
+            opt.textContent = b.name || b.label || ('Budget #' + b.id);
+            opt.dataset.start = b.start_date || '';
+            opt.dataset.end = b.end_date || '';
+            opt.dataset.period = b.period_label || '';
+            opt.dataset.status = b.status || '';
+            if (keep && String(b.id) === keep) opt.selected = true;
+            budgetSelect.appendChild(opt);
+        });
+        // If saved budget is draft/missing from list, still show it as selected
+        if (keep && !budgetById(keep)) {
+            const opt = document.createElement('option');
+            opt.value = keep;
+            opt.textContent = 'Budget #' + keep + ' (unavailable)';
+            opt.selected = true;
+            budgetSelect.appendChild(opt);
+        }
+        if (keep) budgetSelect.value = keep;
+        syncBudgetSelectTooltip();
+    }
+    function formatPeriodMdY(start, end) {
+        const fmt = (iso) => {
+            if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || '';
+            const [y, m, d] = iso.split('-');
+            return m + '/' + d + '/' + y;
+        };
+        if (!start || !end) return '';
+        return fmt(start) + ' - ' + fmt(end);
+    }
+    function isDateInBudgetPeriod(dateStr, budget) {
+        if (!dateStr || !budget) return true;
+        const start = budget.start_date || budget.dataset?.start || '';
+        const end = budget.end_date || budget.dataset?.end || '';
+        if (!start || !end) return true;
+        return dateStr >= start && dateStr <= end;
+    }
+    function defaultBudgetIdForDate(dateStr) {
+        if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+        // Prefer active covering the date
+        const active = budgetOptions.filter(b => b.status === 'active' && dateStr >= b.start_date && dateStr <= b.end_date);
+        if (active.length) return active[0].id;
+        const other = budgetOptions.filter(b => dateStr >= b.start_date && dateStr <= b.end_date);
+        return other.length ? other[0].id : null;
+    }
+    function clearBudgetOutOfPeriodFlag() {
+        if (budgetOutOfPeriodFlag) budgetOutOfPeriodFlag.value = '0';
+        if (budgetPeriodWarn) {
+            budgetPeriodWarn.classList.add('d-none');
+            budgetPeriodWarn.textContent = '';
+        }
+    }
+    function updateBudgetPeriodWarning() {
+        if (!budgetSelect || !budgetPeriodWarn) return;
+        const dateStr = document.getElementById('transaction_date')?.value || '';
+        const bid = budgetSelect.value;
+        if (!bid || !dateStr) {
+            clearBudgetOutOfPeriodFlag();
+            return;
+        }
+        const b = budgetById(bid);
+        const start = b ? b.start_date : '';
+        const end = b ? b.end_date : '';
+        if (!start || !end || (dateStr >= start && dateStr <= end)) {
+            clearBudgetOutOfPeriodFlag();
+            return;
+        }
+        const period = b ? b.period_label : formatPeriodMdY(start, end);
+        budgetPeriodWarn.textContent = 'Date is outside budget period (' + period + '). Save will ask you to confirm.';
+        budgetPeriodWarn.classList.remove('d-none');
+        if (budgetOutOfPeriodFlag) budgetOutOfPeriodFlag.value = '0';
+    }
+    function applyBudgetForDate(dateStr, { force = false } = {}) {
+        if (!budgetSelect) return;
+        if (!force && !budgetAutoMode) {
+            updateBudgetPeriodWarning();
+            return;
+        }
+        const defId = defaultBudgetIdForDate(dateStr);
+        if (defId != null) {
+            fillBudgetSelect(defId);
+        } else if (force || !budgetSelect.value) {
+            fillBudgetSelect('');
+        }
+        clearBudgetOutOfPeriodFlag();
+        updateBudgetPeriodWarning();
+    }
+    function setBudgetSelection(budgetId, { auto = false } = {}) {
+        budgetAutoMode = !!auto;
+        fillBudgetSelect(budgetId || '');
+        updateBudgetPeriodWarning();
+    }
 
     function buildQueryString(preservePage = true) {
         const p = new URLSearchParams();
@@ -1194,6 +1467,39 @@ require_once __DIR__ . '/../includes/permissions.php';
         return { amount: 0, type: '' };
     }
 
+    /** Original budget id for the loaded transaction (string, or '' for none). */
+    function originalBudgetId() {
+        if (!currentViewData || currentViewData.budget_id == null || currentViewData.budget_id === '') {
+            return '';
+        }
+        return String(currentViewData.budget_id);
+    }
+
+    function currentBudgetId() {
+        return budgetSelect && budgetSelect.value ? String(budgetSelect.value) : '';
+    }
+
+    /** True when budget differs from the loaded transaction (budget-only save candidate). */
+    function isBudgetSelectionChanged() {
+        return originalBudgetId() !== currentBudgetId();
+    }
+
+    /**
+     * Enable/disable Save.
+     * Normal edit: requires balanced lines (unchanged).
+     * Budget-only (cleared/reconciled): enable when budget selection changed.
+     */
+    function updateSaveButtonState(balanced) {
+        if (!saveBtn) return;
+        if (budgetOnlyEditMode) {
+            saveBtn.disabled = !isBudgetSelectionChanged();
+            return;
+        }
+        if (typeof balanced === 'boolean') {
+            saveBtn.disabled = !balanced;
+        }
+    }
+
     function recalcTotals() {
         let deb = 0, cred = 0;
         linesBody.querySelectorAll('tr').forEach(row => {
@@ -1212,7 +1518,7 @@ require_once __DIR__ . '/../includes/permissions.php';
 
         const lineCount = linesBody.querySelectorAll('tr').length;
         const balanced = Math.abs(diff) < 0.005 && lineCount >= 2;
-        saveBtn.disabled = !balanced;
+        updateSaveButtonState(balanced);
 
         const status = document.getElementById('balanceStatus');
         status.textContent = balanced ? '✓ Balanced' : (lineCount ? '⚠ Not balanced' : 'Add at least 2 lines');
@@ -1302,7 +1608,31 @@ require_once __DIR__ . '/../includes/permissions.php';
         recalcTotals();
     }
 
-    function setMainFieldsReadOnly(readonly) {
+    function isTxClearedOrReconciled(data) {
+        if (!data) return false;
+        if (data.is_editable === false || data.is_editable === 0 || data.is_editable === '0') return true;
+        const st = String(data.status || '').toLowerCase();
+        return st === 'cleared' || st === 'reconciled';
+    }
+
+    function setBudgetStatusWarning(show) {
+        if (!budgetStatusWarn) return;
+        if (show) {
+            budgetStatusWarn.textContent = BUDGET_STATUS_WARN_MSG;
+            budgetStatusWarn.classList.remove('d-none');
+        } else {
+            budgetStatusWarn.textContent = '';
+            budgetStatusWarn.classList.add('d-none');
+        }
+    }
+
+    /**
+     * Lock/unlock main header fields.
+     * @param {boolean} readonly
+     * @param {{budgetEnabled?: boolean}} [opts] When readonly and budgetEnabled, keep budget selectable (cleared/reconciled budget-only edit).
+     */
+    function setMainFieldsReadOnly(readonly, opts = {}) {
+        const budgetEnabled = !!opts.budgetEnabled;
         ['transaction_date', 'reference_number', 'pay_to', 'check_number', 'description', 'memo'].forEach(fid => {
             const el = document.getElementById(fid);
             if (!el) return;
@@ -1310,6 +1640,49 @@ require_once __DIR__ . '/../includes/permissions.php';
             if (readonly) el.classList.add('bg-body-secondary');
             else el.classList.remove('bg-body-secondary');
         });
+        if (budgetSelect) {
+            const lockBudget = readonly && !budgetEnabled;
+            budgetSelect.disabled = lockBudget;
+            if (lockBudget) budgetSelect.classList.add('bg-body-secondary');
+            else budgetSelect.classList.remove('bg-body-secondary');
+            // Refresh tooltip so disabled state doesn't leave a stuck popover
+            syncBudgetSelectTooltip();
+        }
+        if (!readonly || !budgetEnabled) {
+            setBudgetStatusWarning(false);
+        }
+    }
+
+    /** Enter budget-only edit UI for a cleared/reconciled transaction (lines stay locked). */
+    function applyBudgetOnlyEditMode(data) {
+        budgetOnlyEditMode = true;
+        budgetAutoMode = false;
+        setMainFieldsReadOnly(true, { budgetEnabled: true });
+        setBudgetStatusWarning(true);
+        formTitle.textContent = data && data.reference_number
+            ? ('Edit budget — ' + data.reference_number + ' (#' + data.id + ')')
+            : ('Edit budget — Transaction #' + (data && data.id ? data.id : (txIdField.value || '')));
+        updateModeBadge('edit');
+        if (addLineBtn) addLineBtn.style.display = 'none';
+        if (resetLinesBtn) resetLinesBtn.style.display = 'none';
+        if (saveBtn) saveBtn.style.display = '';
+        if (cancelBtn2) cancelBtn2.style.display = '';
+        // Lines remain disabled (view-style)
+        linesBody.querySelectorAll('tr').forEach(row => {
+            row.querySelectorAll('select, input').forEach(el => {
+                el.disabled = true;
+                el.classList.add('bg-body-secondary');
+            });
+            const rem = row.querySelector('.remove-line');
+            if (rem) rem.style.display = 'none';
+        });
+        setDocUploadVisible(false);
+        renderDocumentsList((data && data.documents) || (currentViewData && currentViewData.documents) || [], false);
+        updateBudgetPeriodWarning();
+        syncBudgetSelectTooltip();
+        // Save stays off until the user actually changes budget
+        updateSaveButtonState();
+        recalcTotals();
     }
 
     function escHtml(s) {
@@ -1464,7 +1837,9 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     function isTxEditMode() {
-        return txIdField.value !== '' && !document.getElementById('transaction_date').readOnly;
+        if (txIdField.value === '') return false;
+        // Full edit (date unlocked) or budget-only edit on cleared/reconciled
+        return !document.getElementById('transaction_date').readOnly || budgetOnlyEditMode;
     }
 
     function parseJsonResponse(r) {
@@ -1841,6 +2216,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     function showBlankForm() {
         txIdField.value = '';
         currentViewData = null;
+        budgetOnlyEditMode = false;
         // Keep sessionStorage queue so a failed save can re-open the same tx and restore it
         clearPendingDocDeletes(false);
         form.reset();
@@ -1848,12 +2224,14 @@ require_once __DIR__ . '/../includes/permissions.php';
         renderMetaSection(null);
         setDocUploadVisible(false);
         setMainFieldsReadOnly(true);
+        setBudgetStatusWarning(false);
         formTitle.textContent = 'Transaction Details';
         updateModeBadge('blank');
         if (addLineBtn) addLineBtn.style.display = 'none';
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
         if (saveBtn) saveBtn.style.display = 'none';
         if (cancelBtn2) cancelBtn2.style.display = 'none';
+        markTxFormClean();
     }
 
     function populateView(data) {
@@ -1877,6 +2255,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
         document.getElementById('memo').value = data.memo || '';
+        setBudgetSelection(data.budget_id || '', { auto: false });
         clearReferenceReuseState();
         refreshReferenceSuggestion().then(updateReferenceHintVisibility);
         updateReferenceHintVisibility();
@@ -1888,7 +2267,9 @@ require_once __DIR__ . '/../includes/permissions.php';
             linesBody.appendChild(row);
             // no listeners for view
         });
+        budgetOnlyEditMode = false;
         setMainFieldsReadOnly(true);
+        setBudgetStatusWarning(false);
         formTitle.textContent = data.reference_number
             ? ('Transaction ' + data.reference_number + ' (#' + data.id + ')')
             : ('Transaction #' + data.id);
@@ -1901,6 +2282,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         setDocUploadVisible(false);
         // Re-render docs without delete buttons in view mode
         renderDocumentsList((data && data.documents) || [], false);
+        markTxFormClean();
     }
 
     function populateEditable(data) {
@@ -1914,12 +2296,28 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
         document.getElementById('memo').value = data.memo || '';
+        // Keep saved budget; do not auto-override unless user changes the date later
+        setBudgetSelection(data.budget_id || '', { auto: false });
         clearReferenceReuseState();
         refreshReferenceSuggestion().then(updateReferenceHintVisibility);
         updateReferenceHintVisibility();
 
         linesBody.innerHTML = '';
         const lines = data.lines || [];
+        const locked = isTxClearedOrReconciled(data);
+
+        if (locked) {
+            // Cleared/reconciled: show lines read-only; only budget is editable
+            lines.forEach(l => {
+                const row = createLineRow(l, true);
+                linesBody.appendChild(row);
+            });
+            renderMetaSection(data);
+            applyBudgetOnlyEditMode(data);
+            recalcTotals();
+            return;
+        }
+
         if (lines.length > 0) {
             lines.forEach(l => {
                 const row = createLineRow(l);
@@ -1930,7 +2328,9 @@ require_once __DIR__ . '/../includes/permissions.php';
             addLine();
             addLine();
         }
+        budgetOnlyEditMode = false;
         setMainFieldsReadOnly(false);
+        setBudgetStatusWarning(false);
         formTitle.textContent = data.reference_number
             ? ('Edit ' + data.reference_number + ' (#' + data.id + ')')
             : ('Edit Transaction #' + data.id);
@@ -1949,7 +2349,16 @@ require_once __DIR__ . '/../includes/permissions.php';
         const id = txIdField.value;
         if (!id) return;
         restorePendingDocDeletes(id);
+
+        // Cleared/reconciled: unlock budget only
+        if (isTxClearedOrReconciled(currentViewData)) {
+            applyBudgetOnlyEditMode(currentViewData || { id: id });
+            return;
+        }
+
+        budgetOnlyEditMode = false;
         setMainFieldsReadOnly(false);
+        setBudgetStatusWarning(false);
         formTitle.textContent = 'Edit Transaction #' + id;
         updateModeBadge('edit');
         if (addLineBtn) addLineBtn.style.display = '';
@@ -1969,19 +2378,25 @@ require_once __DIR__ . '/../includes/permissions.php';
         setDocUploadVisible(canEdit);
         renderDocumentsList((currentViewData && currentViewData.documents) || [], canEdit);
         recalcTotals();
+        markTxFormClean();
     }
 
     function showFormForAdd() {
         txIdField.value = '';
         currentViewData = null;
+        budgetOnlyEditMode = false;
         form.reset();
-        document.getElementById('transaction_date').value = new Date().toISOString().slice(0, 10);
+        const today = new Date().toISOString().slice(0, 10);
+        document.getElementById('transaction_date').value = today;
         if (refInput) refInput.value = '';
         clearReferenceReuseState();
+        budgetAutoMode = true;
+        applyBudgetForDate(today, { force: true });
         linesBody.innerHTML = '';
         addLine();
         addLine();
         setMainFieldsReadOnly(false);
+        setBudgetStatusWarning(false);
         formTitle.textContent = 'Add New Transaction';
         updateModeBadge('add');
         if (addLineBtn) addLineBtn.style.display = '';
@@ -1993,20 +2408,17 @@ require_once __DIR__ . '/../includes/permissions.php';
         recalcTotals();
         refreshReferenceSuggestion().then(updateReferenceHintVisibility);
         updateReferenceHintVisibility();
+        markTxFormClean();
     }
 
     function updateButtonStates() {
         const checked = txTableBody.querySelectorAll('.tx-cb:checked');
         const count = checked.length;
-        let hasCleared = false;
-        checked.forEach(cb => {
-            const row = cb.closest('tr');
-            if (row && row.dataset.cleared === '1') hasCleared = true;
-        });
         const multi = count > 1;
 
         addTxBtn.disabled = multi;
-        editTxBtn.disabled = (count !== 1 || hasCleared);
+        // Edit allowed for single selection including cleared/reconciled (budget-only there)
+        editTxBtn.disabled = (count !== 1);
         clearTxBtn.disabled = (count === 0);
         reconcileTxBtn.disabled = (count === 0);
     }
@@ -2023,6 +2435,9 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     function hasUnsavedInputs() {
+        if (budgetOnlyEditMode) {
+            return isBudgetSelectionChanged();
+        }
         // form always visible; consider unsaved if has tx id in edit or any data entered
         const fields = ['reference_number', 'pay_to', 'check_number', 'description', 'memo'];
         for (const fid of fields) {
@@ -2034,6 +2449,35 @@ require_once __DIR__ . '/../includes/permissions.php';
         if (hasLineData) return true;
         if (linesBody.querySelectorAll('tr').length > 2) return true;
         return false;
+    }
+
+    function markTxFormClean() {
+        if (form) form.removeAttribute('data-dirty');
+    }
+
+    /**
+     * Navigation / discard dirty: rely on data-dirty (user edits after populate).
+     * Do not use hasUnsavedInputs() alone — view mode fills fields and would false-positive.
+     */
+    function isLedgerFormDirty() {
+        return !!(form && form.getAttribute('data-dirty') === '1');
+    }
+
+    if (typeof window.TemperDirtyForms !== 'undefined') {
+        window.TemperDirtyForms.registerChecker(isLedgerFormDirty);
+    }
+
+    function confirmDiscardTx(message) {
+        if (!isLedgerFormDirty()) {
+            markTxFormClean();
+            return true;
+        }
+        const msg = message
+            || (typeof window.TemperDirtyForms !== 'undefined' && window.TemperDirtyForms.MESSAGE)
+            || 'You have unsaved changes. Leave anyway?';
+        if (!confirm(msg)) return false;
+        markTxFormClean();
+        return true;
     }
 
     // Basic client-side sorting for specified columns
@@ -2104,24 +2548,25 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     // Wire action buttons
     addTxBtn.addEventListener('click', () => {
-        const isEditMode = txIdField.value !== '' && !document.getElementById('transaction_date').readOnly;
-        if (isEditMode && hasUnsavedInputs()) {
-            if (!confirm('You have made changes to the current transaction. Discard changes and start a new transaction?')) {
-                return;
-            }
+        // Prompt only when the user has edited the form since it was loaded
+        if ((isTxEditMode() || budgetOnlyEditMode) && isLedgerFormDirty()) {
+            if (!confirmDiscardTx()) return;
         }
         // clear the current selection when starting add
         txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
         if (selectAll) selectAll.checked = false;
         updateButtonStates();
         showFormForAdd();
+        markTxFormClean();
     });
 
     editTxBtn.addEventListener('click', () => {
         const ids = getSelectedIds();
         if (ids.length !== 1) return;
         const curId = txIdField.value;
-        if (curId == ids[0] && !document.getElementById('transaction_date').readOnly) return; // already editing
+        const alreadyFullEdit = curId == ids[0] && !document.getElementById('transaction_date').readOnly;
+        const alreadyBudgetOnly = curId == ids[0] && budgetOnlyEditMode;
+        if (alreadyFullEdit || alreadyBudgetOnly) return; // already editing
         if (curId == ids[0] && currentViewData) {
             enableEditFromView();
             return;
@@ -2189,6 +2634,7 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     // Cancel form (revert edit->view or deselect+blank) — discard queued deletions
     function cancelFormAction() {
+        if (!confirmDiscardTx()) return;
         clearPendingDocDeletes(true);
         const curId = txIdField.value;
         if (curId && currentViewData && String(currentViewData.id) === String(curId)) {
@@ -2199,6 +2645,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             updateButtonStates();
             showBlankForm();
         }
+        markTxFormClean();
     }
     if (cancelBtn) cancelBtn.addEventListener('click', cancelFormAction);
     if (cancelBtn2) cancelBtn2.addEventListener('click', cancelFormAction);
@@ -2423,7 +2870,32 @@ require_once __DIR__ . '/../includes/permissions.php';
     if (dateElForSeq) {
         dateElForSeq.addEventListener('change', function() {
             refreshReferenceSuggestion();
+            // Auto-select covering active budget when still in auto mode
+            applyBudgetForDate(dateElForSeq.value || '');
+            updateBudgetPeriodWarning();
         });
+    }
+    if (budgetSelect) {
+        fillBudgetSelect(defaultBudgetIdToday || '');
+        budgetSelect.addEventListener('change', function() {
+            // Manual budget choice disables auto-reselect until Add form is opened again
+            budgetAutoMode = false;
+            if (budgetOutOfPeriodFlag) budgetOutOfPeriodFlag.value = '0';
+            updateBudgetPeriodWarning();
+            syncBudgetSelectTooltip();
+            // Keep cleared/reconciled reporting warning visible while in budget-only edit
+            if (budgetOnlyEditMode) {
+                setBudgetStatusWarning(true);
+                // Unlock Save only when budget actually differs from the loaded value
+                updateSaveButtonState();
+            }
+        });
+        // Default empty form on first load (if add mode is shown)
+        if (!txIdField.value) {
+            budgetAutoMode = true;
+            const d0 = document.getElementById('transaction_date')?.value || new Date().toISOString().slice(0, 10);
+            applyBudgetForDate(d0, { force: true });
+        }
     }
     if (refHelpBtn) {
         refHelpBtn.addEventListener('click', function(e) {
@@ -2440,10 +2912,50 @@ require_once __DIR__ . '/../includes/permissions.php';
             e.preventDefault();
 
             const seqVal = (document.getElementById('reference_number')?.value || '').trim();
-            if (!/^\d{6}$/.test(seqVal)) {
+            if (!budgetOnlyEditMode && !/^\d{6}$/.test(seqVal)) {
                 showToast('Reference # must be YY#### (exactly 6 digits, e.g. 260001).', 'warning');
                 document.getElementById('reference_number')?.focus();
                 return;
+            }
+
+            // Budget period check — warn and require confirmation when date is outside period
+            const txDateVal = document.getElementById('transaction_date')?.value || '';
+            const bidVal = budgetSelect?.value || '';
+            if (bidVal && txDateVal) {
+                const b = budgetById(bidVal);
+                const start = b?.start_date || '';
+                const end = b?.end_date || '';
+                if (start && end && (txDateVal < start || txDateVal > end)) {
+                    const period = b?.period_label || formatPeriodMdY(start, end);
+                    const ok = confirm(
+                        'Transaction date ' + txDateVal + ' is outside the selected budget period (' + period + ').\n\n'
+                        + 'Save anyway?'
+                    );
+                    if (!ok) {
+                        showToast('Save cancelled — budget period not confirmed.', 'info');
+                        return;
+                    }
+                    if (budgetOutOfPeriodFlag) budgetOutOfPeriodFlag.value = '1';
+                } else if (budgetOutOfPeriodFlag) {
+                    budgetOutOfPeriodFlag.value = '0';
+                }
+            } else if (budgetOutOfPeriodFlag) {
+                budgetOutOfPeriodFlag.value = '0';
+            }
+
+            // Cleared/reconciled: confirm budget change before save
+            if (budgetOnlyEditMode) {
+                if (!isBudgetSelectionChanged()) {
+                    showToast('No budget change to save.', 'info');
+                    return;
+                }
+                const okStatus = confirm(
+                    BUDGET_STATUS_WARN_MSG + '\n\nSave the new budget assignment?'
+                );
+                if (!okStatus) {
+                    showToast('Save cancelled.', 'info');
+                    return;
+                }
             }
 
             const lines = [];
@@ -2462,7 +2974,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 });
             });
 
-            if (lines.length < 2) {
+            if (!budgetOnlyEditMode && lines.length < 2) {
                 showToast('Every transaction must have at least 2 lines.', 'warning');
                 return;
             }
@@ -2495,6 +3007,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                             try { flash = JSON.parse(flashMatch[1].trim()); } catch (err) { flash = null; }
                         }
                         const saveOk = !!(flash && flash.type === 'success');
+                        if (saveOk) markTxFormClean();
 
                         if (!pendingDeletes.length) {
                             applyMainContent(html);
@@ -2690,16 +3203,21 @@ require_once __DIR__ . '/../includes/permissions.php';
     const clearFilterBtn = document.getElementById('clearFilterBtn');
     const filterSearchEl = document.getElementById('filterSearch');
 
+    function fetchAndReplaceLedger(url) {
+        if (!confirmDiscardTx()) return;
+        fetch(url)
+            .then(r => r.text())
+            .then(html => { applyMainContent(html); });
+    }
+
     if (applyFilterBtn) {
         applyFilterBtn.addEventListener('click', () => {
-            const qs = buildQueryString(false);
-            fetch('pages/ledger.php' + qs)
-                .then(r => r.text())
-                .then(html => { applyMainContent(html); });
+            fetchAndReplaceLedger('pages/ledger.php' + buildQueryString(false));
         });
     }
     if (clearFilterBtn) {
         clearFilterBtn.addEventListener('click', () => {
+            if (!confirmDiscardTx()) return;
             const df = document.getElementById('filterDateFrom');
             const dt = document.getElementById('filterDateTo');
             const sr = document.getElementById('filterSearch');
@@ -2708,8 +3226,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             if (dt) dt.value = '';
             if (sr) sr.value = '';
             if (accf) accf.value = '0';
-            const qs = buildQueryString(false);
-            fetch('pages/ledger.php' + qs)
+            fetch('pages/ledger.php' + buildQueryString(false))
                 .then(r => r.text())
                 .then(html => { applyMainContent(html); });
         });
@@ -2717,15 +3234,13 @@ require_once __DIR__ . '/../includes/permissions.php';
     if (filterSearchEl) {
         filterSearchEl.addEventListener('keydown', function(ev) {
             if (ev.key === 'Enter') {
-                const qs = buildQueryString(false);
-                fetch('pages/ledger.php' + qs)
-                    .then(r => r.text())
-                    .then(html => { applyMainContent(html); });
+                fetchAndReplaceLedger('pages/ledger.php' + buildQueryString(false));
             }
         });
     }
 
     function loadWithPage(pageNum) {
+        if (!confirmDiscardTx()) return;
         const params = new URLSearchParams();
         const dfEl = document.getElementById('filterDateFrom');
         const dtEl = document.getElementById('filterDateTo');

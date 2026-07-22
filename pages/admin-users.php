@@ -1085,7 +1085,7 @@ $permCatalogNoStar = permissionCatalogForUi(false);
 <!-- User Create / Edit Modal -->
 <div class="modal fade" id="usersEditModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <form class="modal-content" id="usersEditForm" autocomplete="off">
+        <form class="modal-content" id="usersEditForm" autocomplete="off" data-dirty-track>
             <div class="modal-header py-2">
                 <h5 class="modal-title h6" id="usersEditModalLabel">User</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -1164,7 +1164,7 @@ $permCatalogNoStar = permissionCatalogForUi(false);
 <!-- Reset Password Modal -->
 <div class="modal fade" id="usersPwModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-sm">
-        <form class="modal-content" id="usersPwForm" autocomplete="off">
+        <form class="modal-content" id="usersPwForm" autocomplete="off" data-dirty-track>
             <div class="modal-header py-2">
                 <h5 class="modal-title h6">Reset password</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -1235,7 +1235,7 @@ $permCatalogNoStar = permissionCatalogForUi(false);
 <!-- Role Create / Edit Modal -->
 <div class="modal fade" id="rolesEditModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <form class="modal-content" id="rolesEditForm" autocomplete="off">
+        <form class="modal-content" id="rolesEditForm" autocomplete="off" data-dirty-track>
             <div class="modal-header py-2">
                 <h5 class="modal-title h6" id="rolesEditModalLabel">Role</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -1484,6 +1484,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
                 document.getElementById('usersPwNew').value = '';
                 document.getElementById('usersPwConfirm').value = '';
                 document.getElementById('usersPwMustChange').checked = true;
+                if (typeof window.TemperDirtyForms !== 'undefined') {
+                    window.TemperDirtyForms.markClean(document.getElementById('usersPwForm'));
+                }
                 pwModal.show();
             });
         });
@@ -1624,6 +1627,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         document.getElementById('usersMustChange').checked = true;
         rebuildRoleChecks([]);
         rebuildCustomPermChecks([]);
+        if (typeof window.TemperDirtyForms !== 'undefined') {
+            window.TemperDirtyForms.markClean(document.getElementById('usersEditForm'));
+        }
         editModal.show();
     }
 
@@ -1646,6 +1652,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         document.getElementById('usersMustChange').checked = !!u.must_change_password;
         rebuildRoleChecks(u.role_ids || [u.role_id]);
         rebuildCustomPermChecks(u.custom_permissions || []);
+        if (typeof window.TemperDirtyForms !== 'undefined') {
+            window.TemperDirtyForms.markClean(document.getElementById('usersEditForm'));
+        }
         editModal.show();
     }
 
@@ -1661,6 +1670,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         document.getElementById('rolesDescription').value = '';
         document.getElementById('rolesDeleteBtn').style.display = 'none';
         rebuildRolePermChecks(['profile.self']);
+        if (typeof window.TemperDirtyForms !== 'undefined') {
+            window.TemperDirtyForms.markClean(document.getElementById('rolesEditForm'));
+        }
         roleModal.show();
     }
 
@@ -1678,6 +1690,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         document.getElementById('rolesDescription').value = r.description || '';
         document.getElementById('rolesDeleteBtn').style.display = roleIsSystem ? 'none' : '';
         rebuildRolePermChecks(r.permissions || []);
+        if (typeof window.TemperDirtyForms !== 'undefined') {
+            window.TemperDirtyForms.markClean(document.getElementById('rolesEditForm'));
+        }
         roleModal.show();
     }
 
@@ -1764,6 +1779,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         postAction(payload).then(function(res) {
             if (!res.success) { toast(res.error || 'Failed', 'danger'); return; }
             toast(res.message || 'Saved', 'success');
+            if (typeof window.TemperDirtyForms !== 'undefined') {
+                window.TemperDirtyForms.markClean(document.getElementById('usersEditForm'));
+            }
             editModal.hide();
             applyState(res);
         }).catch(function() { toast('Request failed', 'danger'); });
@@ -1780,6 +1798,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         }).then(function(res) {
             if (!res.success) { toast(res.error || 'Failed', 'danger'); return; }
             toast(res.message || 'Password reset', 'success');
+            if (typeof window.TemperDirtyForms !== 'undefined') {
+                window.TemperDirtyForms.markClean(document.getElementById('usersPwForm'));
+            }
             pwModal.hide();
             applyState(res);
         }).catch(function() { toast('Request failed', 'danger'); });
@@ -1803,6 +1824,9 @@ $permCatalogNoStar = permissionCatalogForUi(false);
         postAction(payload).then(function(res) {
             if (!res.success) { toast(res.error || 'Failed', 'danger'); return; }
             toast(res.message || 'Saved', 'success');
+            if (typeof window.TemperDirtyForms !== 'undefined') {
+                window.TemperDirtyForms.markClean(document.getElementById('rolesEditForm'));
+            }
             roleModal.hide();
             applyState(res);
         }).catch(function() { toast('Request failed', 'danger'); });

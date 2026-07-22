@@ -13,6 +13,7 @@ function setupSchemaAccounts(): array
     name VARCHAR(100) NOT NULL,
     description TEXT,
     normal_balance ENUM('debit', 'credit') NOT NULL,
+    coa_number VARCHAR(50) NULL,
     natural_category_id INT NULL,
     functional_category_id INT NULL,
     archived BOOLEAN DEFAULT FALSE,

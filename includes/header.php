@@ -5,6 +5,21 @@ require_once __DIR__ . '/../auth.php';
 
 // Central session check (full-page shell)
 requireLogin();
+
+// Idle login timeout for client-side enforcement (System Configuration)
+$temperLoginTimeout = function_exists('getClientLoginTimeoutConfig')
+    ? getClientLoginTimeoutConfig()
+    : ['enabled' => true, 'seconds' => 300];
+$temperLoginTimeoutEnabled = !empty($temperLoginTimeout['enabled']);
+$temperLoginTimeoutSeconds = max(30, (int)($temperLoginTimeout['seconds'] ?? 300));
+
+// Sidebar hover delays (System Configuration → Interface)
+$temperSidebarHoverExpandSec = function_exists('getSidebarHoverExpandDelaySeconds')
+    ? (float)getSidebarHoverExpandDelaySeconds()
+    : 0.5;
+$temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySeconds')
+    ? (float)getSidebarHoverCollapseDelaySeconds()
+    : 2.0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -97,6 +112,12 @@ requireLogin();
         }
 
         /* ── Sidebar (theme-aware surface + text) ────────────────────────── */
+        :root {
+            --temper-sidebar-expanded: 15.5rem;
+            --temper-sidebar-collapsed: 4.25rem;
+            --temper-sidebar-transition: width 0.25s ease, max-width 0.25s ease,
+                flex-basis 0.25s ease, box-shadow 0.25s ease, padding 0.2s ease;
+        }
         .sidebar-panel {
             height: calc(100vh - 1rem);
             max-height: calc(100vh - 1rem);
@@ -123,6 +144,20 @@ requireLogin();
             align-items: center;
             gap: 0.5rem;
             color: var(--bs-body-color);
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        .sidebar-panel .nav-link > i {
+            flex: 0 0 auto;
+            font-size: 1.1rem;
+            width: 1.25rem;
+            text-align: center;
+        }
+        .sidebar-panel .nav-link .sidebar-label {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .sidebar-panel .nav-link:hover,
         .sidebar-panel .nav-link:focus {
@@ -150,6 +185,30 @@ requireLogin();
             border-color: var(--bs-border-color);
             opacity: 1;
         }
+        .sidebar-toggle {
+            flex: 0 0 auto;
+            line-height: 1;
+            color: var(--bs-secondary-color) !important;
+            border: 0;
+            background: transparent;
+            padding: 0.25rem 0.35rem;
+            border-radius: 0.375rem;
+        }
+        .sidebar-toggle:hover,
+        .sidebar-toggle:focus {
+            color: var(--bs-primary) !important;
+            background-color: rgba(var(--bs-primary-rgb), 0.1);
+        }
+        .sidebar-panel .sidebar-action-btn {
+            justify-content: flex-start;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .sidebar-panel .sidebar-action-btn > i {
+            flex: 0 0 auto;
+            width: 1.25rem;
+            text-align: center;
+        }
 
         /* Offcanvas-md: sticky column on desktop */
         #appSidebar.offcanvas {
@@ -158,17 +217,211 @@ requireLogin();
             --bs-offcanvas-color: var(--bs-body-color);
         }
         @media (min-width: 768px) {
+            /*
+             * Desktop shell layout:
+             * - Sidebar column owns a fixed width (expanded or collapsed rail).
+             * - Main content flexes to fill the rest and must never be covered after hover ends.
+             * - Hover peek overlays via position:absolute only while .sidebar-hover-expand is set;
+             *   all offcanvas insets (top/left/bottom) are reset when not peeking so Bootstrap's
+             *   .offcanvas-start bottom:0 / left:0 cannot leave a full-height panel over content.
+             */
+            #temperSidebarCol {
+                flex: 0 0 var(--temper-sidebar-expanded);
+                max-width: var(--temper-sidebar-expanded);
+                width: var(--temper-sidebar-expanded);
+                position: relative;
+                z-index: 2;
+                align-self: flex-start;
+                min-height: calc(100vh - 1rem);
+                overflow: visible;
+                transition: flex-basis 0.25s ease, max-width 0.25s ease, width 0.25s ease;
+            }
             #appSidebar.offcanvas-md {
-                position: sticky;
-                top: 0.5rem;
+                /* Override Bootstrap .offcanvas / .offcanvas-start fixed insets */
+                position: sticky !important;
+                top: 0.5rem !important;
+                left: auto !important;
+                right: auto !important;
+                bottom: auto !important;
                 transform: none !important;
                 visibility: visible !important;
                 height: calc(100vh - 1rem);
+                max-height: calc(100vh - 1rem);
+                width: 100% !important;
+                max-width: 100% !important;
+                z-index: auto !important;
                 background: transparent !important;
                 border: 0 !important;
+                box-shadow: none !important;
+                /* Avoid width/position transitions fighting absolute↔sticky (covers main content) */
+                transition: box-shadow 0.2s ease;
             }
             #appSidebar .offcanvas-body {
                 height: 100%;
+                max-height: 100%;
+                overflow-x: hidden;
+                overflow-y: auto;
+                transition: padding 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+            }
+            #main-content-col {
+                /* Take all remaining row space; stay under hover overlay only while peeking */
+                flex: 1 1 0% !important;
+                max-width: none !important;
+                width: auto !important;
+                min-width: 0;
+                position: relative;
+                z-index: 1;
+            }
+
+            /* ── Collapsed (icons only) ──────────────────────────────────── */
+            body.sidebar-collapsed #temperSidebarCol {
+                flex: 0 0 var(--temper-sidebar-collapsed);
+                max-width: var(--temper-sidebar-collapsed);
+                width: var(--temper-sidebar-collapsed);
+                /* Rail stays a stable flex item; peek paints outside it */
+                overflow: visible;
+                z-index: 2;
+            }
+            /* Explicit non-hover reset (must win over Bootstrap + any residual absolute state) */
+            body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar {
+                position: sticky !important;
+                top: 0.5rem !important;
+                left: auto !important;
+                right: auto !important;
+                bottom: auto !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                z-index: auto !important;
+                box-shadow: none !important;
+            }
+            body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar .offcanvas-body {
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+                border: 0 !important;
+                box-shadow: none !important;
+                background-color: var(--bs-tertiary-bg) !important;
+            }
+            body.sidebar-collapsed #appSidebar .offcanvas-body {
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+            }
+            body.sidebar-collapsed #appSidebar .nav-link {
+                justify-content: center;
+                padding-left: 0.4rem;
+                padding-right: 0.4rem;
+                gap: 0;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-label,
+            body.sidebar-collapsed #appSidebar .sidebar-brand-text,
+            body.sidebar-collapsed #appSidebar .sidebar-footnote,
+            body.sidebar-collapsed #appSidebar .sidebar-welcome,
+            body.sidebar-collapsed #appSidebar .sidebar-btn-label {
+                opacity: 0;
+                width: 0 !important;
+                max-width: 0;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: hidden;
+                white-space: nowrap;
+                pointer-events: none;
+                display: inline-block;
+                vertical-align: middle;
+                transition: opacity 0.15s ease, max-width 0.2s ease;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-brand {
+                justify-content: center;
+                flex-direction: column;
+                gap: 0.15rem;
+                margin-bottom: 0.75rem !important;
+                padding-bottom: 0.5rem !important;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-brand > i.bi-bank {
+                margin-right: 0 !important;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-action-btn {
+                justify-content: center;
+                padding-left: 0.4rem;
+                padding-right: 0.4rem;
+                gap: 0 !important;
+            }
+            body.sidebar-collapsed #appSidebar .nav.ms-3 {
+                margin-left: 0 !important;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-toggle {
+                position: static;
+                margin-left: 0 !important;
+            }
+
+            /* ── Hover peek while collapsed (overlay expand) ─────────────── */
+            body.sidebar-collapsed.sidebar-hover-expand #temperSidebarCol {
+                /* Column width stays collapsed so main content does not reflow */
+                z-index: 1040;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                right: auto !important;
+                bottom: auto !important;
+                width: var(--temper-sidebar-expanded) !important;
+                max-width: var(--temper-sidebar-expanded) !important;
+                height: calc(100vh - 1rem);
+                max-height: calc(100vh - 1rem);
+                z-index: 1050 !important;
+                box-shadow: 0 0.5rem 1.75rem rgba(0, 0, 0, 0.18);
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .offcanvas-body {
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+                background-color: var(--bs-tertiary-bg) !important;
+                border: 1px solid var(--bs-border-color);
+                border-radius: 0.5rem;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .nav-link {
+                justify-content: flex-start;
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+                gap: 0.5rem;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-label,
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand-text,
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-footnote,
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-welcome,
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-btn-label {
+                opacity: 1;
+                width: auto !important;
+                max-width: 14rem;
+                pointer-events: auto;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand {
+                justify-content: flex-start;
+                flex-direction: row;
+                gap: 0;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand > i.bi-bank {
+                margin-right: 0.5rem !important;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-action-btn {
+                justify-content: flex-start;
+                gap: 0.25rem !important;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .nav.ms-3 {
+                margin-left: 1rem !important;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-toggle {
+                margin-left: auto !important;
+            }
+
+            /* Hide desktop collapse control on small screens (mobile uses offcanvas) */
+            .sidebar-toggle {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+        }
+        @media (max-width: 767.98px) {
+            .sidebar-toggle {
+                display: none !important;
             }
         }
 
@@ -264,9 +517,15 @@ requireLogin();
                 min-height: 2.35rem;
                 padding: 0.35rem 0.7rem;
             }
+            /* Touch target for plain checkboxes; form-switch needs Bootstrap’s wider track. */
             .form-check-input {
                 width: 1.25rem;
                 height: 1.25rem;
+            }
+            .form-switch .form-check-input {
+                width: 2.5em;
+                height: 1.25em;
+                margin-left: -2.5em;
             }
             /* Stack tight action toolbars */
             .btn-toolbar-mobile {
@@ -346,20 +605,52 @@ requireLogin();
     <script>
     // Central session-expiry handling for the SPA shell.
     // On 401 / X-Auth-Required: redirect to login immediately and suppress follow-on error toasts.
+    // Idle timeout (System Configuration) also forces an immediate logout redirect while the page is open.
     (function() {
         const LOGIN_EXPIRED = 'login.php?expired=1';
+        const LOGOUT_EXPIRED = 'logout.php?expired=1';
+
+        // Injected from System Configuration (Login Timeout)
+        window.__temperLoginTimeout = {
+            enabled: <?= $temperLoginTimeoutEnabled ? 'true' : 'false' ?>,
+            seconds: <?= (int)$temperLoginTimeoutSeconds ?>
+        };
+
+        // Injected from System Configuration (sidebar hover delays, seconds)
+        window.__temperSidebarHover = {
+            expandSeconds: <?= json_encode((float)$temperSidebarHoverExpandSec) ?>,
+            collapseSeconds: <?= json_encode((float)$temperSidebarHoverCollapseSec) ?>
+        };
 
         window.__temperAuthRedirecting = false;
 
-        window.redirectToLoginExpired = function() {
-            if (window.__temperAuthRedirecting) return;
-            window.__temperAuthRedirecting = true;
+        /** Scrub visible app content before leaving so sensitive data is not left on screen. */
+        function scrubSensitiveDom() {
             try {
+                const main = document.getElementById('main-content');
+                if (main) {
+                    main.innerHTML = '<div class="p-4 text-center text-muted">Session expired. Redirecting to login…</div>';
+                }
                 const c = document.getElementById('appToastContainer');
                 if (c) c.innerHTML = '';
+                // Blank form fields that may still hold credentials or PII
+                document.querySelectorAll('input, textarea').forEach(function(el) {
+                    try {
+                        if (el && el.type !== 'hidden' && el.type !== 'submit' && el.type !== 'button') {
+                            el.value = '';
+                        }
+                    } catch (e) { /* ignore */ }
+                });
             } catch (e) { /* ignore */ }
+        }
+
+        window.redirectToLoginExpired = function(opts) {
+            if (window.__temperAuthRedirecting) return;
+            window.__temperAuthRedirecting = true;
+            scrubSensitiveDom();
+            const useLogout = opts && opts.destroySession;
             // replace() avoids back-button returning to a dead authenticated shell
-            window.location.replace(LOGIN_EXPIRED);
+            window.location.replace(useLogout ? LOGOUT_EXPIRED : LOGIN_EXPIRED);
         };
 
         window.isAuthExpiredResponse = function(response) {
@@ -407,6 +698,10 @@ requireLogin();
 
         const originalFetch = window.fetch.bind(window);
         window.fetch = function() {
+            // Any authenticated network activity counts as activity for the idle timer
+            if (typeof window.__temperIdlePing === 'function') {
+                try { window.__temperIdlePing(); } catch (e) { /* ignore */ }
+            }
             return originalFetch.apply(this, arguments).then(function(response) {
                 if (window.redirectToLoginIfSessionExpired(response)) {
                     return authRedirectHang();
@@ -423,6 +718,293 @@ requireLogin();
                 }
             });
         }
+
+        // ── Client idle login timeout ──────────────────────────────────────
+        // - Shows a 60s warning modal before logout (or half of timeout if < 60s total).
+        // - Dismiss / "Stay logged in" refreshes the server session and resets the timer.
+        // - If not dismissed, redirects to login immediately when the countdown hits 0.
+        // Re-reads window.__temperLoginTimeout so Configuration saves apply without full reload.
+        (function initIdleLoginTimeout() {
+            const WARN_LEAD_SEC = 60;
+            const PING_URL = 'pages/session_ping.php';
+
+            let lastActivity = Date.now();
+            let timerId = null;
+            let countdownId = null;
+            let checking = false;
+            let warningOpen = false;
+            let modalInst = null;
+            // While true, background activity must not silently reset (user must dismiss modal)
+            let ignoreActivity = false;
+
+            function currentCfg() {
+                const cfg = window.__temperLoginTimeout || {};
+                return {
+                    enabled: cfg.enabled !== false && cfg.enabled !== 0 && cfg.enabled !== '0',
+                    seconds: Math.max(30, parseInt(cfg.seconds, 10) || 300)
+                };
+            }
+
+            /** Seconds of warning before hard logout. Prefer 60; shorter if timeout is short. */
+            function warnLeadSeconds(totalSec) {
+                if (totalSec > WARN_LEAD_SEC) return WARN_LEAD_SEC;
+                return Math.max(10, Math.floor(totalSec / 2));
+            }
+
+            function remainingMs() {
+                return currentCfg().seconds * 1000 - (Date.now() - lastActivity);
+            }
+
+            function getModal() {
+                return document.getElementById('sessionTimeoutModal');
+            }
+
+            function getModalInstance() {
+                const el = getModal();
+                if (!el || typeof bootstrap === 'undefined' || !bootstrap.Modal) return null;
+                if (!modalInst) {
+                    modalInst = bootstrap.Modal.getOrCreateInstance(el, {
+                        backdrop: 'static',
+                        keyboard: false
+                    });
+                }
+                return modalInst;
+            }
+
+            function setCountdownDisplay(sec) {
+                const n = Math.max(0, Math.ceil(sec));
+                const el = document.getElementById('sessionTimeoutCountdown');
+                const pl = document.getElementById('sessionTimeoutCountdownPlural');
+                if (el) el.textContent = String(n);
+                if (pl) pl.textContent = n === 1 ? '' : 's';
+            }
+
+            function stopCountdown() {
+                if (countdownId) {
+                    clearInterval(countdownId);
+                    countdownId = null;
+                }
+            }
+
+            function hideWarning() {
+                stopCountdown();
+                warningOpen = false;
+                ignoreActivity = false;
+                const inst = getModalInstance();
+                if (inst) {
+                    try { inst.hide(); } catch (e) { /* ignore */ }
+                }
+            }
+
+            function expireNow() {
+                if (checking || window.__temperAuthRedirecting) return;
+                checking = true;
+                hideWarning();
+                window.redirectToLoginExpired({ destroySession: true });
+            }
+
+            function showWarning() {
+                if (warningOpen || window.__temperAuthRedirecting) return;
+                const el = getModal();
+                if (!el) {
+                    // Modal markup missing — fall through to hard expiry only
+                    return;
+                }
+                warningOpen = true;
+                ignoreActivity = true;
+                const rem = Math.max(0, remainingMs() / 1000);
+                setCountdownDisplay(rem);
+
+                const inst = getModalInstance();
+                if (inst) {
+                    try { inst.show(); } catch (e) { /* ignore */ }
+                }
+
+                stopCountdown();
+                countdownId = setInterval(function() {
+                    if (window.__temperAuthRedirecting) {
+                        stopCountdown();
+                        return;
+                    }
+                    const left = remainingMs() / 1000;
+                    setCountdownDisplay(left);
+                    if (left <= 0) {
+                        stopCountdown();
+                        expireNow();
+                    }
+                }, 250);
+            }
+
+            function clearSchedule() {
+                if (timerId) {
+                    clearTimeout(timerId);
+                    timerId = null;
+                }
+            }
+
+            function schedule() {
+                clearSchedule();
+                if (window.__temperAuthRedirecting || checking) return;
+                const cfg = currentCfg();
+                if (!cfg.enabled) {
+                    hideWarning();
+                    return;
+                }
+
+                const totalMs = cfg.seconds * 1000;
+                const warnMs = warnLeadSeconds(cfg.seconds) * 1000;
+                const idle = Date.now() - lastActivity;
+                const rem = totalMs - idle;
+
+                if (rem <= 0) {
+                    expireNow();
+                    return;
+                }
+
+                // Enter or stay in warning window
+                if (rem <= warnMs) {
+                    if (!warningOpen) showWarning();
+                    // Next hard deadline
+                    timerId = setTimeout(function() {
+                        if (remainingMs() <= 0) expireNow();
+                        else schedule();
+                    }, Math.max(50, rem));
+                    return;
+                }
+
+                // Still in quiet idle period — hide warning if it was open (e.g. after stay)
+                if (warningOpen) hideWarning();
+                const untilWarn = rem - warnMs;
+                timerId = setTimeout(function() {
+                    schedule();
+                }, Math.max(50, untilWarn));
+            }
+
+            /**
+             * Reset client idle clock. When fromUserActivity is false (explicit stay / server ping),
+             * always apply. When true, ignore while the warning modal is open.
+             */
+            function ping(fromUserActivity) {
+                if (window.__temperAuthRedirecting) return;
+                if (fromUserActivity && ignoreActivity) return;
+                lastActivity = Date.now();
+                schedule();
+            }
+
+            window.__temperIdlePing = function() {
+                // Network activity from fetch wrapper — do not dismiss the warning silently
+                ping(true);
+            };
+
+            /** Explicit session refresh (Stay logged in). */
+            function stayLoggedIn() {
+                if (window.__temperAuthRedirecting) return;
+                const btn = document.getElementById('sessionTimeoutStayBtn');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = 'Refreshing…';
+                }
+                // Optimistically reset client timer; server confirm follows
+                ignoreActivity = false;
+                lastActivity = Date.now();
+                hideWarning();
+                schedule();
+
+                const body = new FormData();
+                body.append('action', 'ping');
+                originalFetch(PING_URL, {
+                    method: 'POST',
+                    body: body,
+                    headers: { 'Accept': 'application/json' },
+                    credentials: 'same-origin'
+                })
+                    .then(function(response) {
+                        if (window.isAuthExpiredResponse && window.isAuthExpiredResponse(response)) {
+                            window.redirectToLoginExpired();
+                            return null;
+                        }
+                        return response.json().catch(function() { return null; });
+                    })
+                    .then(function(data) {
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.textContent = 'Stay logged in';
+                        }
+                        if (!data || data.success === false) {
+                            // Server rejected — force login
+                            expireNow();
+                            return;
+                        }
+                        // Apply any config returned by ping
+                        if (window.__temperLoginTimeout) {
+                            if (typeof data.login_timeout_enabled === 'boolean') {
+                                window.__temperLoginTimeout.enabled = data.login_timeout_enabled;
+                            }
+                            if (data.login_timeout_seconds != null) {
+                                window.__temperLoginTimeout.seconds = data.login_timeout_seconds;
+                            }
+                        }
+                        lastActivity = Date.now();
+                        schedule();
+                        if (typeof showToast === 'function') {
+                            showToast('Session extended.', 'success', 2500);
+                        }
+                    })
+                    .catch(function() {
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.textContent = 'Stay logged in';
+                        }
+                        // Offline or error: keep client extension but note uncertainty
+                        lastActivity = Date.now();
+                        schedule();
+                    });
+            }
+
+            window.__temperStayLoggedIn = stayLoggedIn;
+
+            // Wire modal button when DOM is ready
+            function wireStayButton() {
+                const btn = document.getElementById('sessionTimeoutStayBtn');
+                if (btn && !btn.dataset.wired) {
+                    btn.dataset.wired = '1';
+                    btn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        stayLoggedIn();
+                    });
+                }
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', wireStayButton);
+            } else {
+                wireStayButton();
+            }
+
+            const activityEvents = [
+                'mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'touchmove', 'click', 'wheel'
+            ];
+            let rafPending = false;
+            function onActivity() {
+                if (rafPending) return;
+                rafPending = true;
+                requestAnimationFrame(function() {
+                    rafPending = false;
+                    ping(true);
+                });
+            }
+            activityEvents.forEach(function(ev) {
+                document.addEventListener(ev, onActivity, { capture: true, passive: true });
+            });
+            window.addEventListener('focus', function() { ping(true); });
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden) {
+                    // Tab visible again — re-evaluate idle (may open warning or expire)
+                    schedule();
+                }
+            });
+
+            schedule();
+        })();
     })();
 
     // Close mobile offcanvas after navigation
@@ -453,6 +1035,15 @@ requireLogin();
             }
         }
 
+        // Unsaved form guard (sidebar, mobile nav, in-app links)
+        if (typeof window.TemperDirtyForms !== 'undefined') {
+            if (window.TemperDirtyForms.isDirty() && !window.TemperDirtyForms.confirmLeave()) {
+                return;
+            }
+            // Always clear before tearing down #main-content so checkers don't touch dead DOM
+            window.TemperDirtyForms.clearAll();
+        }
+
         if (typeof window.closeMobileNav === 'function') {
             window.closeMobileNav();
         }
@@ -479,6 +1070,9 @@ requireLogin();
                 if (typeof applyMainContent === 'function') {
                     applyMainContent(html);
                 } else {
+                    if (typeof window.TemperDirtyForms !== 'undefined') {
+                        window.TemperDirtyForms.clearAll();
+                    }
                     contentArea.innerHTML = html;
                 }
             })

@@ -591,7 +591,7 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
 <div class="modal fade" id="addTaskModal" tabindex="-1" aria-labelledby="addTaskModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form id="addTaskForm">
+            <form id="addTaskForm" data-dirty-track>
                 <div class="modal-header">
                     <h5 class="modal-title" id="addTaskModalLabel">Add Task</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -987,6 +987,9 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         addTaskForm.reset();
         clearFieldErrors();
         if (saveTaskBtn) saveTaskBtn.disabled = false;
+        if (typeof window.TemperDirtyForms !== 'undefined') {
+            window.TemperDirtyForms.markClean(addTaskForm);
+        }
         addTaskModal.show();
         setTimeout(() => fieldMap.title && fieldMap.title.focus(), 200);
     });
@@ -1047,6 +1050,9 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
                 if (!res.success) {
                     showToast('Could not save the task. The server did not confirm success. Please try again.', 'danger', 7000);
                     return;
+                }
+                if (typeof window.TemperDirtyForms !== 'undefined') {
+                    window.TemperDirtyForms.markClean(addTaskForm);
                 }
                 addTaskModal.hide();
                 reload('Task created successfully.');

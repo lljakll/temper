@@ -589,3 +589,16 @@ Stack trace:
 #1 Command line code(5): budgetEnsureSimplifiedSchema()
 #2 {main}
   thrown in /var/www/temper/includes/budget_utils.php on line 102
+[21-Jul-2026 09:52:53 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=11 username=heathet: must_change_password not completed within 24h of force-password set ip=::1
+[21-Jul-2026 09:52:53 UTC] [AUDIT] user=system action=user_auto_archive details=Auto-archived user id=12 username=blueelephant: must_change_password not completed within 24h of force-password set ip=::1
+[21-Jul-2026 10:58:23 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=37 Budget changed from "—" to "2026 - test2". {"debits":200,"credits":200,"changes":["Budget changed from \"—\" to \"2026 - test2\"."]} ip=::1
+[21-Jul-2026 10:58:51 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=36 Transaction updated (2 changes). {"debits":100,"credits":100,"changes":["Reference # changed from \"WF-CONTRIB-1\" to \"263433\".","Budget changed from \"—\" to \"2026 - d\"."]} ip=::1
+[21-Jul-2026 11:08:48 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=28 Budget changed from "—" to "2026 - d". {"budget_only":true,"status":"cleared","changes":["Budget changed from \"—\" to \"2026 - d\"."]} ip=::1
+[22-Jul-2026 10:11:22 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_seconds=30 ip=::1
+[22-Jul-2026 10:12:19 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_seconds=300 ip=::1
+[22-Jul-2026 10:29:01 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=true ip=::1
+[22-Jul-2026 10:29:07 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=false ip=::1
+[22-Jul-2026 10:32:20 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=true ip=::1
+[22-Jul-2026 11:02:39 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_seconds=30 ip=::1
+[22-Jul-2026 11:04:03 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_seconds=600 ip=::1
+[22-Jul-2026 11:04:08 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_disabled=true ip=::1

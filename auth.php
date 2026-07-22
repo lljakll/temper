@@ -14,11 +14,58 @@ const AUTH_SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please log in ag
 
 /**
  * Max idle seconds for application-level session expiry.
- * Defaults to PHP session.gc_maxlifetime (typically 1440).
+ * Reads System Configuration (Login Timeout); falls back to PHP session.gc_maxlifetime.
+ * Returns PHP_INT_MAX when "Disable Login Timeout" is enabled.
  */
 function getSessionMaxIdleSeconds(): int {
+    static $resolved = null;
+    if ($resolved !== null) {
+        return $resolved;
+    }
+
+    // Prefer System Configuration when available
+    $sysCfg = __DIR__ . '/includes/system_config.php';
+    if (is_file($sysCfg)) {
+        require_once $sysCfg;
+        if (function_exists('isLoginTimeoutEnabled') && !isLoginTimeoutEnabled()) {
+            $resolved = PHP_INT_MAX;
+            return $resolved;
+        }
+        if (function_exists('getLoginTimeoutSeconds')) {
+            $sec = (int)getLoginTimeoutSeconds();
+            if ($sec >= 30) {
+                $resolved = $sec;
+                return $resolved;
+            }
+        }
+    }
+
     $gc = (int)ini_get('session.gc_maxlifetime');
-    return $gc > 60 ? $gc : 1440;
+    $resolved = $gc > 60 ? $gc : 1440;
+    return $resolved;
+}
+
+/**
+ * Client-facing idle timeout config for the SPA shell (seconds + enabled flag).
+ *
+ * @return array{enabled:bool,seconds:int}
+ */
+function getClientLoginTimeoutConfig(): array {
+    $sysCfg = __DIR__ . '/includes/system_config.php';
+    if (is_file($sysCfg)) {
+        require_once $sysCfg;
+        if (function_exists('isLoginTimeoutEnabled') && function_exists('getLoginTimeoutSeconds')) {
+            return [
+                'enabled' => isLoginTimeoutEnabled(),
+                'seconds' => getLoginTimeoutSeconds(),
+            ];
+        }
+    }
+    $gc = (int)ini_get('session.gc_maxlifetime');
+    return [
+        'enabled' => true,
+        'seconds' => $gc > 60 ? $gc : 1440,
+    ];
 }
 
 /**

@@ -20,10 +20,10 @@ require_once __DIR__ . '/../includes/permissions.php';
         $budget = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         if (!$budget) { echo json_encode(['error' => 'Budget not found']); exit; }
-        // Categories come from the linked account lookup, not budget_lines columns
+        // Categories and CoA come from the linked account lookup, not budget_lines columns
         $lst = $db->prepare(
             "SELECT bl.id, bl.account_id, bl.budgeted_amount, bl.notes,
-                    a.natural_category_id, a.functional_category_id,
+                    a.coa_number, a.natural_category_id, a.functional_category_id,
                     COALESCE(nc.name, '') AS natural_name,
                     COALESCE(fc.name, '') AS functional_name,
                     COALESCE(a.name, '') AS account_name
@@ -39,10 +39,12 @@ require_once __DIR__ . '/../includes/permissions.php';
         $lines = [];
         $res = $lst->get_result();
         while ($l = $res->fetch_assoc()) {
+            $coa = trim((string)($l['coa_number'] ?? ''));
             $lines[] = [
                 'id' => (int)$l['id'],
                 'account_id' => $l['account_id'] ? (int)$l['account_id'] : '',
                 'account_name' => $l['account_name'] ?? '',
+                'coa_number' => $coa,
                 'natural_category_id' => $l['natural_category_id'] ? (int)$l['natural_category_id'] : '',
                 'functional_category_id' => $l['functional_category_id'] ? (int)$l['functional_category_id'] : '',
                 'natural_name' => $l['natural_name'] !== '' ? $l['natural_name'] : '—',
@@ -310,17 +312,35 @@ require_once __DIR__ . '/../includes/permissions.php';
 ?>
 
 <style>
+    .budget-name-wrap { position: relative; }
+    .budget-name-tip {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 0.35rem);
+        z-index: 20;
+        padding: 0.5rem 0.65rem;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        color: var(--bs-body-color);
+        background: var(--bs-body-bg);
+        border: 1px solid var(--bs-border-color);
+        border-radius: 0.375rem;
+        box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.12);
+        pointer-events: none;
+    }
     .budget-lines-table-wrap { overflow-x: auto; }
     #linesTable {
         table-layout: fixed;
         width: 100%;
-        min-width: 760px;
+        min-width: 860px;
     }
-    #linesTable col.col-account { width: 26%; }
-    #linesTable col.col-cat { width: 14%; }
+    #linesTable col.col-account { width: 22%; }
+    #linesTable col.col-coa { width: 10%; }
+    #linesTable col.col-cat { width: 12%; }
     #linesTable col.col-amount,
-    #linesTable col.col-remaining { width: 108px; }
-    #linesTable col.col-notes { width: 20%; }
+    #linesTable col.col-remaining { width: 100px; }
+    #linesTable col.col-notes { width: 18%; }
     #linesTable col.col-actions { width: 42px; }
     #linesTable .line-cat-label {
         display: block;
@@ -329,6 +349,9 @@ require_once __DIR__ . '/../includes/permissions.php';
         white-space: nowrap;
         color: var(--bs-secondary-color);
         font-size: 0.875rem;
+    }
+    #linesTable .line-coa-label {
+        font-family: var(--bs-font-monospace);
     }
     #linesTable th,
     #linesTable td {
@@ -451,7 +474,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             <span id="modeBadge" class="badge bg-secondary d-none"></span>
         </div>
         <div class="card-body">
-            <form id="budgetFormContent" method="POST">
+            <form id="budgetFormContent" method="POST" data-dirty-track>
                 <input type="hidden" name="action" id="formAction" value="save">
                 <input type="hidden" name="budget_id" id="budgetId">
                 <input type="hidden" name="lines_json" id="linesJson">
@@ -462,8 +485,16 @@ require_once __DIR__ . '/../includes/permissions.php';
                         <input type="number" class="form-control budget-field" name="fiscal_year" id="fiscalYear" required min="2000" max="2100">
                     </div>
                     <div class="col-12 col-md-4">
-                        <label class="form-label">Name</label>
-                        <input type="text" class="form-control budget-field" name="name" id="budgetName" required>
+                        <label class="form-label" for="budgetName">Name</label>
+                        <div class="budget-name-wrap position-relative">
+                            <input type="text" class="form-control budget-field" name="name" id="budgetName" required
+                                   placeholder="e.g. FY26, CY26.Q2" autocomplete="off"
+                                   aria-describedby="budgetNameTip">
+                            <div id="budgetNameTip" class="budget-name-tip d-none" role="tooltip">
+                                Use a clear short name for this budget (e.g. <strong>FY26Q1</strong>, <strong>FY26</strong>, <strong>CY26</strong>, <strong>CY26.Q2</strong>).
+                                Accurate naming makes the transaction budget dropdown easier to use.
+                            </div>
+                        </div>
                     </div>
                     <div class="col-6 col-md-2">
                         <label class="form-label">Status</label>
@@ -493,7 +524,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                     </div>
                     <div class="col-12 col-md-3">
                         <label class="form-label">Description</label>
-                        <input type="text" class="form-control budget-field" name="description" id="budgetDesc">
+                        <input type="text" class="form-control budget-field" name="description" id="budgetDesc" placeholder="Optional longer description">
                     </div>
                 </div>
 
@@ -507,6 +538,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                             <table class="table table-sm table-bordered mb-0" id="linesTable">
                                 <colgroup>
                                     <col class="col-account">
+                                    <col class="col-coa">
                                     <col class="col-cat"><col class="col-cat">
                                     <col class="col-amount"><col class="col-remaining">
                                     <col class="col-notes"><col class="col-actions">
@@ -514,6 +546,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 <thead class="table-light">
                                     <tr>
                                         <th class="line-cell-cat">Account</th>
+                                        <th class="line-cell-cat">CoA #</th>
                                         <th class="line-cell-cat">Natural</th>
                                         <th class="line-cell-cat">Functional</th>
                                         <th class="text-end line-cell-amount">Amount</th>
@@ -525,7 +558,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 <tbody id="linesBody"></tbody>
                                 <tfoot>
                                     <tr>
-                                        <td colspan="3" class="text-end fw-bold">Total</td>
+                                        <td colspan="4" class="text-end fw-bold">Total</td>
                                         <td class="text-end fw-bold" id="linesTotal">$0.00</td>
                                         <td class="text-end fw-bold text-muted" id="linesRemaining">—</td>
                                         <td colspan="2"></td>
@@ -617,6 +650,8 @@ require_once __DIR__ . '/../includes/permissions.php';
     const modeBadge = document.getElementById('modeBadge');
     const refInput = document.getElementById('referenceNumber');
     const approvedDateInput = document.getElementById('approvedDate');
+    const budgetNameInput = document.getElementById('budgetName');
+    const budgetNameTip = document.getElementById('budgetNameTip');
     const cycleModal = new bootstrap.Modal(document.getElementById('cycleModal'));
     let selectedRow = null;
     let originalStatus = 'draft';
@@ -628,22 +663,42 @@ require_once __DIR__ . '/../includes/permissions.php';
     function escAttr(s) {
         return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     }
+    function showBudgetNameTip() {
+        if (!budgetNameTip || !budgetNameInput || budgetNameInput.disabled || budgetNameInput.readOnly) return;
+        budgetNameTip.classList.remove('d-none');
+    }
+    function hideBudgetNameTip() {
+        if (!budgetNameTip) return;
+        budgetNameTip.classList.add('d-none');
+    }
+    if (budgetNameInput) {
+        budgetNameInput.addEventListener('focus', showBudgetNameTip);
+        budgetNameInput.addEventListener('input', showBudgetNameTip);
+        budgetNameInput.addEventListener('blur', hideBudgetNameTip);
+    }
     function accountById(id) {
         return (lookups.accounts || []).find(o => String(o.id) === String(id)) || null;
     }
     function accountOpts(val) {
         return '<option value="">— Select account —</option>' + (lookups.accounts || []).map(o =>
-            `<option value="${o.id}"${o.id == val ? ' selected' : ''} data-natural-name="${escAttr(o.natural_name)}" data-functional-name="${escAttr(o.functional_name)}">${escAttr(o.name)}</option>`
+            `<option value="${o.id}"${o.id == val ? ' selected' : ''} data-coa-number="${escAttr(o.coa_number || '')}" data-natural-name="${escAttr(o.natural_name)}" data-functional-name="${escAttr(o.functional_name)}">${escAttr(o.name)}</option>`
         ).join('');
     }
     function syncLineCategoryLabels(tr) {
         const sel = tr.querySelector('.line-account');
+        const coaEl = tr.querySelector('.line-coa-label');
         const natEl = tr.querySelector('.line-natural-label');
         const funEl = tr.querySelector('.line-functional-label');
         if (!natEl || !funEl) return;
         const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+        const coaRaw = (opt && opt.value) ? (opt.dataset.coaNumber || '') : '';
+        const coa = coaRaw.trim() !== '' ? coaRaw.trim() : '—';
         const nat = (opt && opt.value) ? (opt.dataset.naturalName || '—') : '—';
         const fun = (opt && opt.value) ? (opt.dataset.functionalName || '—') : '—';
+        if (coaEl) {
+            coaEl.textContent = coa;
+            coaEl.title = coa;
+        }
         natEl.textContent = nat;
         natEl.title = nat;
         funEl.textContent = fun;
@@ -708,9 +763,23 @@ require_once __DIR__ . '/../includes/permissions.php';
     function isDirty() {
         return formMode !== 'locked' && savedSnapshot !== null && getSnapshot() !== savedSnapshot;
     }
+    function markBudgetClean() {
+        if (formEl) formEl.removeAttribute('data-dirty');
+    }
     function confirmDiscard() {
-        if (!isDirty()) return true;
-        return confirm('You have unsaved changes. Switching away will discard them unless you save first. Continue?');
+        if (!isDirty()) {
+            markBudgetClean();
+            return true;
+        }
+        const msg = (typeof window.TemperDirtyForms !== 'undefined' && window.TemperDirtyForms.MESSAGE)
+            ? window.TemperDirtyForms.MESSAGE
+            : 'You have unsaved changes. Leave anyway?';
+        if (!confirm(msg)) return false;
+        markBudgetClean();
+        return true;
+    }
+    if (typeof window.TemperDirtyForms !== 'undefined') {
+        window.TemperDirtyForms.registerChecker(isDirty);
     }
     function validateApprovalFields() {
         let ok = true;
@@ -737,12 +806,15 @@ require_once __DIR__ . '/../includes/permissions.php';
         if (data.account_id) tr.dataset.accountId = data.account_id;
         const amt = parseFloat(data.budgeted_amount) || 0;
         const acctInfo = accountById(data.account_id);
+        const coaRaw = data.coa_number || (acctInfo && acctInfo.coa_number) || '';
+        const coaLabel = String(coaRaw).trim() !== '' ? String(coaRaw).trim() : '—';
         const natLabel = data.natural_name || (acctInfo && acctInfo.natural_name) || '—';
         const funLabel = data.functional_name || (acctInfo && acctInfo.functional_name) || '—';
         const acctLabel = data.account_name || (acctInfo && acctInfo.name) || '—';
         if (mode === 'draft') {
             tr.innerHTML = `
                 <td class="line-cell-cat"><select class="form-select form-select-sm line-account" required>${accountOpts(data.account_id)}</select></td>
+                <td class="line-cell-cat"><span class="line-cat-label line-coa-label" title="">—</span></td>
                 <td class="line-cell-cat"><span class="line-cat-label line-natural-label" title="">—</span></td>
                 <td class="line-cell-cat"><span class="line-cat-label line-functional-label" title="">—</span></td>
                 <td class="line-cell-amount"><input type="text" class="form-control form-control-sm text-end line-amount" inputmode="numeric"></td>
@@ -761,6 +833,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 : `<span class="line-cell-text" title="${escAttr(notesVal)}">${escAttr(notesVal)}</span>`;
             tr.innerHTML = `
                 <td class="line-cell-cat"><span class="line-cell-text" title="${escAttr(acctLabel)}">${escAttr(acctLabel)}</span></td>
+                <td class="line-cell-cat"><span class="line-cat-label line-coa-label" title="${escAttr(coaLabel)}">${escAttr(coaLabel)}</span></td>
                 <td class="line-cell-cat"><span class="line-cat-label" title="${escAttr(natLabel)}">${escAttr(natLabel)}</span></td>
                 <td class="line-cell-cat"><span class="line-cat-label" title="${escAttr(funLabel)}">${escAttr(funLabel)}</span></td>
                 <td class="text-end line-cell-amount">${fmt(amt)}</td>
@@ -802,6 +875,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     function hideForm() {
         form.classList.add('d-none');
         savedSnapshot = null;
+        markBudgetClean();
         updateActionButtons();
     }
     function reload() {
@@ -813,7 +887,10 @@ require_once __DIR__ . '/../includes/permissions.php';
     function postAndApply(body) {
         return fetch(`pages/${page}.php`, { method: 'POST', body })
             .then(r => r.text())
-            .then(h => applyMainContent(h))
+            .then(h => {
+                markBudgetClean();
+                applyMainContent(h);
+            })
             .catch(() => showToast('Request failed. Please try again.', 'danger'));
     }
     function populateForm(b) {
@@ -840,6 +917,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         const titles = { draft: b.id ? 'Edit Budget' : 'New Budget', approved: 'View Budget (Notes Editable)', locked: 'View Budget' };
         showForm(titles[mode]);
         savedSnapshot = getSnapshot();
+        markBudgetClean();
     }
     function openBudget(id) {
         fetch(`pages/${page}.php?get_budget=${id}`).then(r => r.json()).then(b => { if (!b.error) populateForm(b); });

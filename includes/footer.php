@@ -219,6 +219,10 @@ $footerDb->close();
                     if (result.success === false) {
                         return null; // keep current form state on error
                     }
+                    // Successful save: drop dirty flags before fragment reload
+                    if (typeof window.TemperDirtyForms !== 'undefined') {
+                        window.TemperDirtyForms.markClean();
+                    }
                     if (result.data && result.data.must_change_password === false) {
                         window.__temperMustChangePassword = false;
                         if (typeof window.setForcePasswordShell === 'function') {
@@ -238,6 +242,10 @@ $footerDb->close();
                         return;
                     }
                     // Reload fragment; skip re-toasting page-flash if we already toasted from POST
+                    if (typeof applyMainContent === 'function') {
+                        applyMainContent(html, { skipFlash: true });
+                        return;
+                    }
                     const main = document.getElementById('main-content');
                     if (!main) return;
                     main.innerHTML = html;
@@ -254,15 +262,156 @@ $footerDb->close();
                 });
         };
 
-        window.applyMainContent = function(html) {
+        /**
+         * Dirty form detection (Bootstrap/jQuery-style pattern).
+         *
+         * Opt-in: add data-dirty-track to a <form>. Any input/change inside
+         * marks it dirty (data-dirty="1"). Fields or containers with
+         * data-dirty-ignore are skipped.
+         *
+         * Complex pages (ledger, budget) may also registerChecker(fn).
+         *
+         * Before SPA navigation (loadPage) or full page leave (beforeunload),
+         * confirmLeave() prompts: "You have unsaved changes. Leave anyway?"
+         */
+        (function initDirtyForms() {
+            const MESSAGE = 'You have unsaved changes. Leave anyway?';
+            let customCheckers = [];
+
+            function resolveForm(formOrEl) {
+                if (!formOrEl) return null;
+                if (formOrEl.tagName === 'FORM') return formOrEl;
+                if (formOrEl.closest) return formOrEl.closest('form');
+                return null;
+            }
+
+            function trackedFormsDirty() {
+                const forms = document.querySelectorAll('form[data-dirty-track]');
+                for (let i = 0; i < forms.length; i++) {
+                    if (forms[i].getAttribute('data-dirty') === '1') return true;
+                }
+                return false;
+            }
+
+            function customDirty() {
+                for (let i = 0; i < customCheckers.length; i++) {
+                    try {
+                        if (customCheckers[i]()) return true;
+                    } catch (e) { /* ignore broken checker */ }
+                }
+                return false;
+            }
+
+            window.TemperDirtyForms = {
+                MESSAGE: MESSAGE,
+                isDirty: function() {
+                    return trackedFormsDirty() || customDirty();
+                },
+                markDirty: function(formOrEl) {
+                    const form = resolveForm(formOrEl);
+                    if (form) form.setAttribute('data-dirty', '1');
+                },
+                markClean: function(formOrEl) {
+                    if (!formOrEl) {
+                        document.querySelectorAll('form[data-dirty-track]').forEach(function(f) {
+                            f.removeAttribute('data-dirty');
+                        });
+                        return;
+                    }
+                    const form = resolveForm(formOrEl);
+                    if (form) form.removeAttribute('data-dirty');
+                },
+                clearAll: function() {
+                    document.querySelectorAll('form[data-dirty]').forEach(function(f) {
+                        f.removeAttribute('data-dirty');
+                    });
+                    customCheckers = [];
+                },
+                /**
+                 * Register a page-specific isDirty() callback.
+                 * Returns an unregister function. Cleared automatically on content swap.
+                 */
+                registerChecker: function(fn) {
+                    if (typeof fn !== 'function') return function() {};
+                    customCheckers.push(fn);
+                    return function unregister() {
+                        customCheckers = customCheckers.filter(function(c) { return c !== fn; });
+                    };
+                },
+                confirmLeave: function(message) {
+                    if (!this.isDirty()) return true;
+                    return window.confirm(message || MESSAGE);
+                }
+            };
+
+            // jQuery-friendly aliases (standard pattern)
+            window.isFormDirty = function() {
+                return window.TemperDirtyForms.isDirty();
+            };
+            window.confirmLeaveIfDirty = function(message) {
+                return window.TemperDirtyForms.confirmLeave(message);
+            };
+
+            function markFromEvent(e) {
+                const t = e.target;
+                if (!t || !t.closest) return;
+                if (t.closest('[data-dirty-ignore]')) return;
+                // Skip pure UI controls that are not form state (e.g. table row checkboxes outside tracked forms)
+                const form = t.closest('form[data-dirty-track]');
+                if (!form) return;
+                // Ignore disabled / readonly-only noise where possible
+                if (t.disabled) return;
+                form.setAttribute('data-dirty', '1');
+            }
+
+            document.addEventListener('input', markFromEvent, true);
+            document.addEventListener('change', markFromEvent, true);
+
+            // Modal dismiss while dirty (user management, tasks, etc.)
+            document.addEventListener('hide.bs.modal', function(e) {
+                const modal = e.target;
+                if (!modal || !modal.querySelector) return;
+                const dirtyForm = modal.querySelector('form[data-dirty-track][data-dirty="1"]');
+                if (!dirtyForm) return;
+                if (!window.TemperDirtyForms.confirmLeave()) {
+                    e.preventDefault();
+                    return;
+                }
+                dirtyForm.removeAttribute('data-dirty');
+            });
+
+            // Browser back/forward, refresh, close tab, external links
+            window.addEventListener('beforeunload', function(e) {
+                if (window.__temperAuthRedirecting) return;
+                if (!window.TemperDirtyForms.isDirty()) return;
+                e.preventDefault();
+                // Chrome / modern browsers require returnValue to be set
+                e.returnValue = '';
+                return '';
+            });
+        })();
+
+        window.applyMainContent = function(html, options) {
             if (window.__temperAuthRedirecting) return;
             if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(html)) {
                 window.redirectToLoginExpired();
                 return;
             }
+            // Drop dirty trackers bound to the outgoing fragment
+            if (typeof window.TemperDirtyForms !== 'undefined') {
+                window.TemperDirtyForms.clearAll();
+            }
             document.getElementById('main-content').innerHTML = html;
-            consumePageFlash('page-flash');
-            consumePageFlash('ledger-flash');
+            const opts = options || {};
+            if (opts.skipFlash) {
+                ['page-flash', 'ledger-flash'].forEach(function(fid) {
+                    const el = document.getElementById(fid);
+                    if (el) el.remove();
+                });
+            } else {
+                consumePageFlash('page-flash');
+                consumePageFlash('ledger-flash');
+            }
         };
 
         /**
@@ -272,9 +421,10 @@ $footerDb->close();
         window.setForcePasswordShell = function(forceMode) {
             const hide = !!forceMode;
             document.body.classList.toggle('temper-force-password-mode', hide);
-            const sidebarCol = document.querySelector('#appSidebar')
-                ? document.querySelector('#appSidebar').closest('.col-md-2')
-                : null;
+            const sidebarCol = document.getElementById('temperSidebarCol')
+                || (document.querySelector('#appSidebar')
+                    ? document.querySelector('#appSidebar').closest('.temper-sidebar-col, .col-md-2')
+                    : null);
             const mainCol = document.getElementById('main-content-col');
             const mobileTop = document.querySelector('.mobile-topbar');
             const mobileBottom = document.querySelector('.mobile-bottom-nav');
@@ -306,6 +456,261 @@ $footerDb->close();
                 window.setForcePasswordShell(true);
             }
         }
+
+        /**
+         * Desktop sidebar: expand/collapse with persistent preference + hover peek.
+         * - Default: expanded
+         * - Collapsed: icons only
+         * - Hover while collapsed: wait expand delay then show labels (avoids accidental peek)
+         * - After mouse leave: wait collapse delay then collapse again
+         * - Delays from System Configuration (window.__temperSidebarHover), defaults 0.5s / 2.0s
+         * - Click main content (or anywhere outside sidebar) while hover-expanded: collapse immediately
+         * - Toggle click: persist expanded/collapsed in localStorage
+         */
+        (function initCollapsibleSidebar() {
+            const STORAGE_KEY = 'temper-sidebar-collapsed';
+            const DEFAULT_EXPAND_SEC = 0.5;
+            const DEFAULT_COLLAPSE_SEC = 2.0;
+            const DESKTOP_MQ = '(min-width: 768px)';
+            let enterTimer = null;
+            let leaveTimer = null;
+
+            function isDesktop() {
+                return window.matchMedia && window.matchMedia(DESKTOP_MQ).matches;
+            }
+
+            /** Live-configurable expand delay (ms). Re-reads window.__temperSidebarHover each call. */
+            function hoverExpandMs() {
+                const cfg = window.__temperSidebarHover || {};
+                let sec = parseFloat(cfg.expandSeconds);
+                if (isNaN(sec) || sec < 0) sec = DEFAULT_EXPAND_SEC;
+                if (sec > 10) sec = 10;
+                return Math.round(sec * 1000);
+            }
+
+            /** Live-configurable collapse delay (ms). Re-reads window.__temperSidebarHover each call. */
+            function hoverCollapseMs() {
+                const cfg = window.__temperSidebarHover || {};
+                let sec = parseFloat(cfg.collapseSeconds);
+                if (isNaN(sec) || sec < 0) sec = DEFAULT_COLLAPSE_SEC;
+                if (sec > 30) sec = 30;
+                return Math.round(sec * 1000);
+            }
+
+            function readStoredCollapsed() {
+                try {
+                    return localStorage.getItem(STORAGE_KEY) === '1';
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            function writeStoredCollapsed(collapsed) {
+                try {
+                    localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+                } catch (e) { /* private mode / blocked */ }
+            }
+
+            function updateToggleUi(collapsed) {
+                const btn = document.getElementById('sidebarToggle');
+                const icon = document.getElementById('sidebarToggleIcon');
+                if (!btn) return;
+                if (collapsed) {
+                    if (icon) icon.className = 'bi bi-chevron-double-right';
+                    btn.setAttribute('title', 'Expand sidebar');
+                    btn.setAttribute('aria-label', 'Expand sidebar');
+                    btn.setAttribute('aria-expanded', 'false');
+                } else {
+                    if (icon) icon.className = 'bi bi-chevron-double-left';
+                    btn.setAttribute('title', 'Collapse sidebar');
+                    btn.setAttribute('aria-label', 'Collapse sidebar');
+                    btn.setAttribute('aria-expanded', 'true');
+                }
+            }
+
+            function clearEnterTimer() {
+                if (enterTimer) {
+                    clearTimeout(enterTimer);
+                    enterTimer = null;
+                }
+            }
+
+            function clearLeaveTimer() {
+                if (leaveTimer) {
+                    clearTimeout(leaveTimer);
+                    leaveTimer = null;
+                }
+            }
+
+            function clearHoverTimers() {
+                clearEnterTimer();
+                clearLeaveTimer();
+            }
+
+            /** End temporary hover peek immediately (does not change persistent collapse). */
+            function endHoverExpand() {
+                clearHoverTimers();
+                document.body.classList.remove('sidebar-hover-expand');
+            }
+
+            function isHoverExpanded() {
+                return document.body.classList.contains('sidebar-collapsed')
+                    && document.body.classList.contains('sidebar-hover-expand');
+            }
+
+            function setCollapsed(collapsed, persist) {
+                document.body.classList.toggle('sidebar-collapsed', !!collapsed);
+                if (!collapsed) {
+                    endHoverExpand();
+                }
+                updateToggleUi(!!collapsed);
+                if (persist) writeStoredCollapsed(!!collapsed);
+            }
+
+            function scheduleHoverExpand() {
+                clearEnterTimer();
+                clearLeaveTimer();
+                // Already peaking (e.g. re-entered during collapse delay)
+                if (document.body.classList.contains('sidebar-hover-expand')) return;
+                const delay = hoverExpandMs();
+                if (delay <= 0) {
+                    if (!isDesktop()) return;
+                    if (!document.body.classList.contains('sidebar-collapsed')) return;
+                    document.body.classList.add('sidebar-hover-expand');
+                    return;
+                }
+                enterTimer = setTimeout(function() {
+                    enterTimer = null;
+                    if (!isDesktop()) return;
+                    if (!document.body.classList.contains('sidebar-collapsed')) return;
+                    document.body.classList.add('sidebar-hover-expand');
+                }, delay);
+            }
+
+            function scheduleHoverCollapse() {
+                clearEnterTimer(); // cancel pending open if pointer left early
+                clearLeaveTimer();
+                // Nothing to collapse if never expanded
+                if (!document.body.classList.contains('sidebar-hover-expand')) return;
+                const delay = hoverCollapseMs();
+                if (delay <= 0) {
+                    document.body.classList.remove('sidebar-hover-expand');
+                    return;
+                }
+                leaveTimer = setTimeout(function() {
+                    document.body.classList.remove('sidebar-hover-expand');
+                    leaveTimer = null;
+                }, delay);
+            }
+
+            function applyFromStorage() {
+                if (!isDesktop()) {
+                    // Mobile offcanvas always full labels; strip desktop-only classes
+                    document.body.classList.remove('sidebar-collapsed', 'sidebar-hover-expand');
+                    updateToggleUi(false);
+                    return;
+                }
+                setCollapsed(readStoredCollapsed(), false);
+            }
+
+            function wire() {
+                const sidebar = document.getElementById('appSidebar');
+                const toggle = document.getElementById('sidebarToggle');
+                if (!sidebar) return;
+
+                applyFromStorage();
+
+                if (toggle && !toggle.dataset.wired) {
+                    toggle.dataset.wired = '1';
+                    toggle.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!isDesktop()) return;
+                        clearHoverTimers();
+                        const next = !document.body.classList.contains('sidebar-collapsed');
+                        setCollapsed(next, true);
+                    });
+                }
+
+                if (!sidebar.dataset.hoverWired) {
+                    sidebar.dataset.hoverWired = '1';
+                    sidebar.addEventListener('mouseenter', function() {
+                        if (!isDesktop()) return;
+                        if (!document.body.classList.contains('sidebar-collapsed')) return;
+                        scheduleHoverExpand();
+                    });
+                    sidebar.addEventListener('mouseleave', function() {
+                        if (!isDesktop()) return;
+                        if (!document.body.classList.contains('sidebar-collapsed')) return;
+                        scheduleHoverCollapse();
+                    });
+                    // Keyboard: expand immediately (no hover delay)
+                    sidebar.addEventListener('focusin', function() {
+                        if (!isDesktop()) return;
+                        if (!document.body.classList.contains('sidebar-collapsed')) return;
+                        clearHoverTimers();
+                        document.body.classList.add('sidebar-hover-expand');
+                    });
+                    sidebar.addEventListener('focusout', function(e) {
+                        if (!isDesktop()) return;
+                        if (!document.body.classList.contains('sidebar-collapsed')) return;
+                        // If focus moved to another node still inside sidebar, ignore
+                        if (e.relatedTarget && sidebar.contains(e.relatedTarget)) return;
+                        scheduleHoverCollapse();
+                    });
+                }
+
+                // Click-off: while hover-expanded, any click outside the sidebar
+                // (main content, chrome, etc.) collapses the peek immediately.
+                // Also cancel a pending expand if the user clicks away during the delay.
+                if (!window.__temperSidebarClickOffWired) {
+                    window.__temperSidebarClickOffWired = true;
+                    document.addEventListener('pointerdown', function(e) {
+                        if (!isDesktop()) return;
+                        if (!document.body.classList.contains('sidebar-collapsed')) return;
+                        const t = e.target;
+                        if (!t || !t.closest) return;
+                        // Stay open / keep pending when interacting with the sidebar rail / overlay
+                        if (t.closest('#appSidebar') || t.closest('#temperSidebarCol')) return;
+                        endHoverExpand();
+                    }, true);
+                }
+
+                // Respond to viewport breakpoint changes
+                if (window.matchMedia && !window.__temperSidebarMqWired) {
+                    window.__temperSidebarMqWired = true;
+                    const mq = window.matchMedia(DESKTOP_MQ);
+                    const onChange = function() {
+                        clearHoverTimers();
+                        applyFromStorage();
+                    };
+                    if (typeof mq.addEventListener === 'function') {
+                        mq.addEventListener('change', onChange);
+                    } else if (typeof mq.addListener === 'function') {
+                        mq.addListener(onChange);
+                    }
+                }
+            }
+
+            // jQuery-friendly public API (optional)
+            window.TemperSidebar = {
+                collapse: function() { setCollapsed(true, true); },
+                expand: function() { setCollapsed(false, true); },
+                toggle: function() {
+                    setCollapsed(!document.body.classList.contains('sidebar-collapsed'), true);
+                },
+                isCollapsed: function() {
+                    return document.body.classList.contains('sidebar-collapsed');
+                },
+                endHoverExpand: endHoverExpand
+            };
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', wire);
+            } else {
+                wire();
+            }
+        })();
     })();
     </script>
 </body>

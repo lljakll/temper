@@ -174,7 +174,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     <!-- Form for adding/editing -->
     <div id="naturalForm" class="mt-4 d-none">
         <h4 id="formTitle">Add New Natural Category</h4>
-        <form id="naturalFormContent" method="POST">
+        <form id="naturalFormContent" method="POST" data-dirty-track>
             <input type="hidden" id="naturalId" name="id">
             <input type="hidden" name="action" id="formAction">
             
@@ -241,12 +241,14 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     
     // Add button
     addBtn.addEventListener('click', function() {
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         // Reset form
         naturalFormContent.reset();
         formAction.value = 'add';
         formTitle.textContent = 'Add New Natural Category';
         naturalId.value = '';
         naturalForm.classList.remove('d-none');
+        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(naturalFormContent);
         
         // Disable action buttons during editing
         addBtn.disabled = true;
@@ -258,6 +260,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     // Edit button
     editBtn.addEventListener('click', function() {
         if (!selectedRow) return;
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         
         // Get data from the row
         const id = selectedRow.getAttribute('data-id');
@@ -274,6 +277,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         formAction.value = 'edit';
         formTitle.textContent = 'Edit Natural Category';
         naturalForm.classList.remove('d-none');
+        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(naturalFormContent);
         
         // Disable action buttons during editing
         addBtn.disabled = true;
@@ -321,6 +325,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     
     // Cancel button
     cancelBtn.addEventListener('click', function() {
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
+        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(naturalFormContent);
         naturalForm.classList.add('d-none');
         
         // Re-enable action buttons
@@ -332,11 +338,15 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     
     // Toggle archived via fetch (no full reload)
     showArchivedBtn.addEventListener('click', function() {
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         showArchived = !showArchived;
         const newShow = showArchived ? '1' : '0';
         fetch(`pages/${currentPage}.php?show_archived=${newShow}`)
             .then(r => r.text())
-            .then(html => { document.getElementById('main-content').innerHTML = html; })
+            .then(html => {
+                if (typeof applyMainContent === 'function') applyMainContent(html);
+                else document.getElementById('main-content').innerHTML = html;
+            })
             .catch(e => console.error('Toggle error:', e));
     });
     

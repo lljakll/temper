@@ -43,8 +43,62 @@ function ledgerRequireTables(mysqli $db): void {
 
     // Reference # (YY####) lives in reference_number; migrate off sequence_number if present
     ledgerEnsureReferenceNumberSchema($db);
+    // Optional link from transaction header to a budget period
+    ledgerEnsureBudgetIdSchema($db);
 
     $verified = true;
+}
+
+/**
+ * Ensure transaction_details.budget_id exists (nullable FK to budgets when present).
+ * Safe to call repeatedly.
+ */
+function ledgerEnsureBudgetIdSchema(mysqli $db): void {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    $col = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'budget_id'");
+    if ($col && $col->num_rows === 0) {
+        if (!$db->query(
+            'ALTER TABLE transaction_details
+             ADD COLUMN budget_id INT NULL AFTER reference_number'
+        )) {
+            error_log('ledgerEnsureBudgetIdSchema: add column failed: ' . $db->error);
+        }
+        @$db->query('CREATE INDEX idx_transaction_details_budget_id ON transaction_details(budget_id)');
+    }
+    if ($col) {
+        $col->close();
+    }
+
+    $budgets = $db->query("SHOW TABLES LIKE 'budgets'");
+    if ($budgets && $budgets->num_rows > 0) {
+        $fk = $db->query(
+            "SELECT CONSTRAINT_NAME
+             FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = 'transaction_details'
+               AND COLUMN_NAME = 'budget_id'
+               AND REFERENCED_TABLE_NAME = 'budgets'
+             LIMIT 1"
+        );
+        if ($fk && $fk->num_rows === 0) {
+            @$db->query(
+                'ALTER TABLE transaction_details
+                 ADD CONSTRAINT fk_transaction_details_budget
+                 FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE SET NULL'
+            );
+        }
+        if ($fk) {
+            $fk->close();
+        }
+    }
+    if ($budgets) {
+        $budgets->close();
+    }
 }
 
 /**
@@ -505,7 +559,7 @@ function ledgerNameMaps(mysqli $db): array {
  * Build human-readable change lines when a manual transaction is updated.
  *
  * @param array $existing Row from ledgerFetchTransaction (includes lines)
- * @param array $newHeader Keys: transaction_date, pay_to, reference_number, check_number, memo
+ * @param array $newHeader Keys: transaction_date, pay_to, reference_number, check_number, memo, budget_id
  * @param array $newLines  List of [aid, fid, am, t, nid, fid2]
  * @return array{summary:string,changes:array<int,string>,debits:float,credits:float}
  */
@@ -540,6 +594,27 @@ function ledgerDescribeTransactionUpdate(
     $newCheck = trim((string)($newHeader['check_number'] ?? ''));
     if ($oldCheck !== $newCheck) {
         $changes[] = 'Check # changed from "' . ($oldCheck !== '' ? $oldCheck : '—') . '" to "' . ($newCheck !== '' ? $newCheck : '—') . '".';
+    }
+
+    $oldBudgetId = (int)($existing['budget_id'] ?? 0);
+    $newBudgetId = (int)($newHeader['budget_id'] ?? 0);
+    if ($oldBudgetId !== $newBudgetId) {
+        $budgetLabel = static function (mysqli $db, int $id): string {
+            if ($id <= 0) {
+                return '—';
+            }
+            $st = $db->prepare('SELECT fiscal_year, name FROM budgets WHERE id = ? LIMIT 1');
+            $st->bind_param('i', $id);
+            $st->execute();
+            $b = $st->get_result()->fetch_assoc();
+            $st->close();
+            if (!$b) {
+                return 'Budget #' . $id;
+            }
+            return ((int)$b['fiscal_year']) . ' - ' . $b['name'];
+        };
+        $changes[] = 'Budget changed from "' . $budgetLabel($db, $oldBudgetId)
+            . '" to "' . $budgetLabel($db, $newBudgetId) . '".';
     }
 
     $oldMemo = trim((string)($existing['memo'] ?? ''));
@@ -698,24 +773,28 @@ function ledgerCreateHeader(
     string $referenceNumber,
     string $memo,
     ?int $createdByUserId = null,
-    ?array $transactionData = null
+    ?array $transactionData = null,
+    ?int $budgetId = null
 ): int {
     ledgerRequireTables($db);
     $dataJson = $transactionData ? json_encode($transactionData) : null;
     $ref = ledgerNormalizeReferenceNumber($referenceNumber);
     $refParam = $ref !== '' ? $ref : null;
+    // Bind budget_id as string so NULL clears cleanly (mysqli int null can coerce to 0)
+    $budgetParam = ($budgetId !== null && $budgetId > 0) ? (string)(int)$budgetId : null;
     $stmt = $db->prepare(
         "INSERT INTO transaction_details (
-            transaction_date, pay_to, reference_number, memo, status,
+            transaction_date, pay_to, reference_number, memo, budget_id, status,
             created_by_user_id, transaction_data
-         ) VALUES (?, ?, ?, ?, 'pending', ?, ?)"
+         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)"
     );
     $stmt->bind_param(
-        'ssssis',
+        'sssssis',
         $transactionDate,
         $payTo,
         $refParam,
         $memo,
+        $budgetParam,
         $createdByUserId,
         $dataJson
     );
@@ -732,7 +811,9 @@ function ledgerUpdateHeader(
     ?string $payTo = null,
     ?string $referenceNumber = null,
     ?string $memo = null,
-    ?array $transactionData = null
+    ?array $transactionData = null,
+    ?int $budgetId = null,
+    bool $setBudgetId = false
 ): void {
     $sets = [];
     $types = '';
@@ -763,6 +844,12 @@ function ledgerUpdateHeader(
         $sets[] = 'transaction_data = ?';
         $types .= 's';
         $params[] = json_encode($transactionData);
+    }
+    if ($setBudgetId) {
+        // Store as integer or SQL NULL (bind as string so empty clears the column)
+        $sets[] = 'budget_id = ?';
+        $types .= 's';
+        $params[] = ($budgetId !== null && $budgetId > 0) ? (string)(int)$budgetId : null;
     }
 
     if ($sets === []) {

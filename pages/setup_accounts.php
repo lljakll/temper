@@ -41,6 +41,12 @@ function setupAccountsParseCategoryId($raw): ?int {
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
                 $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $coa_number = trim((string)($_POST['coa_number'] ?? ''));
+                if ($coa_number === '') {
+                    $coa_number = null;
+                } elseif (mb_strlen($coa_number) > 50) {
+                    $coa_number = mb_substr($coa_number, 0, 50);
+                }
                 $natural_category_id = setupAccountsParseCategoryId($_POST['natural_category_id'] ?? null);
                 $functional_category_id = setupAccountsParseCategoryId($_POST['functional_category_id'] ?? null);
                 $archived = isset($_POST['archived']) ? 1 : 0;
@@ -50,8 +56,8 @@ function setupAccountsParseCategoryId($raw): ?int {
                 if (empty($name)) {
                     echo "Error: Account name is required\n";
                 } else {
-                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, natural_category_id, functional_category_id, archived, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("sssiiii", $name, $description, $normal_balance, $natural_category_id, $functional_category_id, $archived, $mutable_fund);
+                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, coa_number, natural_category_id, functional_category_id, archived, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param("ssssiiii", $name, $description, $normal_balance, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund);
                     if ($stmt->execute() === TRUE) {
                         echo "Account added successfully\n";
                     } else {
@@ -66,6 +72,12 @@ function setupAccountsParseCategoryId($raw): ?int {
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
                 $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $coa_number = trim((string)($_POST['coa_number'] ?? ''));
+                if ($coa_number === '') {
+                    $coa_number = null;
+                } elseif (mb_strlen($coa_number) > 50) {
+                    $coa_number = mb_substr($coa_number, 0, 50);
+                }
                 $natural_category_id = setupAccountsParseCategoryId($_POST['natural_category_id'] ?? null);
                 $functional_category_id = setupAccountsParseCategoryId($_POST['functional_category_id'] ?? null);
                 $archived = isset($_POST['archived']) ? 1 : 0;
@@ -82,8 +94,8 @@ function setupAccountsParseCategoryId($raw): ?int {
                     $result = $check_stmt->get_result();
                     
                     if ($result->num_rows > 0) {
-                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, natural_category_id=?, functional_category_id=?, archived=?, mutable_fund=? WHERE id=?");
-                        $stmt->bind_param("sssiiiii", $name, $description, $normal_balance, $natural_category_id, $functional_category_id, $archived, $mutable_fund, $id);
+                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, coa_number=?, natural_category_id=?, functional_category_id=?, archived=?, mutable_fund=? WHERE id=?");
+                        $stmt->bind_param("ssssiiiii", $name, $description, $normal_balance, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund, $id);
                         if ($stmt->execute() === TRUE) {
                             echo "Account updated successfully\n";
                         } else {
@@ -153,7 +165,7 @@ function setupAccountsParseCategoryId($raw): ?int {
 
     // Build query for accounts with category names
     if ($show_archived) {
-        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.archived, a.mutable_fund,
+        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.coa_number, a.archived, a.mutable_fund,
                                   a.natural_category_id, a.functional_category_id,
                                   COALESCE(nc.name, '') AS natural_name,
                                   COALESCE(fc.name, '') AS functional_name
@@ -162,7 +174,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                            LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
                            ORDER BY a.name";
     } else {
-        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.archived, a.mutable_fund,
+        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.coa_number, a.archived, a.mutable_fund,
                                   a.natural_category_id, a.functional_category_id,
                                   COALESCE(nc.name, '') AS natural_name,
                                   COALESCE(fc.name, '') AS functional_name
@@ -199,6 +211,7 @@ function setupAccountsParseCategoryId($raw): ?int {
         <table class="table table-striped table-hover">
             <thead class="table-dark">
                 <tr>
+                    <th>CoA #</th>
                     <th>Name</th>
                     <th>Description</th>
                     <th>Normal Balance</th>
@@ -211,9 +224,12 @@ function setupAccountsParseCategoryId($raw): ?int {
             <tbody id="accountsTableBody">
                 <?php if ($accounts_result && $accounts_result->num_rows > 0): ?>
                     <?php while ($account = $accounts_result->fetch_assoc()): ?>
+                        <?php $coaDisplay = trim((string)($account['coa_number'] ?? '')); ?>
                         <tr data-id="<?= $account['id'] ?>"
+                            data-coa-number="<?= htmlspecialchars($coaDisplay) ?>"
                             data-natural-id="<?= $account['natural_category_id'] !== null ? (int)$account['natural_category_id'] : '' ?>"
                             data-functional-id="<?= $account['functional_category_id'] !== null ? (int)$account['functional_category_id'] : '' ?>">
+                            <td class="font-monospace"><?= htmlspecialchars($coaDisplay !== '' ? $coaDisplay : '—') ?></td>
                             <td><?= htmlspecialchars($account['name']) ?></td>
                             <td><?= htmlspecialchars($account['description'] ?? '') ?></td>
                             <td><?= htmlspecialchars($account['normal_balance']) ?></td>
@@ -225,7 +241,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="7" class="text-center">No accounts found.</td>
+                        <td colspan="8" class="text-center">No accounts found.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -235,13 +251,20 @@ function setupAccountsParseCategoryId($raw): ?int {
     <!-- Form for adding/editing -->
     <div id="accountForm" class="mt-4 d-none">
         <h4 id="formTitle">Add New Account</h4>
-        <form id="accountFormContent" method="POST">
+        <form id="accountFormContent" method="POST" data-dirty-track>
             <input type="hidden" id="accountId" name="id">
             <input type="hidden" name="action" id="formAction">
             
-            <div class="mb-3">
-                <label for="name" class="form-label">Name</label>
-                <input type="text" class="form-control" id="name" name="name" required>
+            <div class="row g-2 mb-3">
+                <div class="col-md-4">
+                    <label for="coa_number" class="form-label">CoA Number</label>
+                    <input type="text" class="form-control font-monospace" id="coa_number" name="coa_number" maxlength="50" placeholder="e.g. 1000">
+                    <div class="form-text">Internal Chart of Accounts reference only.</div>
+                </div>
+                <div class="col-md-8">
+                    <label for="name" class="form-label">Name</label>
+                    <input type="text" class="form-control" id="name" name="name" required>
+                </div>
             </div>
             
             <div class="mb-3">
@@ -337,12 +360,14 @@ function setupAccountsParseCategoryId($raw): ?int {
     
     // Add button
     addBtn.addEventListener('click', function() {
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         // Reset form
         accountFormContent.reset();
         formAction.value = 'add';
         formTitle.textContent = 'Add New Account';
         accountId.value = '';
         accountForm.classList.remove('d-none');
+        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
         
         // Disable action buttons during editing
         addBtn.disabled = true;
@@ -354,17 +379,20 @@ function setupAccountsParseCategoryId($raw): ?int {
     // Edit button
     editBtn.addEventListener('click', function() {
         if (!selectedRow) return;
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         
         // Get account data from the row
+        // columns: 0 CoA, 1 Name, 2 Description, 3 Normal Balance, 4 Natural, 5 Functional, 6 Archived, 7 Mut. Fund
         const id = selectedRow.getAttribute('data-id');
-        const name = selectedRow.cells[0].textContent;
-        const description = selectedRow.cells[1].textContent;
-        const normal_balance = selectedRow.cells[2].textContent;
-        const archived = selectedRow.cells[5].textContent === 'Yes';
-        const mutable_fund = selectedRow.cells[6].textContent === 'Yes';
+        const name = selectedRow.cells[1].textContent;
+        const description = selectedRow.cells[2].textContent;
+        const normal_balance = selectedRow.cells[3].textContent;
+        const archived = selectedRow.cells[6].textContent === 'Yes';
+        const mutable_fund = selectedRow.cells[7].textContent === 'Yes';
         
         // Fill form
         accountId.value = id;
+        document.getElementById('coa_number').value = selectedRow.dataset.coaNumber || '';
         document.getElementById('name').value = name;
         document.getElementById('description').value = description;
         document.getElementById('normal_balance').value = normal_balance;
@@ -376,6 +404,7 @@ function setupAccountsParseCategoryId($raw): ?int {
         formAction.value = 'edit';
         formTitle.textContent = 'Edit Account';
         accountForm.classList.remove('d-none');
+        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
         
         // Disable action buttons during editing
         addBtn.disabled = true;
@@ -407,7 +436,7 @@ function setupAccountsParseCategoryId($raw): ?int {
         }
         
         const id = selectedRow.getAttribute('data-id');
-        const isCurrentlyArchived = selectedRow.cells[5].textContent.trim() === 'Yes';
+        const isCurrentlyArchived = selectedRow.cells[6].textContent.trim() === 'Yes';
         const newArchivedState = !isCurrentlyArchived;
         
         if (confirm(`Are you sure you want to ${newArchivedState ? 'archive' : 'unarchive'} this account?`)) {
@@ -423,6 +452,8 @@ function setupAccountsParseCategoryId($raw): ?int {
     
     // Cancel button
     cancelBtn.addEventListener('click', function() {
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
+        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
         accountForm.classList.add('d-none');
         
         // Re-enable action buttons
@@ -434,11 +465,15 @@ function setupAccountsParseCategoryId($raw): ?int {
     
     // Toggle archived via fetch (no full reload)
     showArchivedBtn.addEventListener('click', function() {
+        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         showArchived = !showArchived;
         const newShow = showArchived ? '1' : '0';
         fetch(`pages/${currentPage}.php?show_archived=${newShow}`)
             .then(r => r.text())
-            .then(html => { document.getElementById('main-content').innerHTML = html; })
+            .then(html => {
+                if (typeof applyMainContent === 'function') applyMainContent(html);
+                else document.getElementById('main-content').innerHTML = html;
+            })
             .catch(e => console.error('Toggle error:', e));
     });
     

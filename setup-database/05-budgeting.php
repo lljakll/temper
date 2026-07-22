@@ -64,6 +64,19 @@ if ($db->query($schema['budget_lines']) === TRUE) {
     exit(1);
 }
 
+// Link transactions to budgets now that budgets table exists
+$txHasBudget = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'budget_id'");
+if ($txHasBudget && $txHasBudget->num_rows > 0) {
+    @$db->query(
+        'ALTER TABLE transaction_details
+         ADD CONSTRAINT fk_transaction_details_budget
+         FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE SET NULL'
+    );
+}
+if ($txHasBudget) {
+    $txHasBudget->close();
+}
+
 // Create indexes
 $db->query("CREATE INDEX idx_budgets_fiscal_year ON budgets(fiscal_year)");
 $db->query("CREATE INDEX idx_budgets_status ON budgets(status)");

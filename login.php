@@ -1,15 +1,21 @@
 <?php
 require_once 'auth.php';
 
-// If user is already logged in, redirect to dashboard
-if (isLoggedIn()) {
+// If user is already logged in (and session still within idle limit), go to app
+if (isLoggedIn() && isSessionWithinIdleLimit()) {
     header('Location: index.php');
     exit;
+}
+// Stale idle session cookie: clear so the login form can be used
+$showSessionExpired = false;
+if (isLoggedIn() && !isSessionWithinIdleLimit()) {
+    clearAuthSession();
+    $showSessionExpired = true;
 }
 
 // One-time flash set only when a real authenticated session ended (idle/forced).
 // Query param alone is not enough — avoids banner on fresh visits / bookmarks of ?expired=1.
-$showSessionExpired = consumeAuthSessionExpiredFlash();
+$showSessionExpired = $showSessionExpired || consumeAuthSessionExpiredFlash();
 
 $error = '';
 

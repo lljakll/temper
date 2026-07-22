@@ -105,36 +105,41 @@ function temper_render_nav_links(
         <ul class="nav flex-column w-100">
             <?php if ($canDashboard): ?>
             <li class="nav-item">
-                <a href="javascript:void(0)" onclick="loadPage('dashboard')" class="nav-link" data-nav-page="dashboard">
-                    <i class="bi bi-speedometer2"></i> Dashboard
+                <a href="javascript:void(0)" onclick="loadPage('dashboard')" class="nav-link" data-nav-page="dashboard" title="Dashboard">
+                    <i class="bi bi-speedometer2" aria-hidden="true"></i>
+                    <span class="sidebar-label">Dashboard</span>
                 </a>
             </li>
             <?php endif; ?>
             <?php if ($canLedger): ?>
             <li class="nav-item">
-                <a href="javascript:void(0)" onclick="loadPage('ledger')" class="nav-link" data-nav-page="ledger">
-                    <i class="bi bi-currency-dollar"></i> Ledger
+                <a href="javascript:void(0)" onclick="loadPage('ledger')" class="nav-link" data-nav-page="ledger" title="Ledger">
+                    <i class="bi bi-currency-dollar" aria-hidden="true"></i>
+                    <span class="sidebar-label">Ledger</span>
                 </a>
             </li>
             <?php endif; ?>
             <?php if ($canReports): ?>
             <li class="nav-item">
-                <a href="javascript:void(0)" onclick="loadPage('reports')" class="nav-link" data-nav-page="reports">
-                    <i class="bi bi-file-earmark-bar-graph"></i> Reports
+                <a href="javascript:void(0)" onclick="loadPage('reports')" class="nav-link" data-nav-page="reports" title="Reports">
+                    <i class="bi bi-file-earmark-bar-graph" aria-hidden="true"></i>
+                    <span class="sidebar-label">Reports</span>
                 </a>
             </li>
             <?php endif; ?>
             <?php if ($canBudget): ?>
             <li class="nav-item">
-                <a href="javascript:void(0)" onclick="loadPage('budget')" class="nav-link" data-nav-page="budget">
-                    <i class="bi bi-graph-up"></i> Budget
+                <a href="javascript:void(0)" onclick="loadPage('budget')" class="nav-link" data-nav-page="budget" title="Budget">
+                    <i class="bi bi-graph-up" aria-hidden="true"></i>
+                    <span class="sidebar-label">Budget</span>
                 </a>
             </li>
             <?php endif; ?>
             <?php if ($canTasks): ?>
             <li class="nav-item">
-                <a href="javascript:void(0)" onclick="loadPage('tasks')" class="nav-link" data-nav-page="tasks">
-                    <i class="bi bi-check2-square"></i> Tasks / Reminders
+                <a href="javascript:void(0)" onclick="loadPage('tasks')" class="nav-link" data-nav-page="tasks" title="Tasks / Reminders">
+                    <i class="bi bi-check2-square" aria-hidden="true"></i>
+                    <span class="sidebar-label">Tasks / Reminders</span>
                 </a>
             </li>
             <?php endif; ?>
@@ -142,71 +147,82 @@ function temper_render_nav_links(
             <?php if ($showAdminSection): ?>
             <!-- System Section (formerly Admin) -->
             <li class="nav-item">
-                <a class="nav-link" data-bs-toggle="collapse" href="#adminCollapse" role="button" aria-expanded="false" aria-controls="adminCollapse">
-                    <i class="bi bi-gear"></i> System
+                <a class="nav-link" data-bs-toggle="collapse" href="#adminCollapse" role="button" aria-expanded="false" aria-controls="adminCollapse" title="System">
+                    <i class="bi bi-gear" aria-hidden="true"></i>
+                    <span class="sidebar-label">System</span>
                 </a>
                 <div class="collapse" id="adminCollapse">
                     <ul class="nav flex-column ms-3">
                         <?php if ($canAdmin): ?>
                         <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin')" class="nav-link" data-nav-page="admin">
-                                <i class="bi bi-grid"></i> Overview
+                            <a href="javascript:void(0)" onclick="loadPage('admin')" class="nav-link" data-nav-page="admin" title="Overview">
+                                <i class="bi bi-grid" aria-hidden="true"></i>
+                                <span class="sidebar-label">Overview</span>
                             </a>
                         </li>
                         <?php endif; ?>
                         <?php if ($canConfig): ?>
                         <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin-config')" class="nav-link" data-nav-page="admin-config">
-                                <i class="bi bi-sliders"></i> Configuration
+                            <a href="javascript:void(0)" onclick="loadPage('admin-config')" class="nav-link" data-nav-page="admin-config" title="Configuration">
+                                <i class="bi bi-sliders" aria-hidden="true"></i>
+                                <span class="sidebar-label">Configuration</span>
                             </a>
                         </li>
                         <?php endif; ?>
                         <?php if ($canUsers): ?>
                         <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin-users')" class="nav-link" data-nav-page="admin-users">
-                                <i class="bi bi-people"></i> Users &amp; Roles
+                            <a href="javascript:void(0)" onclick="loadPage('admin-users')" class="nav-link" data-nav-page="admin-users" title="Users &amp; Roles">
+                                <i class="bi bi-people" aria-hidden="true"></i>
+                                <span class="sidebar-label">Users &amp; Roles</span>
                             </a>
                         </li>
                         <?php endif; ?>
                         <?php if ($canBackup): ?>
                         <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin-backup')" class="nav-link" data-nav-page="admin-backup">
-                                <i class="bi bi-cloud-arrow-up"></i> Backup / Restore
+                            <a href="javascript:void(0)" onclick="loadPage('admin-backup')" class="nav-link" data-nav-page="admin-backup" title="Backup / Restore">
+                                <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+                                <span class="sidebar-label">Backup / Restore</span>
                             </a>
                         </li>
                         <?php endif; ?>
                         <?php if ($canDatabase): ?>
                         <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin-database')" class="nav-link" data-nav-page="admin-database">
-                                <i class="bi bi-database-gear"></i> Database Maintenance
+                            <a href="javascript:void(0)" onclick="loadPage('admin-database')" class="nav-link" data-nav-page="admin-database" title="Database Maintenance">
+                                <i class="bi bi-database-gear" aria-hidden="true"></i>
+                                <span class="sidebar-label">Database Maintenance</span>
                             </a>
                         </li>
                         <?php endif; ?>
                         <?php if ($canLookups): ?>
                         <li class="nav-item">
-                            <a class="nav-link" data-bs-toggle="collapse" href="#lookupsCollapse" role="button" aria-expanded="false" aria-controls="lookupsCollapse">
-                                <i class="bi bi-list"></i> Lookups
+                            <a class="nav-link" data-bs-toggle="collapse" href="#lookupsCollapse" role="button" aria-expanded="false" aria-controls="lookupsCollapse" title="Lookups">
+                                <i class="bi bi-list" aria-hidden="true"></i>
+                                <span class="sidebar-label">Lookups</span>
                             </a>
                             <div class="collapse" id="lookupsCollapse">
                                 <ul class="nav flex-column ms-3">
                                     <li class="nav-item">
-                                        <a href="javascript:void(0)" onclick="loadPage('setup_funds')" class="nav-link" data-nav-page="setup_funds">
-                                            <i class="bi bi-wallet2"></i> Funds
+                                        <a href="javascript:void(0)" onclick="loadPage('setup_funds')" class="nav-link" data-nav-page="setup_funds" title="Funds">
+                                            <i class="bi bi-wallet2" aria-hidden="true"></i>
+                                            <span class="sidebar-label">Funds</span>
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a href="javascript:void(0)" onclick="loadPage('setup_accounts')" class="nav-link" data-nav-page="setup_accounts">
-                                            <i class="bi bi-credit-card"></i> Accounts
+                                        <a href="javascript:void(0)" onclick="loadPage('setup_accounts')" class="nav-link" data-nav-page="setup_accounts" title="Accounts">
+                                            <i class="bi bi-credit-card" aria-hidden="true"></i>
+                                            <span class="sidebar-label">Accounts</span>
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a href="javascript:void(0)" onclick="loadPage('setup_naturalclasses')" class="nav-link" data-nav-page="setup_naturalclasses">
-                                            <i class="bi bi-tag"></i> Natural Classes
+                                        <a href="javascript:void(0)" onclick="loadPage('setup_naturalclasses')" class="nav-link" data-nav-page="setup_naturalclasses" title="Natural Classes">
+                                            <i class="bi bi-tag" aria-hidden="true"></i>
+                                            <span class="sidebar-label">Natural Classes</span>
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a href="javascript:void(0)" onclick="loadPage('setup_functionalclasses')" class="nav-link" data-nav-page="setup_functionalclasses">
-                                            <i class="bi bi-tags"></i> Functional Classes
+                                        <a href="javascript:void(0)" onclick="loadPage('setup_functionalclasses')" class="nav-link" data-nav-page="setup_functionalclasses" title="Functional Classes">
+                                            <i class="bi bi-tags" aria-hidden="true"></i>
+                                            <span class="sidebar-label">Functional Classes</span>
                                         </a>
                                     </li>
                                 </ul>
@@ -243,8 +259,8 @@ function temper_render_nav_links(
 
 <div class="row g-2">
     <?php if (!$mustChangePassword): ?>
-    <!-- Sidebar: offcanvas below md, sticky column at md+ -->
-    <div class="col-md-2">
+    <!-- Sidebar: offcanvas below md, sticky collapsible column at md+ -->
+    <div class="col-md-2 temper-sidebar-col" id="temperSidebarCol">
         <div class="offcanvas-md offcanvas-start rounded-3 shadow-sm border sidebar-panel"
              tabindex="-1" id="appSidebar" aria-labelledby="appSidebarLabel">
             <div class="offcanvas-header border-bottom d-md-none">
@@ -255,10 +271,15 @@ function temper_render_nav_links(
                         data-bs-target="#appSidebar" aria-label="Close"></button>
             </div>
             <div class="offcanvas-body d-flex flex-column p-3 rounded-3">
-                <!-- Brand (desktop) -->
-                <div class="sidebar-brand d-none d-md-flex align-items-center pb-2 mb-3 border-bottom">
-                    <i class="bi bi-bank me-2 fs-5"></i>
-                    <strong class="text-body">Hope Baptist Treasurer</strong>
+                <!-- Brand (desktop) + collapse toggle -->
+                <div class="sidebar-brand d-none d-md-flex align-items-center pb-2 mb-3 border-bottom position-relative">
+                    <i class="bi bi-bank me-2 fs-5" aria-hidden="true"></i>
+                    <strong class="text-body sidebar-brand-text text-truncate">Hope Baptist Treasurer</strong>
+                    <button type="button" class="btn sidebar-toggle ms-auto" id="sidebarToggle"
+                            title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true"
+                            aria-controls="appSidebar">
+                        <i class="bi bi-chevron-double-left" id="sidebarToggleIcon" aria-hidden="true"></i>
+                    </button>
                 </div>
 
                 <?php temper_render_nav_links(
@@ -287,11 +308,13 @@ function temper_render_nav_links(
                             <div class="text-muted" style="font-size: 0.75rem;"><?= htmlspecialchars($navRoleLabel) ?></div>
                         <?php endif; ?>
                     </div>
-                    <a href="javascript:void(0)" onclick="loadPage('profile')" class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mb-2" data-nav-page="profile">
-                        <i class="bi bi-person-circle"></i> My Profile
+                    <a href="javascript:void(0)" onclick="loadPage('profile')" class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mb-2 sidebar-action-btn" data-nav-page="profile" title="My Profile">
+                        <i class="bi bi-person-circle" aria-hidden="true"></i>
+                        <span class="sidebar-btn-label">My Profile</span>
                     </a>
-                    <a href="logout.php" class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1">
-                        <i class="bi bi-box-arrow-right"></i> Logout
+                    <a href="logout.php" class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1 sidebar-action-btn" title="Logout">
+                        <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                        <span class="sidebar-btn-label">Logout</span>
                     </a>
                 </div>
             </div>

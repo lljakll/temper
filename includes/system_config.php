@@ -57,6 +57,46 @@ function temperSystemConfigCatalog(): array {
             'min' => 1,
             'max' => 8760, // 1 year
         ],
+        'login_timeout_disabled' => [
+            'default' => false,
+            'type' => 'bool',
+            'label' => 'Disable Login Timeout',
+            'description' => 'When enabled, idle login timeout is turned off (sessions do not expire from inactivity). '
+                . 'The timeout seconds field is ignored while this is on.',
+            'group' => 'security',
+            'min' => null,
+            'max' => null,
+        ],
+        'login_timeout_seconds' => [
+            'default' => 300,
+            'type' => 'int',
+            'label' => 'Login Timeout (seconds)',
+            'description' => 'Seconds of inactivity before the session expires and the user is sent to the login page. '
+                . 'Default 300 (5 minutes). Enforced on the server and in the browser while a page is open.',
+            'group' => 'security',
+            'min' => 30,
+            'max' => 86400, // 24 hours
+        ],
+        'sidebar_hover_expand_delay_seconds' => [
+            'default' => 0.5,
+            'type' => 'float',
+            'label' => 'Sidebar Hover Expand Delay (seconds)',
+            'description' => 'How long the pointer must rest on the collapsed sidebar before labels expand. '
+                . 'Helps prevent accidental activation. Default 0.5. Use 0 for immediate expand.',
+            'group' => 'interface',
+            'min' => 0,
+            'max' => 10,
+        ],
+        'sidebar_hover_collapse_delay_seconds' => [
+            'default' => 2.0,
+            'type' => 'float',
+            'label' => 'Sidebar Hover Collapse Delay (seconds)',
+            'description' => 'How long after the pointer leaves a hover-expanded sidebar before it collapses back to icons. '
+                . 'Default 2.0. Use 0 for immediate collapse.',
+            'group' => 'interface',
+            'min' => 0,
+            'max' => 30,
+        ],
     ];
 }
 
@@ -92,14 +132,14 @@ function temperCoerceSystemConfigValue(string $key, mixed $value): mixed {
         default => is_string($value) ? $value : (string)$value,
     };
 
-    if ($type === 'int' && is_array($meta)) {
+    if (($type === 'int' || $type === 'float') && is_array($meta)) {
         $min = $meta['min'] ?? null;
         $max = $meta['max'] ?? null;
-        if ($min !== null && $coerced < (int)$min) {
-            $coerced = (int)$min;
+        if ($min !== null && $coerced < (float)$min) {
+            $coerced = $type === 'int' ? (int)$min : (float)$min;
         }
-        if ($max !== null && $coerced > (int)$max) {
-            $coerced = (int)$max;
+        if ($max !== null && $coerced > (float)$max) {
+            $coerced = $type === 'int' ? (int)$max : (float)$max;
         }
     }
 
@@ -197,6 +237,59 @@ function getAutoArchiveTimerHours(): int {
         $hours = 24;
     }
     return $hours;
+}
+
+/**
+ * Whether idle login timeout is active (not disabled in System Configuration).
+ */
+function isLoginTimeoutEnabled(): bool {
+    return !(bool)getSystemConfig('login_timeout_disabled', false);
+}
+
+/**
+ * Configured login idle timeout in whole seconds (default 300).
+ * Clamped to catalog min/max. Still returns the configured value when timeout is disabled
+ * (callers should check isLoginTimeoutEnabled() first).
+ */
+function getLoginTimeoutSeconds(): int {
+    $seconds = (int)getSystemConfig('login_timeout_seconds', 300);
+    if ($seconds < 30) {
+        $seconds = 30;
+    }
+    if ($seconds > 86400) {
+        $seconds = 86400;
+    }
+    return $seconds;
+}
+
+/**
+ * Seconds to wait before expanding a collapsed sidebar on hover (default 0.5).
+ * Clamped to catalog min/max. Client multiplies by 1000 for setTimeout.
+ */
+function getSidebarHoverExpandDelaySeconds(): float {
+    $sec = (float)getSystemConfig('sidebar_hover_expand_delay_seconds', 0.5);
+    if ($sec < 0) {
+        $sec = 0.0;
+    }
+    if ($sec > 10) {
+        $sec = 10.0;
+    }
+    return $sec;
+}
+
+/**
+ * Seconds to wait after leaving a hover-expanded sidebar before collapsing (default 2.0).
+ * Clamped to catalog min/max. Client multiplies by 1000 for setTimeout.
+ */
+function getSidebarHoverCollapseDelaySeconds(): float {
+    $sec = (float)getSystemConfig('sidebar_hover_collapse_delay_seconds', 2.0);
+    if ($sec < 0) {
+        $sec = 0.0;
+    }
+    if ($sec > 30) {
+        $sec = 30.0;
+    }
+    return $sec;
 }
 
 /**

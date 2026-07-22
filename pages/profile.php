@@ -190,7 +190,7 @@ $roleLabel = implode(', ', $profile['role_names'] ?? [($profile['role_name'] ?? 
                     <div class="alert alert-success py-2 small"><?= htmlspecialchars($success) ?></div>
                 <?php endif; ?>
 
-                <form method="post" action="pages/profile.php" id="profilePasswordForm" autocomplete="off">
+                <form method="post" action="pages/profile.php" id="profilePasswordForm" autocomplete="off" data-dirty-track>
                     <input type="hidden" name="action" value="change_password">
                     <div class="mb-2">
                         <label class="form-label small" for="current_password">Current password</label>
@@ -247,6 +247,9 @@ $roleLabel = implode(', ', $profile['role_names'] ?? [($profile['role_name'] ?? 
                 }
                 if (typeof showToast === 'function') showToast(data.message || 'Password updated.', 'success');
                 form.reset();
+                if (typeof window.TemperDirtyForms !== 'undefined') {
+                    window.TemperDirtyForms.markClean(form);
+                }
                 // Reload profile fragment for clean state (flash toast already shown)
                 fetch('pages/profile.php')
                     .then(function(r) { return r.text(); })

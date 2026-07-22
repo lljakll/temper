@@ -8,6 +8,7 @@ function setupSchemaTransactions(): array
 {
     return [
         'tables' => [
+            // budget_id FK is added after budgets exist (05-budgeting / live migrate).
             'transaction_details' => "CREATE TABLE IF NOT EXISTS transaction_details (
     id INT AUTO_INCREMENT PRIMARY KEY,
     transaction_date DATE NOT NULL,
@@ -16,6 +17,7 @@ function setupSchemaTransactions(): array
     pay_to VARCHAR(255) NULL,
     memo TEXT,
     reference_number VARCHAR(50) NULL,
+    budget_id INT NULL,
     status ENUM('pending', 'cleared', 'reconciled') DEFAULT 'pending',
     date_reconciled DATE NULL,
     created_by_user_id INT NULL,
@@ -96,6 +98,7 @@ $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_date ON transacti
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_status ON transaction_details(status)");
 // Reference # (YY####) — non-unique so confirmed reuse is allowed
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_reference ON transaction_details(reference_number)");
+$db->query("CREATE INDEX IF NOT EXISTS idx_transaction_details_budget_id ON transaction_details(budget_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_documents_tx ON transaction_documents(transaction_detail_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_events_tx ON transaction_events(transaction_detail_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_transaction_events_type ON transaction_events(event_type)");
