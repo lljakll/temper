@@ -652,7 +652,14 @@ require_once __DIR__ . '/../includes/permissions.php';
     const approvedDateInput = document.getElementById('approvedDate');
     const budgetNameInput = document.getElementById('budgetName');
     const budgetNameTip = document.getElementById('budgetNameTip');
-    const cycleModal = new bootstrap.Modal(document.getElementById('cycleModal'));
+    // Prefer body-mounted modal (SPA stacking); getOrCreate after mount so backdrop is under dialog
+    let cycleModalEl = document.getElementById('cycleModal');
+    if (cycleModalEl && typeof window.mountModalOnBody === 'function') {
+        cycleModalEl = window.mountModalOnBody(cycleModalEl);
+    }
+    const cycleModal = cycleModalEl
+        ? bootstrap.Modal.getOrCreateInstance(cycleModalEl)
+        : null;
     let selectedRow = null;
     let originalStatus = 'draft';
     let formMode = 'draft';
@@ -992,6 +999,10 @@ require_once __DIR__ . '/../includes/permissions.php';
             document.getElementById('closeConfirmBtn').disabled = !(data.active || []).length;
             document.getElementById('cycleDateWarning').classList.add('d-none');
             document.getElementById('closeDateWarning').classList.add('d-none');
+            if (!cycleModal || !cycleModalEl) return;
+            if (typeof window.mountModalOnBody === 'function') {
+                cycleModalEl = window.mountModalOnBody(cycleModalEl);
+            }
             cycleModal.show();
         });
     }
@@ -1059,7 +1070,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 if (res.error) {
                     showToast(res.error, 'danger');
                 } else {
-                    cycleModal.hide();
+                    if (cycleModal) cycleModal.hide();
                     showToast(res.message || 'Budget activated successfully.', 'success');
                     reload();
                 }
@@ -1085,7 +1096,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 if (res.error) {
                     showToast(res.error, 'danger');
                 } else {
-                    cycleModal.hide();
+                    if (cycleModal) cycleModal.hide();
                     showToast(res.message || 'Budget closed successfully.', 'success');
                     reload();
                 }

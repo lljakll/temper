@@ -597,10 +597,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
 
         /*
-         * Fragment modals are reparented to body (see ledger showLedgerModal) so they
-         * stack above .modal-backdrop. If a modal remains under #main-content-col
-         * (z-index: 1), the body backdrop (1050) steals all clicks — open but dead.
-         * Ensure body-level modals/backdrops keep Bootstrap stacking.
+         * Fragment modals are reparented to body (footer mountModalOnBody /
+         * mountFragmentModals / showFragmentModal) so they stack above .modal-backdrop.
+         * If a modal remains under #main-content-col (z-index: 1), the body backdrop
+         * (1050) steals all clicks — open but dead. Keep Bootstrap stacking on body.
          */
         body > .modal {
             z-index: 1055;
@@ -773,8 +773,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             }
 
             function getModalInstance() {
-                const el = getModal();
+                let el = getModal();
                 if (!el || typeof bootstrap === 'undefined' || !bootstrap.Modal) return null;
+                // Same stacking fix as fragment modals (shell modal starts under #main-content-col)
+                if (typeof window.mountModalOnBody === 'function') {
+                    el = window.mountModalOnBody(el) || el;
+                }
                 if (!modalInst) {
                     modalInst = bootstrap.Modal.getOrCreateInstance(el, {
                         backdrop: 'static',
@@ -1065,7 +1069,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
 
         const contentArea = document.getElementById('main-content');
-        
+
+        // Drop body-mounted page modals from the previous fragment before the spinner
+        if (typeof window.cleanupFragmentModals === 'function') {
+            window.cleanupFragmentModals();
+        }
+
         // Show loading indicator
         contentArea.innerHTML = '<div class="text-center p-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-3">Loading...</p></div>';
         
@@ -1086,7 +1095,13 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                     if (typeof window.TemperDirtyForms !== 'undefined') {
                         window.TemperDirtyForms.clearAll();
                     }
+                    if (typeof window.cleanupFragmentModals === 'function') {
+                        window.cleanupFragmentModals();
+                    }
                     contentArea.innerHTML = html;
+                    if (typeof window.mountFragmentModals === 'function') {
+                        window.mountFragmentModals(contentArea);
+                    }
                 }
             })
             .catch(function(error) {

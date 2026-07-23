@@ -1391,33 +1391,24 @@ require_once __DIR__ . '/../includes/permissions.php';
     const importTextWarningList = document.getElementById('importTextWarningList');
 
     /**
-     * Move a Bootstrap modal to document.body before show.
-     * Fragment modals under #main-content-col (z-index: 1) sit below the body-level
-     * .modal-backdrop (z-index: 1050), which intercepts all clicks — modal looks open
-     * but cannot be closed, typed in, or clicked. Reparenting restores normal stacking.
+     * Use shell helpers (footer mountModalOnBody / showFragmentModal) so ledger modals
+     * stack above the body backdrop. Local wrappers keep call sites readable.
      */
     function mountModalOnBody(modalEl) {
-        if (!modalEl || !modalEl.classList || !modalEl.classList.contains('modal')) return modalEl;
-        if (modalEl.parentElement === document.body) return modalEl;
-        // Drop stale duplicates left on body from a previous ledger load
-        if (modalEl.id) {
-            const esc = (typeof CSS !== 'undefined' && CSS.escape)
-                ? CSS.escape(modalEl.id)
-                : String(modalEl.id).replace(/([^a-zA-Z0-9_-])/g, '\\$1');
-            document.querySelectorAll('body > .modal#' + esc).forEach(function(other) {
-                if (other === modalEl) return;
-                try {
-                    const inst = bootstrap.Modal.getInstance(other);
-                    if (inst) inst.dispose();
-                } catch (e) { /* ignore */ }
-                other.remove();
-            });
+        if (typeof window.mountModalOnBody === 'function') {
+            return window.mountModalOnBody(modalEl);
         }
-        document.body.appendChild(modalEl);
+        if (!modalEl || !modalEl.classList || !modalEl.classList.contains('modal')) return modalEl;
+        if (modalEl.parentElement !== document.body) {
+            document.body.appendChild(modalEl);
+        }
         return modalEl;
     }
 
     function showLedgerModal(modalEl, options) {
+        if (typeof window.showFragmentModal === 'function') {
+            return window.showFragmentModal(modalEl, options);
+        }
         if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return null;
         mountModalOnBody(modalEl);
         const modal = bootstrap.Modal.getOrCreateInstance(modalEl, options || {});

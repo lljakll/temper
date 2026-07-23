@@ -651,8 +651,13 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
     const calMonthLabel = document.getElementById('calMonthLabel');
     const calDayLabel = document.getElementById('calDayLabel');
     const calDayTasks = document.getElementById('calDayTasks');
-    const addTaskModalEl = document.getElementById('addTaskModal');
-    const addTaskModal = new bootstrap.Modal(addTaskModalEl);
+    let addTaskModalEl = document.getElementById('addTaskModal');
+    if (addTaskModalEl && typeof window.mountModalOnBody === 'function') {
+        addTaskModalEl = window.mountModalOnBody(addTaskModalEl);
+    }
+    const addTaskModal = addTaskModalEl
+        ? bootstrap.Modal.getOrCreateInstance(addTaskModalEl)
+        : null;
     const addTaskForm = document.getElementById('addTaskForm');
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayParts = todayStr.split('-').map(Number);
@@ -990,6 +995,10 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
         if (typeof window.TemperDirtyForms !== 'undefined') {
             window.TemperDirtyForms.markClean(addTaskForm);
         }
+        if (!addTaskModal) return;
+        if (addTaskModalEl && typeof window.mountModalOnBody === 'function') {
+            addTaskModalEl = window.mountModalOnBody(addTaskModalEl);
+        }
         addTaskModal.show();
         setTimeout(() => fieldMap.title && fieldMap.title.focus(), 200);
     });
@@ -1054,7 +1063,7 @@ $db->query("CREATE TABLE IF NOT EXISTS tasks (
                 if (typeof window.TemperDirtyForms !== 'undefined') {
                     window.TemperDirtyForms.markClean(addTaskForm);
                 }
-                addTaskModal.hide();
+                if (addTaskModal) addTaskModal.hide();
                 reload('Task created successfully.');
             })
             .catch(err => {

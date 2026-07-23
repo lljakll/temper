@@ -7,9 +7,13 @@
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/system_config.php';
+require_once __DIR__ . '/../includes/backup_utils.php';
 
 // Strict: Administrator role only (not merely admin.config permission)
 $actor = requireAdministrator($db, 'Only administrators can change system configuration.');
+
+// Opportunistic data-only auto-backup when admin visits configuration
+maybeRunAutoBackup($db);
 
 function configSendJson(array $payload, ?mysqli $db = null): void {
     while (ob_get_level() > 0) {
@@ -28,6 +32,7 @@ function configParseBool(mixed $raw): bool {
 }
 
 function configPayload(): array {
+    $autoState = loadAutoBackupState();
     return [
         'settings' => systemConfigSettingsForUi(),
         'developer_mode' => isDeveloperModeEnabled(),
@@ -39,6 +44,11 @@ function configPayload(): array {
         'login_timeout_enabled' => isLoginTimeoutEnabled(),
         'sidebar_hover_expand_delay_seconds' => getSidebarHoverExpandDelaySeconds(),
         'sidebar_hover_collapse_delay_seconds' => getSidebarHoverCollapseDelaySeconds(),
+        'auto_backup_enabled' => isAutoBackupConfigEnabled(),
+        'auto_backup_frequency' => getAutoBackupConfigFrequency(),
+        'auto_backup_format' => getAutoBackupConfigFormat(),
+        'auto_backup_last_run' => $autoState['last_run'],
+        'auto_backup_last_status' => $autoState['last_status'],
         'allow_hard_delete' => allowHardDeleteUsers(),
         'app_env' => (string)APP_ENV,
         'is_development_env' => isDevelopmentEnvironment(),
@@ -143,6 +153,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updates['sidebar_hover_collapse_delay_seconds'] = $collapseSec;
         }
 
+        if (array_key_exists('auto_backup_enabled', $_POST)) {
+            $updates['auto_backup_enabled'] = configParseBool($_POST['auto_backup_enabled']);
+        }
+
+        if (array_key_exists('auto_backup_frequency', $_POST)) {
+            $freq = strtolower(trim((string)$_POST['auto_backup_frequency']));
+            if (!in_array($freq, ['hourly', 'daily', 'weekly'], true)) {
+                configSendJson([
+                    'success' => false,
+                    'error' => 'Auto-Backup Frequency must be hourly, daily, or weekly.',
+                ], $db);
+            }
+            $updates['auto_backup_frequency'] = $freq;
+        }
+
+        if (array_key_exists('auto_backup_format', $_POST)) {
+            $fmt = strtolower(trim((string)$_POST['auto_backup_format']));
+            if (!in_array($fmt, ['sql', 'csv', 'both'], true)) {
+                configSendJson([
+                    'success' => false,
+                    'error' => 'Auto-Backup Format must be sql, csv, or both.',
+                ], $db);
+            }
+            $updates['auto_backup_format'] = $fmt;
+        }
+
         // Accept any other catalog keys posted in the future
         foreach (temperSystemConfigCatalog() as $key => $meta) {
             if (isset($updates[$key])) {
@@ -203,6 +239,11 @@ $loginTimeoutDisabled = (bool)$payload['login_timeout_disabled'];
 $loginTimeoutSeconds = (int)$payload['login_timeout_seconds'];
 $sidebarHoverExpandSec = (float)$payload['sidebar_hover_expand_delay_seconds'];
 $sidebarHoverCollapseSec = (float)$payload['sidebar_hover_collapse_delay_seconds'];
+$autoBackupEnabled = (bool)$payload['auto_backup_enabled'];
+$autoBackupFrequency = (string)$payload['auto_backup_frequency'];
+$autoBackupFormat = (string)$payload['auto_backup_format'];
+$autoBackupLastRun = $payload['auto_backup_last_run'] ?? null;
+$autoBackupLastStatus = $payload['auto_backup_last_status'] ?? null;
 $allowHardDelete = (bool)$payload['allow_hard_delete'];
 $appEnv = (string)$payload['app_env'];
 $isDevEnv = (bool)$payload['is_development_env'];
@@ -370,6 +411,69 @@ $isDevEnv = (bool)$payload['is_development_env'];
                         </div>
                     </div>
 
+                    <!-- Backup / auto-backup group -->
+                    <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: 0.75rem;">
+                        Backup
+                    </h3>
+
+                    <div class="p-3 rounded border mb-4">
+                        <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+                            <div class="flex-grow-1">
+                                <label class="form-label fw-semibold mb-1" for="cfgAutoBackupEnabled">Enable Auto-Backup</label>
+                                <p class="small text-muted mb-0">
+                                    When on, the system creates <strong>data-only</strong> backups on a schedule
+                                    (SQL, CSV, or both) under <code>storage/backups/</code>.
+                                    Full schema dumps remain a manual action on Database Maintenance.
+                                    Auto-backup also runs opportunistically when an administrator opens System pages,
+                                    and via the CLI script <code>scripts/auto_backup.php</code> (cron).
+                                </p>
+                                <?php if ($autoBackupLastRun): ?>
+                                <p class="small text-muted mb-0 mt-2" id="cfgAutoBackupLastRun">
+                                    Last auto-backup:
+                                    <strong><?= htmlspecialchars((string)$autoBackupLastRun) ?></strong>
+                                    <?php if ($autoBackupLastStatus === 'ok'): ?>
+                                        <span class="badge text-bg-success">ok</span>
+                                    <?php elseif ($autoBackupLastStatus === 'error'): ?>
+                                        <span class="badge text-bg-danger">error</span>
+                                    <?php endif; ?>
+                                </p>
+                                <?php else: ?>
+                                <p class="small text-muted mb-0 mt-2" id="cfgAutoBackupLastRun">No auto-backup has run yet.</p>
+                                <?php endif; ?>
+                            </div>
+                            <div class="form-check form-switch m-0 pt-1">
+                                <input class="form-check-input" type="checkbox" role="switch"
+                                       id="cfgAutoBackupEnabled" <?= $autoBackupEnabled ? 'checked' : '' ?>>
+                                <label class="form-check-label small" for="cfgAutoBackupEnabled" id="cfgAutoBackupEnabledLabel">
+                                    <?= $autoBackupEnabled ? 'On' : 'Off' ?>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="border-top pt-3" id="cfgAutoBackupOptionsWrap">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold mb-1" for="cfgAutoBackupFrequency">Frequency</label>
+                                    <select class="form-select form-select-sm" id="cfgAutoBackupFrequency"
+                                            <?= $autoBackupEnabled ? '' : 'disabled' ?>>
+                                        <option value="hourly" <?= $autoBackupFrequency === 'hourly' ? 'selected' : '' ?>>Hourly</option>
+                                        <option value="daily" <?= $autoBackupFrequency === 'daily' ? 'selected' : '' ?>>Daily</option>
+                                        <option value="weekly" <?= $autoBackupFrequency === 'weekly' ? 'selected' : '' ?>>Weekly</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold mb-1" for="cfgAutoBackupFormat">Format</label>
+                                    <select class="form-select form-select-sm" id="cfgAutoBackupFormat"
+                                            <?= $autoBackupEnabled ? '' : 'disabled' ?>>
+                                        <option value="sql" <?= $autoBackupFormat === 'sql' ? 'selected' : '' ?>>SQL (data-only)</option>
+                                        <option value="csv" <?= $autoBackupFormat === 'csv' ? 'selected' : '' ?>>CSV (zip)</option>
+                                        <option value="both" <?= $autoBackupFormat === 'both' ? 'selected' : '' ?>>Both</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Interface / sidebar group -->
                     <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: 0.75rem;">
                         Interface
@@ -480,6 +584,14 @@ $isDevEnv = (bool)$payload['is_development_env'];
                             <?= htmlspecialchars(rtrim(rtrim(number_format($sidebarHoverCollapseSec, 2, '.', ''), '0'), '.') ?: '0') ?>s
                         </span>
                     </dd>
+                    <dt class="col-6 text-muted">Auto-backup</dt>
+                    <dd class="col-6" id="cfgStatusAutoBackup">
+                        <?php if ($autoBackupEnabled): ?>
+                            <span class="badge text-bg-success"><?= htmlspecialchars($autoBackupFrequency) ?> / <?= htmlspecialchars($autoBackupFormat) ?></span>
+                        <?php else: ?>
+                            <span class="badge text-bg-secondary">Off</span>
+                        <?php endif; ?>
+                    </dd>
                     <dt class="col-6 text-muted">Environment</dt>
                     <dd class="col-6"><code><?= htmlspecialchars($appEnv) ?></code></dd>
                 </dl>
@@ -509,12 +621,17 @@ $isDevEnv = (bool)$payload['is_development_env'];
     const timeoutSecondsHint = document.getElementById('cfgLoginTimeoutSecondsHint');
     const sidebarExpandInput = document.getElementById('cfgSidebarHoverExpand');
     const sidebarCollapseInput = document.getElementById('cfgSidebarHoverCollapse');
+    const autoBackupToggle = document.getElementById('cfgAutoBackupEnabled');
+    const autoBackupToggleLabel = document.getElementById('cfgAutoBackupEnabledLabel');
+    const autoBackupFrequency = document.getElementById('cfgAutoBackupFrequency');
+    const autoBackupFormat = document.getElementById('cfgAutoBackupFormat');
     const statusEl = document.getElementById('cfgSaveStatus');
     const statusDev = document.getElementById('cfgStatusDevMode');
     const statusHard = document.getElementById('cfgStatusHardDelete');
     const statusAuto = document.getElementById('cfgStatusAutoArchive');
     const statusLoginTimeout = document.getElementById('cfgStatusLoginTimeout');
     const statusSidebarHover = document.getElementById('cfgStatusSidebarHover');
+    const statusAutoBackup = document.getElementById('cfgStatusAutoBackup');
 
     function toast(msg, type) {
         if (typeof showToast === 'function') showToast(msg, type || 'info');
@@ -577,6 +694,13 @@ $isDevEnv = (bool)$payload['is_development_env'];
         }
     }
 
+    function syncAutoBackupUi() {
+        const on = !!(autoBackupToggle && autoBackupToggle.checked);
+        setOnOffLabel(autoBackupToggleLabel, on);
+        if (autoBackupFrequency) autoBackupFrequency.disabled = !on;
+        if (autoBackupFormat) autoBackupFormat.disabled = !on;
+    }
+
     function applyPayload(res) {
         // Accept bool or 0/1 from API — checked means Developer Mode On
         if (toggle && res.developer_mode !== undefined && res.developer_mode !== null) {
@@ -603,8 +727,18 @@ $isDevEnv = (bool)$payload['is_development_env'];
         if (res.sidebar_hover_collapse_delay_seconds != null && sidebarCollapseInput) {
             sidebarCollapseInput.value = String(res.sidebar_hover_collapse_delay_seconds);
         }
+        if (typeof res.auto_backup_enabled === 'boolean' && autoBackupToggle) {
+            autoBackupToggle.checked = res.auto_backup_enabled;
+        }
+        if (res.auto_backup_frequency && autoBackupFrequency) {
+            autoBackupFrequency.value = String(res.auto_backup_frequency);
+        }
+        if (res.auto_backup_format && autoBackupFormat) {
+            autoBackupFormat.value = String(res.auto_backup_format);
+        }
         syncAutoArchiveUi();
         syncLoginTimeoutUi();
+        syncAutoBackupUi();
 
         // Live client timer picks up new values after save (same browser tab)
         if (window.__temperLoginTimeout) {
@@ -662,6 +796,27 @@ $isDevEnv = (bool)$payload['is_development_env'];
             statusSidebarHover.innerHTML = '<span class="badge text-bg-success" title="Expand / collapse delay">'
                 + String(ex) + 's / ' + String(cl) + 's</span>';
         }
+        if (statusAutoBackup) {
+            if (res.auto_backup_enabled) {
+                const f = res.auto_backup_frequency || 'daily';
+                const fmt = res.auto_backup_format || 'sql';
+                statusAutoBackup.innerHTML = '<span class="badge text-bg-success">'
+                    + String(f) + ' / ' + String(fmt) + '</span>';
+            } else {
+                statusAutoBackup.innerHTML = '<span class="badge text-bg-secondary">Off</span>';
+            }
+        }
+        const lastRunEl = document.getElementById('cfgAutoBackupLastRun');
+        if (lastRunEl && res.auto_backup_last_run) {
+            let badge = '';
+            if (res.auto_backup_last_status === 'ok') {
+                badge = ' <span class="badge text-bg-success">ok</span>';
+            } else if (res.auto_backup_last_status === 'error') {
+                badge = ' <span class="badge text-bg-danger">error</span>';
+            }
+            lastRunEl.innerHTML = 'Last auto-backup: <strong>'
+                + String(res.auto_backup_last_run) + '</strong>' + badge;
+        }
     }
 
     if (toggle) {
@@ -680,8 +835,12 @@ $isDevEnv = (bool)$payload['is_development_env'];
     if (timeoutSecondsInput) {
         timeoutSecondsInput.addEventListener('input', syncLoginTimeoutUi);
     }
+    if (autoBackupToggle) {
+        autoBackupToggle.addEventListener('change', syncAutoBackupUi);
+    }
     syncAutoArchiveUi();
     syncLoginTimeoutUi();
+    syncAutoBackupUi();
 
     if (form) {
         form.addEventListener('submit', function(e) {
@@ -732,6 +891,9 @@ $isDevEnv = (bool)$payload['is_development_env'];
             fd.append('login_timeout_seconds', String(timeoutSec >= 30 ? timeoutSec : 300));
             fd.append('sidebar_hover_expand_delay_seconds', String(expandSec));
             fd.append('sidebar_hover_collapse_delay_seconds', String(collapseSec));
+            fd.append('auto_backup_enabled', autoBackupToggle && autoBackupToggle.checked ? '1' : '0');
+            fd.append('auto_backup_frequency', autoBackupFrequency ? autoBackupFrequency.value : 'daily');
+            fd.append('auto_backup_format', autoBackupFormat ? autoBackupFormat.value : 'sql');
             if (statusEl) statusEl.textContent = 'Saving…';
             fetch(endpoint, { method: 'POST', body: fd, headers: { 'Accept': 'application/json' } })
                 .then(function(r) {

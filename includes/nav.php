@@ -23,11 +23,11 @@ $canReports = navCan($navPerms, 'page.reports');
 $canBudget = navCan($navPerms, 'page.budget');
 $canTasks = navCan($navPerms, 'page.tasks');
 $canAdmin = navCan($navPerms, 'admin.access');
-$canBackup = navCan($navPerms, 'admin.backup');
+// Backup / Restore and Configuration are Administrator-only (role check)
+$canBackup = $user && userIsAdministrator($navDb, (int)$user['id']);
 $canDatabase = navCan($navPerms, 'admin.database');
 $canLookups = navCan($navPerms, 'admin.lookups');
 $canUsers = navCan($navPerms, 'users.manage');
-// Configuration is Administrator-only (role check, not just permission)
 $canConfig = $user && userIsAdministrator($navDb, (int)$user['id']);
 $showAdminSection = $canAdmin || $canBackup || $canDatabase || $canLookups || $canUsers || $canConfig;
 
@@ -179,7 +179,7 @@ function temper_render_nav_links(
                         <?php endif; ?>
                         <?php if ($canBackup): ?>
                         <li class="nav-item">
-                            <a href="javascript:void(0)" onclick="loadPage('admin-backup')" class="nav-link" data-nav-page="admin-backup" title="Backup / Restore">
+                            <a href="javascript:void(0)" onclick="loadPage('admin-backup')" class="nav-link" data-nav-page="admin-backup" title="Backup / Restore (data-only)">
                                 <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
                                 <span class="sidebar-label">Backup / Restore</span>
                             </a>

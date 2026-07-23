@@ -392,7 +392,76 @@ $footerDb->close();
         })();
 
         /**
-         * Remove fragment modals reparented onto document.body (see ledger mountModalOnBody).
+         * Move a Bootstrap modal to document.body before show.
+         * SPA fragments live under #main-content-col (z-index: 1). Bootstrap appends
+         * .modal-backdrop to body at z-index 1050, so a modal that stays inside the
+         * column is painted under the backdrop — open but non-interactive (no close,
+         * fields, or buttons). Reparenting restores normal stacking.
+         */
+        window.mountModalOnBody = function(modalEl) {
+            if (!modalEl || !modalEl.classList || !modalEl.classList.contains('modal')) {
+                return modalEl;
+            }
+            if (modalEl.parentElement === document.body) {
+                return modalEl;
+            }
+            if (modalEl.id) {
+                const esc = (typeof CSS !== 'undefined' && CSS.escape)
+                    ? CSS.escape(modalEl.id)
+                    : String(modalEl.id).replace(/([^a-zA-Z0-9_-])/g, '\\$1');
+                document.querySelectorAll('body > .modal#' + esc).forEach(function(other) {
+                    if (other === modalEl) return;
+                    try {
+                        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                            const inst = bootstrap.Modal.getInstance(other);
+                            if (inst) inst.dispose();
+                        }
+                    } catch (e) { /* ignore */ }
+                    other.remove();
+                });
+            }
+            document.body.appendChild(modalEl);
+            return modalEl;
+        };
+
+        /**
+         * Reparent + show a fragment modal with optional Bootstrap Modal options.
+         */
+        window.showFragmentModal = function(modalEl, options) {
+            if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) {
+                return null;
+            }
+            window.mountModalOnBody(modalEl);
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl, options || {});
+            modal.show();
+            return modal;
+        };
+
+        /**
+         * Reparent every .modal still under #main-content (or a given root) onto body.
+         * Called after SPA fragment injection so all page modals are interactive.
+         */
+        window.mountFragmentModals = function(root) {
+            try {
+                const scope = root && root.querySelectorAll
+                    ? root
+                    : document.getElementById('main-content');
+                if (!scope) return;
+                scope.querySelectorAll('.modal').forEach(function(el) {
+                    window.mountModalOnBody(el);
+                });
+            } catch (e) { /* ignore */ }
+        };
+
+        // Shell idle-timeout modal is rendered in index.php under #main-content-col;
+        // lift it once so its backdrop/buttons are interactive.
+        (function mountShellSessionModal() {
+            const el = document.getElementById('sessionTimeoutModal');
+            if (el) window.mountModalOnBody(el);
+        })();
+
+        /**
+         * Remove fragment modals reparented onto document.body (see mountModalOnBody).
          * Keeps the shell sessionTimeoutModal. Prevents duplicate IDs + stuck backdrops after SPA nav.
          */
         window.cleanupFragmentModals = function() {
@@ -435,6 +504,10 @@ $footerDb->close();
                 window.cleanupFragmentModals();
             }
             document.getElementById('main-content').innerHTML = html;
+            // Lift fragment modals out of #main-content-col stacking context
+            if (typeof window.mountFragmentModals === 'function') {
+                window.mountFragmentModals(document.getElementById('main-content'));
+            }
             const opts = options || {};
             if (opts.skipFlash) {
                 ['page-flash', 'ledger-flash'].forEach(function(fid) {

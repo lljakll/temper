@@ -1,16 +1,17 @@
 <?php
-    // Admin Database Maintenance - Inner content only for AJAX loading
+// Admin Database Maintenance - Inner content only for AJAX loading
 require_once __DIR__ . '/../includes/page_bootstrap.php';
-    require_once __DIR__ . '/../includes/audit.php';
+require_once __DIR__ . '/../includes/audit.php';
+require_once __DIR__ . '/../includes/backup_utils.php';
 
 // Destructive maintenance is administrator-only
 requireAdministrator($db, 'Only administrators can run database maintenance.');
 
 define('MAINTENANCE_PIN', '464546');
-    define('DEFAULT_ADMIN_PASSWORD_HASH', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute');
+define('DEFAULT_ADMIN_PASSWORD_HASH', '$2y$12$hElsAKEKx9CLXDqzYsxEeOLXq2V7vr.OY1qgi2RjTq19MqWII.Ute');
 
-    $backupDir = getBackupDir();
-    $exportDir = getExportsDir();
+$backupDir = getBackupDir();
+$exportDir = getExportsDir();
 
     $clearActionTables = [
         'clear_transactions' => ['transaction_documents', 'transaction_events', 'transaction_lines', 'transaction_details'],
@@ -148,7 +149,8 @@ define('MAINTENANCE_PIN', '464546');
     }
 
     function getMaintenanceState(mysqli $db, string $backupDir, array $financialTables): array {
-        $backups = listBackupFiles($backupDir);
+        // Any backup type (data-only or full) satisfies the 24h safety gate
+        $backups = listBackupFiles($backupDir, false);
         $latestBackup = getLatestBackup($backups);
         $backupAllowed = hasRecentBackup($latestBackup);
         $tablesWithData = getTablesWithData($db, $financialTables);
@@ -168,21 +170,6 @@ define('MAINTENANCE_PIN', '464546');
         ];
     }
 
-    function listBackupFiles(string $dir): array {
-        $files = [];
-        if (!is_dir($dir)) {
-            return $files;
-        }
-        foreach (glob($dir . '/backup_*.sql') as $path) {
-            $files[] = [
-                'name' => basename($path),
-                'modified' => filemtime($path),
-            ];
-        }
-        usort($files, fn($a, $b) => $b['modified'] <=> $a['modified']);
-        return $files;
-    }
-
     function getLatestBackup(?array $backups): ?array {
         return $backups[0] ?? null;
     }
@@ -192,6 +179,18 @@ define('MAINTENANCE_PIN', '464546');
             return false;
         }
         return (time() - $latestBackup['modified']) <= 86400;
+    }
+
+    function maintSendJson(array $payload, ?mysqli $db = null): void {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($payload);
+        if ($db) {
+            $db->close();
+        }
+        exit;
     }
 
     function verifyCurrentUserPassword(mysqli $db, int $userId, string $password): bool {
@@ -257,6 +256,48 @@ define('MAINTENANCE_PIN', '464546');
         exit;
     }
 
+    if (isset($_GET['action']) && $_GET['action'] === 'download' && isset($_GET['file'])) {
+        $safe = safeBackupFilename($_GET['file']);
+        if (!$safe || !backupIsFullSchema($safe)) {
+            header('HTTP/1.1 400 Bad Request');
+            exit;
+        }
+        $path = rtrim($backupDir, '/\\') . '/' . $safe;
+        if (!is_file($path)) {
+            header('HTTP/1.1 404 Not Found');
+            exit;
+        }
+        header('Content-Type: application/sql');
+        header('Content-Disposition: attachment; filename="' . $safe . '"');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        $db->close();
+        exit;
+    }
+
+    if (isset($_GET['action']) && $_GET['action'] === 'download_checksum' && isset($_GET['file'])) {
+        $safe = safeBackupFilename($_GET['file']);
+        if (!$safe || !backupIsFullSchema($safe)) {
+            header('HTTP/1.1 400 Bad Request');
+            exit;
+        }
+        $checksumName = backupChecksumFilename($safe);
+        $checksumPath = rtrim($backupDir, '/\\') . '/' . $checksumName;
+        if (!is_file($checksumPath)) {
+            writeBackupChecksumFile($backupDir, $safe);
+        }
+        if (!is_file($checksumPath)) {
+            header('HTTP/1.1 404 Not Found');
+            exit;
+        }
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $checksumName . '"');
+        header('Content-Length: ' . filesize($checksumPath));
+        readfile($checksumPath);
+        $db->close();
+        exit;
+    }
+
     if (isset($_GET['action']) && $_GET['action'] === 'download_audit') {
         $token = $_GET['token'] ?? '';
         $file = basename($_GET['file'] ?? '');
@@ -286,8 +327,6 @@ define('MAINTENANCE_PIN', '464546');
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        header('Content-Type: application/json');
-
         $postAction = $_POST['action'] ?? '';
         $pin = $_POST['pin'] ?? '';
         $password = $_POST['password'] ?? '';
@@ -295,7 +334,94 @@ define('MAINTENANCE_PIN', '464546');
         $username = $_SESSION['username'] ?? ($user['name'] ?? 'unknown');
         $userId = $user ? (int)$user['id'] : null;
 
-        $backups = listBackupFiles($backupDir);
+        // Full schema+data backup (no PIN; admin-only page already gated)
+        if ($postAction === 'create_full_backup') {
+            ob_start();
+            $result = createFullSchemaBackup($db);
+            ob_end_clean();
+            if (!$result['success']) {
+                maintSendJson(['error' => $result['error'] ?? 'Full backup failed.'], $db);
+            }
+            $integrity = inspectBackupFile($backupDir, $result['file']);
+            logAuditAction($db, $userId, $username, 'create_full_backup', $result['file']);
+            maintSendJson([
+                'success' => true,
+                'message' => $result['message'] ?? 'Full backup created.',
+                'file' => $result['file'],
+                'size' => $result['size'] ?? null,
+                'checksum' => $result['checksum'] ?? null,
+                'integrity' => [
+                    'valid' => (bool)($integrity['valid'] ?? false),
+                    'summary' => (string)($integrity['summary'] ?? ''),
+                ],
+                'download_url' => 'pages/admin-database.php?action=download&file=' . urlencode($result['file']),
+                'checksum_url' => 'pages/admin-database.php?action=download_checksum&file=' . urlencode($result['file']),
+                'state' => getMaintenanceState($db, $backupDir, $resetUsersRequiredEmptyTables),
+            ], $db);
+        }
+
+        // Full schema+data restore (password + confirm; dangerous)
+        if ($postAction === 'restore_full') {
+            if (empty($_POST['confirm_restore'])) {
+                maintSendJson(['error' => 'You must confirm that full restore will replace schema and data.'], $db);
+            }
+            if (!$user || !verifyCurrentUserPassword($db, (int)$user['id'], $password)) {
+                logAuditAction($db, $userId, $username, 'restore_full_auth_failed', 'bad password');
+                maintSendJson(['error' => 'Incorrect password. Full restore cancelled.'], $db);
+            }
+            if (!isset($_FILES['backup_file']) || $_FILES['backup_file']['error'] !== UPLOAD_ERR_OK) {
+                maintSendJson(['error' => 'Please select a valid full .sql backup file.'], $db);
+            }
+            $upload = $_FILES['backup_file'];
+            $ext = strtolower(pathinfo($upload['name'], PATHINFO_EXTENSION));
+            if ($ext !== 'sql') {
+                maintSendJson(['error' => 'Only .sql full backups are supported for schema restore.'], $db);
+            }
+            if ($upload['size'] > 80 * 1024 * 1024) {
+                maintSendJson(['error' => 'Backup file is too large (max 80 MB).'], $db);
+            }
+            $raw = file_get_contents($upload['tmp_name']);
+            if ($raw === false || trim($raw) === '') {
+                maintSendJson(['error' => 'Backup file is empty or unreadable.'], $db);
+            }
+            $cleaned = sanitizeSqlBackupContent($raw);
+            $validation = validateSqlBackupContent($raw, $cleaned, 'full');
+            if (!$validation['valid']) {
+                // Allow legacy full dumps
+                $any = validateSqlBackupContent($raw, $cleaned, 'any');
+                $mode = $any['mode_detected'] ?? '';
+                if (!$any['valid'] || $mode === 'data') {
+                    maintSendJson([
+                        'error' => formatSqlValidationError($validation)
+                            . ' Data-only dumps should be restored from Backup & Restore.',
+                    ], $db);
+                }
+            }
+
+            $archive = archiveRestoredBackup($upload['name'], $cleaned, 'sql');
+            $restore = restoreFullSql($db, $raw);
+            if (!$restore['success']) {
+                logAuditAction($db, $userId, $username, 'restore_full_failed', $restore['error'] ?? '');
+                maintSendJson(['error' => $restore['error'] ?? 'Full restore failed.'], $db);
+            }
+            logAuditAction($db, $userId, $username, 'restore_full', $upload['name']);
+            $message = 'Full schema+data restore completed.';
+            if (!$archive['success']) {
+                $message .= ' Warning: could not archive upload (' . ($archive['error'] ?? 'unknown') . ').';
+            } else {
+                $message .= ' Archived as ' . $archive['filename'] . '.';
+            }
+            maintSendJson([
+                'success' => true,
+                'message' => $message,
+                'archive' => $archive,
+                'state' => getMaintenanceState($db, $backupDir, $resetUsersRequiredEmptyTables),
+            ], $db);
+        }
+
+        header('Content-Type: application/json');
+
+        $backups = listBackupFiles($backupDir, false);
         $latestBackup = getLatestBackup($backups);
         if (!hasRecentBackup($latestBackup)) {
             echo json_encode(['error' => 'A backup from the last 24 hours is required before running maintenance actions.']);
@@ -432,6 +558,8 @@ define('MAINTENANCE_PIN', '464546');
     $financialDataCleared = $maintenanceState['financialDataCleared'];
     $resetUsersAllowed = $maintenanceState['resetUsersAllowed'];
     $latestBackupInfo = $maintenanceState['latestBackup'];
+    $fullBackups = listBackupFiles($backupDir, true, 'full');
+    $tableCount = (int)($db->query('SHOW TABLES')->num_rows ?? 0);
 ?>
 
 <style>
@@ -473,12 +601,91 @@ define('MAINTENANCE_PIN', '464546');
 <div class="row mb-3 align-items-center">
     <div class="col-md-8">
         <h2 class="h4 mb-0">Database Maintenance</h2>
-        <p class="text-muted small mb-0">Destructive utilities for clearing test data and resetting users</p>
+        <p class="text-muted small mb-0">Full schema backups, destructive utilities, and user reset</p>
     </div>
     <div class="col-md-4 text-md-end mt-2 mt-md-0">
         <a href="javascript:void(0)" onclick="loadPage('admin')" class="small text-decoration-none">
             <i class="bi bi-arrow-left"></i> Back to System
         </a>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100 border-primary">
+            <div class="card-header text-bg-primary py-2">
+                <i class="bi bi-database"></i>
+                <span class="fw-semibold">Full Schema Backup</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-2">
+                    Create a <strong>full</strong> SQL dump (DROP/CREATE + data) for all
+                    <strong><?= (int)$tableCount ?></strong> tables. Use this before structural changes
+                    or for disaster recovery. Day-to-day data exports belong under
+                    <a href="javascript:void(0)" onclick="loadPage('admin-backup')">Backup &amp; Restore</a>
+                    (data-only).
+                </p>
+                <button type="button" class="btn btn-primary btn-sm" id="createFullBackupBtn">
+                    <i class="bi bi-download"></i> Create Full Backup
+                </button>
+                <?php if (count($fullBackups) > 0): ?>
+                    <hr class="my-3">
+                    <h6 class="small fw-semibold text-uppercase text-muted mb-2">Recent full backups</h6>
+                    <ul class="list-unstyled small mb-0">
+                        <?php foreach (array_slice($fullBackups, 0, 5) as $fb): ?>
+                            <li class="mb-2 d-flex justify-content-between align-items-start gap-2">
+                                <div class="min-w-0">
+                                    <div class="fw-semibold text-truncate"><?= htmlspecialchars($fb['name']) ?></div>
+                                    <div class="text-muted">
+                                        <?= htmlspecialchars((string)($fb['display_datetime'] ?? '')) ?>
+                                        · <?= number_format(($fb['size'] ?? 0) / 1024, 1) ?> KB
+                                    </div>
+                                </div>
+                                <a class="btn btn-outline-secondary btn-sm flex-shrink-0"
+                                   href="pages/admin-database.php?action=download&amp;file=<?= urlencode($fb['name']) ?>"
+                                   title="Download">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100 border-warning">
+            <div class="card-header bg-warning text-dark py-2">
+                <i class="bi bi-exclamation-triangle"></i>
+                <span class="fw-semibold">Full Schema Restore</span>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning py-2 small mb-3">
+                    Overwrites <strong>schema and data</strong> (DROP/CREATE tables). Password required.
+                    Prefer data-only restore when you only need row data.
+                </div>
+                <form id="fullRestoreForm" enctype="multipart/form-data">
+                    <input type="hidden" name="action" value="restore_full">
+                    <div class="mb-2">
+                        <label class="form-label small fw-semibold" for="fullBackupFile">Full .sql backup</label>
+                        <input type="file" class="form-control form-control-sm" id="fullBackupFile" name="backup_file" accept=".sql" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-semibold" for="fullRestorePassword">Your password</label>
+                        <input type="password" class="form-control form-control-sm" id="fullRestorePassword" name="password" required autocomplete="current-password">
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="fullConfirmRestore" name="confirm_restore" value="1">
+                        <label class="form-check-label small" for="fullConfirmRestore">
+                            I understand this replaces schema and all data.
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-warning btn-sm" id="fullRestoreBtn">
+                        <i class="bi bi-arrow-counterclockwise"></i> Restore Full Backup
+                    </button>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -643,12 +850,107 @@ define('MAINTENANCE_PIN', '464546');
 (function() {
     const page = 'admin-database';
     const toastContainer = document.getElementById('appToastContainer');
-    const modalEl = document.getElementById('dbMaintModal');
-    const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+    let modalEl = document.getElementById('dbMaintModal');
+    if (modalEl && typeof window.mountModalOnBody === 'function') {
+        modalEl = window.mountModalOnBody(modalEl);
+    }
+    const modal = modalEl ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
     const form = document.getElementById('dbMaintForm');
     const warningEl = document.getElementById('dbMaintWarning');
     const actionInput = document.getElementById('dbMaintAction');
     const submitBtn = document.getElementById('dbMaintSubmitBtn');
+
+    async function parseJsonResponse(r) {
+        const text = await r.text();
+        let body;
+        try {
+            body = JSON.parse(text);
+        } catch {
+            const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 180);
+            throw new Error(snippet
+                ? 'Server returned an invalid response: ' + snippet
+                : 'Server returned an invalid response.');
+        }
+        if (!r.ok && body && !body.error) {
+            body.error = 'Request failed (HTTP ' + r.status + ').';
+        }
+        return body;
+    }
+
+    function reloadDbMaintPage() {
+        fetch('pages/' + page + '.php')
+            .then(r => r.text())
+            .then(h => applyMainContent(h))
+            .catch(() => showToast('Failed to refresh page.', 'danger'));
+    }
+
+    const createFullBackupBtn = document.getElementById('createFullBackupBtn');
+    if (createFullBackupBtn) {
+        const defaultHtml = createFullBackupBtn.innerHTML;
+        createFullBackupBtn.addEventListener('click', () => {
+            createFullBackupBtn.disabled = true;
+            createFullBackupBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating...';
+            const fd = new FormData();
+            fd.append('action', 'create_full_backup');
+            fetch('pages/' + page + '.php', { method: 'POST', body: fd })
+                .then(r => parseJsonResponse(r))
+                .then(res => {
+                    if (res.error) {
+                        showToast(res.error, 'danger');
+                        return;
+                    }
+                    const warn = res.integrity && res.integrity.valid === false;
+                    showToast(res.message || 'Full backup created.', warn ? 'warning' : 'success');
+                    if (res.download_url) {
+                        const a = document.createElement('a');
+                        a.href = res.download_url;
+                        a.style.display = 'none';
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                    }
+                    reloadDbMaintPage();
+                })
+                .catch(err => showToast(err.message || 'Full backup failed.', 'danger'))
+                .finally(() => {
+                    createFullBackupBtn.disabled = false;
+                    createFullBackupBtn.innerHTML = defaultHtml;
+                });
+        });
+    }
+
+    const fullRestoreForm = document.getElementById('fullRestoreForm');
+    const fullRestoreBtn = document.getElementById('fullRestoreBtn');
+    if (fullRestoreForm && fullRestoreBtn) {
+        const restoreDefaultHtml = fullRestoreBtn.innerHTML;
+        fullRestoreForm.addEventListener('submit', e => {
+            e.preventDefault();
+            if (!document.getElementById('fullConfirmRestore').checked) {
+                showToast('Please confirm full restore will replace schema and data.', 'warning');
+                return;
+            }
+            if (!confirm('This will DROP/CREATE tables and reload all data. Continue?')) {
+                return;
+            }
+            fullRestoreBtn.disabled = true;
+            fullRestoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Restoring...';
+            fetch('pages/' + page + '.php', { method: 'POST', body: new FormData(fullRestoreForm) })
+                .then(r => parseJsonResponse(r))
+                .then(res => {
+                    if (res.error) {
+                        showToast(res.error, 'danger');
+                        return;
+                    }
+                    showToast(res.message || 'Full restore completed.', 'success');
+                    setTimeout(reloadDbMaintPage, 1500);
+                })
+                .catch(err => showToast(err.message || 'Full restore failed.', 'danger'))
+                .finally(() => {
+                    fullRestoreBtn.disabled = false;
+                    fullRestoreBtn.innerHTML = restoreDefaultHtml;
+                });
+        });
+    }
 
     const actionLabels = {
         clear_transactions: 'Clear All Transactions',
@@ -769,6 +1071,10 @@ define('MAINTENANCE_PIN', '464546');
         document.getElementById('dbMaintPin').value = '';
         document.getElementById('dbMaintPassword').value = '';
         submitBtn.className = action === 'reset_users' ? 'btn btn-warning btn-sm' : 'btn btn-danger btn-sm';
+        if (!modal) return;
+        if (modalEl && typeof window.mountModalOnBody === 'function') {
+            modalEl = window.mountModalOnBody(modalEl);
+        }
         modal.show();
     }
 

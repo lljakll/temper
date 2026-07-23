@@ -1284,11 +1284,18 @@ $permCatalogNoStar = permissionCatalogForUi(false);
     let showArchived = <?= $showArchived ? 'true' : 'false' ?>;
     let archivedCount = <?= (int)$archivedCount ?>;
 
-    const editModal = new bootstrap.Modal(document.getElementById('usersEditModal'));
-    const pwModal = new bootstrap.Modal(document.getElementById('usersPwModal'));
-    const roleModal = new bootstrap.Modal(document.getElementById('rolesEditModal'));
+    function usersModal(el) {
+        if (!el) return null;
+        if (typeof window.mountModalOnBody === 'function') {
+            window.mountModalOnBody(el);
+        }
+        return bootstrap.Modal.getOrCreateInstance(el);
+    }
+    const editModal = usersModal(document.getElementById('usersEditModal'));
+    const pwModal = usersModal(document.getElementById('usersPwModal'));
+    const roleModal = usersModal(document.getElementById('rolesEditModal'));
     const hardDeleteModalEl = document.getElementById('usersHardDeleteModal');
-    const hardDeleteModal = hardDeleteModalEl ? new bootstrap.Modal(hardDeleteModalEl) : null;
+    const hardDeleteModal = usersModal(hardDeleteModalEl);
     let editMode = 'create';
     let roleMode = 'create';
     let roleIsSystem = false;

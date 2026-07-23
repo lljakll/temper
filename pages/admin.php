@@ -7,9 +7,14 @@ require_once __DIR__ . '/../includes/permissions.php';
     $adminUser = getCurrentUser();
     $canManageUsers = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'users.manage');
     $canDatabase = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.database');
-    $canBackup = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.backup');
+    // Backup is Administrator-only (same as Configuration)
+    $canBackup = $adminUser && userIsAdministrator($db, (int)$adminUser['id']);
     $canLookups = $adminUser && userHasPermission($db, (int)$adminUser['id'], 'admin.lookups');
     $canConfig = $adminUser && userIsAdministrator($db, (int)$adminUser['id']);
+
+    if ($canBackup) {
+        maybeRunAutoBackup($db);
+    }
 
     $lookupLinks = $canLookups ? [
         ['page' => 'setup_funds', 'title' => 'Funds', 'icon' => 'bi-wallet2'],
@@ -40,7 +45,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     if ($canDatabase) {
         $activeCards[] = [
             'title' => 'Database Maintenance',
-            'description' => 'Clear test data, reset users, and run destructive database utilities.',
+            'description' => 'Full schema backups, clear test data, reset users, and other destructive utilities.',
             'icon' => 'bi-database-gear',
             'page' => 'admin-database',
         ];
@@ -150,7 +155,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                     <i class="bi bi-cloud-arrow-up text-success"></i>
                     <h6 class="mb-0 small fw-semibold">Backup & Restore</h6>
                 </div>
-                <p class="text-muted small mb-2">Export a full database backup or restore from a .sql file.</p>
+                <p class="text-muted small mb-2">Data-only backup/restore (SQL or CSV). Full schema dumps are under Database Maintenance.</p>
 
                 <?php if (count($recentBackups) > 0): ?>
                     <div class="mb-2">

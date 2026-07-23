@@ -97,6 +97,30 @@ function temperSystemConfigCatalog(): array {
             'min' => 0,
             'max' => 30,
         ],
+        'auto_backup_enabled' => [
+            'default' => false,
+            'type' => 'bool',
+            'label' => 'Enable Auto-Backup',
+            'description' => 'When enabled, the system creates data-only backups on a schedule (SQL, CSV, or both). '
+                . 'Files are stored under storage/backups/. Full schema dumps remain a manual Database Maintenance action.',
+            'group' => 'backup',
+        ],
+        'auto_backup_frequency' => [
+            'default' => 'daily',
+            'type' => 'string',
+            'label' => 'Auto-Backup Frequency',
+            'description' => 'How often to create a data-only backup when auto-backup is enabled: hourly, daily, or weekly.',
+            'group' => 'backup',
+            'options' => ['hourly', 'daily', 'weekly'],
+        ],
+        'auto_backup_format' => [
+            'default' => 'sql',
+            'type' => 'string',
+            'label' => 'Auto-Backup Format',
+            'description' => 'Format for automatic data-only backups: sql (INSERT dump), csv (zip of table CSVs), or both.',
+            'group' => 'backup',
+            'options' => ['sql', 'csv', 'both'],
+        ],
     ];
 }
 
@@ -140,6 +164,17 @@ function temperCoerceSystemConfigValue(string $key, mixed $value): mixed {
         }
         if ($max !== null && $coerced > (float)$max) {
             $coerced = $type === 'int' ? (int)$max : (float)$max;
+        }
+    }
+
+    // Enum-style string options (e.g. auto_backup_frequency)
+    if ($type === 'string' && is_array($meta) && !empty($meta['options']) && is_array($meta['options'])) {
+        $allowed = $meta['options'];
+        $normalized = strtolower(trim((string)$coerced));
+        if (!in_array($normalized, $allowed, true)) {
+            $coerced = $meta['default'] ?? $allowed[0];
+        } else {
+            $coerced = $normalized;
         }
     }
 
@@ -290,6 +325,35 @@ function getSidebarHoverCollapseDelaySeconds(): float {
         $sec = 30.0;
     }
     return $sec;
+}
+
+/**
+ * Whether scheduled data-only auto-backup is enabled.
+ */
+function isAutoBackupConfigEnabled(): bool {
+    return (bool)getSystemConfig('auto_backup_enabled', false);
+}
+
+/**
+ * Auto-backup frequency: hourly | daily | weekly.
+ */
+function getAutoBackupConfigFrequency(): string {
+    $freq = strtolower((string)getSystemConfig('auto_backup_frequency', 'daily'));
+    if (!in_array($freq, ['hourly', 'daily', 'weekly'], true)) {
+        return 'daily';
+    }
+    return $freq;
+}
+
+/**
+ * Auto-backup format: sql | csv | both.
+ */
+function getAutoBackupConfigFormat(): string {
+    $format = strtolower((string)getSystemConfig('auto_backup_format', 'sql'));
+    if (!in_array($format, ['sql', 'csv', 'both'], true)) {
+        return 'sql';
+    }
+    return $format;
 }
 
 /**

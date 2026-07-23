@@ -70,11 +70,13 @@ function dashboardQuickLinks(): array {
         ],
         [
             'label' => 'Backup / Restore',
-            'description' => 'Admin · database export',
+            'description' => 'Admin · data-only export',
             'page' => 'admin-backup',
             'icon' => 'bi-cloud-arrow-up',
             'variant' => 'outline-secondary',
+            // Administrator-only (role check below; permission kept for ACL catalog)
             'permission' => 'admin.backup',
+            'admin_role_only' => true,
         ],
     ];
 }
@@ -204,9 +206,13 @@ function dashboardQuickLinks(): array {
         $tasksCheck->close();
     }
 
+    $isAdminUser = $actorUser && userIsAdministrator($db, (int)$actorUser['id']);
     $quickLinks = array_values(array_filter(
         dashboardQuickLinks(),
-        static function (array $link) use ($dashPerms): bool {
+        static function (array $link) use ($dashPerms, $isAdminUser): bool {
+            if (!empty($link['admin_role_only']) && !$isAdminUser) {
+                return false;
+            }
             $perm = $link['permission'] ?? null;
             if ($perm === null || $perm === '') {
                 return true;
