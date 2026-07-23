@@ -391,6 +391,35 @@ $footerDb->close();
             });
         })();
 
+        /**
+         * Remove fragment modals reparented onto document.body (see ledger mountModalOnBody).
+         * Keeps the shell sessionTimeoutModal. Prevents duplicate IDs + stuck backdrops after SPA nav.
+         */
+        window.cleanupFragmentModals = function() {
+            try {
+                document.querySelectorAll('body > .modal').forEach(function(el) {
+                    if (el.id === 'sessionTimeoutModal') return;
+                    try {
+                        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                            const inst = bootstrap.Modal.getInstance(el);
+                            if (inst) inst.dispose();
+                        }
+                    } catch (e) { /* ignore */ }
+                    el.remove();
+                });
+                document.querySelectorAll('body > .modal-backdrop').forEach(function(el) {
+                    el.remove();
+                });
+                // Only clear modal-open if no shell modal remains open
+                const shellOpen = document.querySelector('#sessionTimeoutModal.show');
+                if (!shellOpen) {
+                    document.body.classList.remove('modal-open');
+                    document.body.style.removeProperty('overflow');
+                    document.body.style.removeProperty('padding-right');
+                }
+            } catch (e) { /* ignore */ }
+        };
+
         window.applyMainContent = function(html, options) {
             if (window.__temperAuthRedirecting) return;
             if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(html)) {
@@ -400,6 +429,10 @@ $footerDb->close();
             // Drop dirty trackers bound to the outgoing fragment
             if (typeof window.TemperDirtyForms !== 'undefined') {
                 window.TemperDirtyForms.clearAll();
+            }
+            // Tear down body-mounted page modals before replacing #main-content
+            if (typeof window.cleanupFragmentModals === 'function') {
+                window.cleanupFragmentModals();
             }
             document.getElementById('main-content').innerHTML = html;
             const opts = options || {};

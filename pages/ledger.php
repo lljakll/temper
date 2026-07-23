@@ -716,9 +716,20 @@ require_once __DIR__ . '/../includes/permissions.php';
     $budgetOptions = budgetFetchTransactionOptions($db);
     $defaultBudgetIdToday = budgetDefaultIdForDate($db, date('Y-m-d'));
 
+    // Lookups for text-paste import (client-side account/fund name resolution)
+    $accountsLookup = [];
+    $fundsLookup = [];
+    $naturalLookup = [];
+    $functionalLookup = [];
+
     $aopt = '';
     if ($ar) {
         while ($a = $ar->fetch_assoc()) {
+            $accountsLookup[] = [
+                'id' => (int)$a['id'],
+                'name' => $a['name'],
+                'normal_balance' => $a['normal_balance'],
+            ];
             $nb = htmlspecialchars($a['normal_balance']);
             $aopt .= '<option value="' . (int)$a['id'] . '" data-normal-balance="' . $nb . '">' . htmlspecialchars($a['name']) . ' (' . $nb . ')</option>';
         }
@@ -726,18 +737,31 @@ require_once __DIR__ . '/../includes/permissions.php';
     $fopt = '<option value="">—</option>';
     if ($fr) {
         while ($f = $fr->fetch_assoc()) {
+            $fundsLookup[] = [
+                'id' => (int)$f['id'],
+                'name' => $f['name'],
+                'code' => $f['code'] ?? '',
+            ];
             $fopt .= '<option value="' . (int)$f['id'] . '">' . htmlspecialchars($f['name'] . ($f['code'] ? ' (' . $f['code'] . ')' : '')) . '</option>';
         }
     }
     $nopt = '<option value="">—</option>';
     if ($nr) {
         while ($n = $nr->fetch_assoc()) {
+            $naturalLookup[] = [
+                'id' => (int)$n['id'],
+                'name' => $n['name'],
+            ];
             $nopt .= '<option value="' . (int)$n['id'] . '">' . htmlspecialchars($n['name']) . '</option>';
         }
     }
     $fuopt = '<option value="">—</option>';
     if ($fur) {
         while ($f = $fur->fetch_assoc()) {
+            $functionalLookup[] = [
+                'id' => (int)$f['id'],
+                'name' => $f['name'],
+            ];
             $fuopt .= '<option value="' . (int)$f['id'] . '">' . htmlspecialchars($f['name']) . '</option>';
         }
     }
@@ -1052,6 +1076,10 @@ require_once __DIR__ . '/../includes/permissions.php';
                     <strong id="formTitle">Transaction Details</strong>
                     <span id="formModeBadge" class="badge bg-body-secondary text-body ms-1"></span>
                 </div>
+                <button type="button" id="importTextBtn" class="btn btn-sm btn-outline-primary d-none"
+                        title="Paste Beancount-style text to fill this form (does not save)">
+                    <i class="bi bi-clipboard-data"></i> Import from Text
+                </button>
             </div>
             <div class="card-body flex-grow-1 overflow-auto" style="min-height: 0;">
                 <form id="txForm" method="post" data-dirty-track>
@@ -1222,6 +1250,58 @@ require_once __DIR__ . '/../includes/permissions.php';
     </div>
 </div>
 
+<!-- Import from Text (Beancount-style) — parse only, no DB writes -->
+<div class="modal fade" id="importTextModal" tabindex="-1" aria-labelledby="importTextTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title" id="importTextTitle">Import from Text</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2 small mb-3" role="note">
+                    <strong>Read-only import.</strong> This tool only parses your text and fills the Add Transaction form.
+                    Nothing is written to the database until you click <strong>Save Transaction</strong> on the form
+                    (all usual balancing and validation still apply).
+                </div>
+                <p class="small text-muted mb-2">
+                    Paste a single Beancount-style ledger entry. Date on the first line, then one posting per line
+                    with an account name and signed amount (positive = debit, negative = credit). Amounts must sum to zero for a balanced entry.
+                </p>
+                <p class="small mb-1"><strong>Example format:</strong></p>
+                <pre class="small bg-body-secondary border rounded p-2 mb-3" id="importTextExample" style="white-space: pre-wrap;">2026-03-15 * "Office Depot" "Printer paper and toner"
+  reference: "260150"
+  check: "4521"
+  ; Ordered supplies for office
+  Bank Account           -87.43  ; fund: GOF
+  Accounts Payable        87.43</pre>
+                <p class="small text-muted mb-2">
+                    Header: first quoted string = <strong>Pay To</strong>, second = <strong>Description</strong>.
+                    Metadata lines recognized: <code>reference:</code> and <code>check:</code> only (others ignored).
+                    Memo is built from <code>;</code> comments (full-line or trailing), concatenated when several appear.
+                    Per-line fund: <code>; fund: GOF</code> or fund name. Account names must match the chart (case-insensitive).
+                </p>
+                <label class="form-label small mb-1" for="importTextArea">Ledger text</label>
+                <textarea class="form-control font-monospace" id="importTextArea" rows="12"
+                          placeholder="Paste one transaction here…"
+                          spellcheck="false" autocomplete="off"></textarea>
+                <div id="importTextErrors" class="alert alert-danger small mt-3 d-none mb-0" role="alert">
+                    <div class="fw-semibold mb-1">Could not parse / populate</div>
+                    <ul class="mb-0 ps-3" id="importTextErrorList"></ul>
+                </div>
+                <div id="importTextWarnings" class="alert alert-warning small mt-3 d-none mb-0" role="status">
+                    <div class="fw-semibold mb-1">Warnings</div>
+                    <ul class="mb-0 ps-3" id="importTextWarningList"></ul>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" id="importTextParseBtn">Parse &amp; Populate</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Used Reference # values (scrollable) -->
 <div class="modal fade" id="referenceListModal" tabindex="-1" aria-labelledby="referenceListTitle" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
@@ -1294,6 +1374,56 @@ require_once __DIR__ . '/../includes/permissions.php';
     const funcOpts = `<?= $fuopt ?>`;
     const budgetOptions = <?= json_encode($budgetOptions, JSON_UNESCAPED_UNICODE) ?> || [];
     const defaultBudgetIdToday = <?= $defaultBudgetIdToday !== null ? (int)$defaultBudgetIdToday : 'null' ?>;
+    /** Name→id lookups for text paste import (read-only populate). */
+    const ledgerImportLookups = {
+        accounts: <?= json_encode($accountsLookup, JSON_UNESCAPED_UNICODE) ?> || [],
+        funds: <?= json_encode($fundsLookup, JSON_UNESCAPED_UNICODE) ?> || [],
+        natural: <?= json_encode($naturalLookup, JSON_UNESCAPED_UNICODE) ?> || [],
+        functional: <?= json_encode($functionalLookup, JSON_UNESCAPED_UNICODE) ?> || []
+    };
+    const importTextBtn = document.getElementById('importTextBtn');
+    let importTextModalEl = document.getElementById('importTextModal');
+    const importTextArea = document.getElementById('importTextArea');
+    const importTextParseBtn = document.getElementById('importTextParseBtn');
+    const importTextErrors = document.getElementById('importTextErrors');
+    const importTextErrorList = document.getElementById('importTextErrorList');
+    const importTextWarnings = document.getElementById('importTextWarnings');
+    const importTextWarningList = document.getElementById('importTextWarningList');
+
+    /**
+     * Move a Bootstrap modal to document.body before show.
+     * Fragment modals under #main-content-col (z-index: 1) sit below the body-level
+     * .modal-backdrop (z-index: 1050), which intercepts all clicks — modal looks open
+     * but cannot be closed, typed in, or clicked. Reparenting restores normal stacking.
+     */
+    function mountModalOnBody(modalEl) {
+        if (!modalEl || !modalEl.classList || !modalEl.classList.contains('modal')) return modalEl;
+        if (modalEl.parentElement === document.body) return modalEl;
+        // Drop stale duplicates left on body from a previous ledger load
+        if (modalEl.id) {
+            const esc = (typeof CSS !== 'undefined' && CSS.escape)
+                ? CSS.escape(modalEl.id)
+                : String(modalEl.id).replace(/([^a-zA-Z0-9_-])/g, '\\$1');
+            document.querySelectorAll('body > .modal#' + esc).forEach(function(other) {
+                if (other === modalEl) return;
+                try {
+                    const inst = bootstrap.Modal.getInstance(other);
+                    if (inst) inst.dispose();
+                } catch (e) { /* ignore */ }
+                other.remove();
+            });
+        }
+        document.body.appendChild(modalEl);
+        return modalEl;
+    }
+
+    function showLedgerModal(modalEl, options) {
+        if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return null;
+        mountModalOnBody(modalEl);
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl, options || {});
+        modal.show();
+        return modal;
+    }
     const budgetSelect = document.getElementById('budget_id');
     const budgetPeriodWarn = document.getElementById('budgetPeriodWarn');
     const budgetStatusWarn = document.getElementById('budgetStatusWarn');
@@ -2027,8 +2157,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         dlEl.href = 'pages/ledger.php?download_document=' + docId;
         dlEl.classList.remove('d-none');
 
-        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-        modal.show();
+        showLedgerModal(modalEl);
 
         fetch('pages/ledger.php?document_meta=' + docId)
             .then(parseJsonResponse)
@@ -2082,6 +2211,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 return;
             }
             if (nameEl) nameEl.textContent = fileName || 'selected file';
+            mountModalOnBody(modalEl);
             const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
             let settled = false;
             const finish = (value) => {
@@ -2200,6 +2330,14 @@ require_once __DIR__ . '/../includes/permissions.php';
             b.textContent = '—';
             b.classList.add('bg-body-secondary', 'text-muted');
         }
+        setImportTextBtnVisible(mode === 'add');
+    }
+
+    /** Import from Text is only available when adding a new transaction. */
+    function setImportTextBtnVisible(show) {
+        if (!importTextBtn) return;
+        if (show) importTextBtn.classList.remove('d-none');
+        else importTextBtn.classList.add('d-none');
     }
 
     function setDocUploadVisible(show) {
@@ -2811,8 +2949,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         const body = document.getElementById('referenceListBody');
         if (!modalEl || !body || typeof bootstrap === 'undefined') return;
         body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Loading…</td></tr>';
-        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-        modal.show();
+        showLedgerModal(modalEl);
         fetch('pages/ledger.php?reference_api=list')
             .then(r => r.json())
             .then(d => {
@@ -3190,6 +3327,595 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     bindDocumentListActions();
+
+    // ── Import from Text (Beancount-style paste → form only; no DB writes) ──
+    function normLookupKey(s) {
+        return String(s || '')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, ' ');
+    }
+
+    function stripBeancountPath(accountName) {
+        // Allow Assets:Bank Account or Bank Account — prefer full string, then last segment
+        const raw = String(accountName || '').trim();
+        if (!raw.includes(':')) return [raw];
+        const parts = raw.split(':').map(p => p.trim()).filter(Boolean);
+        const last = parts.length ? parts[parts.length - 1] : raw;
+        return last && last !== raw ? [raw, last] : [raw];
+    }
+
+    function resolveByName(list, rawName, { alsoCode = false, label = 'account' } = {}) {
+        const candidates = stripBeancountPath(rawName);
+        for (const cand of candidates) {
+            const key = normLookupKey(cand);
+            if (!key) continue;
+            const exact = [];
+            const codeHits = [];
+            for (const item of list) {
+                if (normLookupKey(item.name) === key) exact.push(item);
+                if (alsoCode && item.code && normLookupKey(item.code) === key) codeHits.push(item);
+            }
+            if (exact.length === 1) return { ok: true, item: exact[0] };
+            if (exact.length > 1) {
+                return {
+                    ok: false,
+                    error: 'Ambiguous ' + label + ' "' + cand + '" matches: ' + exact.map(i => i.name).join(', ')
+                };
+            }
+            if (alsoCode && codeHits.length === 1) return { ok: true, item: codeHits[0] };
+            if (alsoCode && codeHits.length > 1) {
+                return {
+                    ok: false,
+                    error: 'Ambiguous ' + label + ' code "' + cand + '" matches: ' + codeHits.map(i => i.name).join(', ')
+                };
+            }
+        }
+        // Fuzzy: name contains or is contained (only if unique)
+        const primary = normLookupKey(candidates[candidates.length - 1] || rawName);
+        if (primary && primary.length >= 3) {
+            const fuzzy = list.filter(item => {
+                const n = normLookupKey(item.name);
+                return n.includes(primary) || primary.includes(n);
+            });
+            if (fuzzy.length === 1) return { ok: true, item: fuzzy[0], fuzzy: true };
+            if (fuzzy.length > 1) {
+                return {
+                    ok: false,
+                    error: 'Ambiguous ' + label + ' "' + rawName + '" — matches: ' + fuzzy.map(i => i.name).join(', ')
+                        + '. Use the exact name from the chart.'
+                };
+            }
+        }
+        return {
+            ok: false,
+            error: 'Unknown ' + label + ' "' + String(rawName || '').trim()
+                + '". Names must match existing records in the system.'
+        };
+    }
+
+    function parseQuotedTokens(rest) {
+        // Extract "..." strings and leftover unquoted text from txn header remainder
+        const quotes = [];
+        let i = 0;
+        let unquoted = '';
+        const s = String(rest || '');
+        while (i < s.length) {
+            const ch = s[i];
+            if (ch === '"' || ch === "'") {
+                const q = ch;
+                i++;
+                let buf = '';
+                while (i < s.length && s[i] !== q) {
+                    if (s[i] === '\\' && i + 1 < s.length) {
+                        buf += s[i + 1];
+                        i += 2;
+                        continue;
+                    }
+                    buf += s[i];
+                    i++;
+                }
+                if (i < s.length && s[i] === q) i++;
+                quotes.push(buf);
+            } else {
+                unquoted += ch;
+                i++;
+            }
+        }
+        return { quotes, unquoted: unquoted.trim() };
+    }
+
+    function parseAmountToken(raw) {
+        // Accept: -87.43, 87.43, $87.43, 87.43 USD, USD -87.43, 1,234.56
+        let s = String(raw || '').trim();
+        if (!s) return null;
+        s = s.replace(/^(USD|usd|\$)\s*/, '').replace(/\s*(USD|usd|\$)$/, '').trim();
+        s = s.replace(/,/g, '');
+        if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+        const n = parseFloat(s);
+        if (!isFinite(n) || n === 0) return null;
+        return n;
+    }
+
+    /**
+     * Parse one Beancount-style transaction from pasted text.
+     * Positive amount → debit; negative → credit (sums to zero when balanced).
+     * Read-only: never writes to the database.
+     */
+    function parseBeancountImportText(text) {
+        const errors = [];
+        const warnings = [];
+        const raw = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        if (!raw.trim()) {
+            return { ok: false, errors: ['Paste is empty. Paste a Beancount-style transaction and try again.'] };
+        }
+
+        const lines = raw.split('\n');
+        let headerIdx = -1;
+        let headerMatch = null;
+        // Note: do not use \b after * or ! — those are non-word chars so \b fails before a space.
+        const txnHeaderRe = /^(\d{4}-\d{2}-\d{2})\s+(\*|\!|txn)(?:\s+(.*))?$/i;
+
+        for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            if (!trimmed || trimmed.startsWith(';')) continue;
+            const m = trimmed.match(txnHeaderRe);
+            if (m) {
+                headerIdx = i;
+                headerMatch = m;
+                break;
+            }
+        }
+
+        // Fallback: date-only first non-empty line (without flag)
+        if (!headerMatch) {
+            for (let i = 0; i < lines.length; i++) {
+                const trimmed = lines[i].trim();
+                if (!trimmed || trimmed.startsWith(';')) continue;
+                const m2 = trimmed.match(/^(\d{4}-\d{2}-\d{2})(?:\s+(.*))?$/);
+                if (m2) {
+                    headerIdx = i;
+                    headerMatch = [m2[0], m2[1], '*', m2[2] || ''];
+                    warnings.push('Line ' + (i + 1) + ': missing flag (* or !); treated as complete (*).');
+                    break;
+                }
+                errors.push('Line ' + (i + 1) + ': expected transaction header starting with YYYY-MM-DD (e.g. 2026-03-15 * "Payee" "Description").');
+                return { ok: false, errors };
+            }
+        }
+
+        if (!headerMatch) {
+            return {
+                ok: false,
+                errors: [
+                    'No transaction header found. First line should look like:',
+                    '2026-03-15 * "Payee" "Description"'
+                ]
+            };
+        }
+
+        const dateStr = headerMatch[1];
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            errors.push('Invalid date "' + dateStr + '". Use YYYY-MM-DD.');
+        } else {
+            const [yy, mm, dd] = dateStr.split('-').map(Number);
+            const dt = new Date(Date.UTC(yy, mm - 1, dd));
+            if (dt.getUTCFullYear() !== yy || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== dd) {
+                errors.push('Invalid calendar date "' + dateStr + '".');
+            }
+        }
+
+        // Pay To = first quoted string after date/flag; Description = second quoted string
+        const { quotes, unquoted } = parseQuotedTokens(headerMatch[3] || '');
+        let payTo = quotes.length >= 1 ? quotes[0] : '';
+        let description = quotes.length >= 2 ? quotes[1] : '';
+        // Unquoted remainder only if no quoted strings at all (loose pastes)
+        if (!payTo && !description && unquoted) {
+            description = unquoted;
+        }
+
+        // Also harvest ; comments on the header line into memo
+        const memoParts = [];
+        const headerRaw = lines[headerIdx] || '';
+        const headerSemi = headerRaw.indexOf(';');
+        if (headerSemi >= 0) {
+            const hc = headerRaw.slice(headerSemi + 1).trim();
+            if (hc) memoParts.push(hc);
+        }
+
+        // Scan for a second transaction header (only first is imported)
+        for (let i = headerIdx + 1; i < lines.length; i++) {
+            const t = lines[i].trim();
+            if (txnHeaderRe.test(t) || /^\d{4}-\d{2}-\d{2}\s+(\*|\!|txn)(?:\s|$)/i.test(t)) {
+                warnings.push('Additional transaction header at line ' + (i + 1) + ' ignored. Import one transaction at a time.');
+                lines.length = i; // stop processing at second header
+                break;
+            }
+        }
+
+        // Only these metadata keys populate the form; all others are ignored
+        let referenceVal = '';
+        let checkVal = '';
+        const postings = [];
+        // Amount: optional currency around a number (possibly with thousands commas)
+        const amountRe = /(?:USD|\$)?\s*(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s*(?:USD|\$)?/gi;
+
+        /**
+         * Pull fund: hint out of a ; comment; return remaining text for memo.
+         * @returns {{ fundHint: string, memoText: string }}
+         */
+        function splitFundAndMemo(comment) {
+            let memoText = String(comment || '').trim();
+            if (!memoText) return { fundHint: '', memoText: '' };
+            const m = memoText.match(/fund\s*:\s*(.+)$/i);
+            if (m) {
+                const fundHint = m[1].trim().replace(/^["']|["']$/g, '');
+                memoText = memoText.replace(/;?\s*fund\s*:\s*.+$/i, '').trim();
+                return { fundHint, memoText };
+            }
+            return { fundHint: '', memoText };
+        }
+
+        function stripMetaQuotes(val) {
+            let v = String(val || '').trim();
+            const qv = v.match(/^["'](.*)["']$/);
+            if (qv) v = qv[1];
+            return v.trim();
+        }
+
+        for (let i = headerIdx + 1; i < lines.length; i++) {
+            const lineNo = i + 1;
+            let line = lines[i];
+            if (line.trim() === '') continue;
+
+            // Full-line comment → memo (do not skip)
+            if (line.trim().startsWith(';')) {
+                const c = line.trim().slice(1).trim();
+                if (c) {
+                    const { fundHint: _fh, memoText } = splitFundAndMemo(c);
+                    if (memoText) memoParts.push(memoText);
+                    // bare "; fund: X" full-line is not a posting fund (no account); ignore fund
+                }
+                continue;
+            }
+
+            // Split inline comment
+            let comment = '';
+            const semi = line.indexOf(';');
+            if (semi >= 0) {
+                comment = line.slice(semi + 1).trim();
+                line = line.slice(0, semi);
+            }
+
+            const trimmed = line.trim();
+            if (!trimmed) {
+                // comment-only after stripping empty code part
+                if (comment) {
+                    const { memoText } = splitFundAndMemo(comment);
+                    if (memoText) memoParts.push(memoText);
+                }
+                continue;
+            }
+
+            // Metadata BEFORE amount matching — values like reference: "260150" contain
+            // digits that would otherwise be misread as posting amounts.
+            // Only reference: and check: populate the form; all other key: value lines are ignored.
+            // Shape: single-token key + colon (not "Assets:Bank Account  10" postings).
+            const metaLineM = trimmed.match(/^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/);
+            if (metaLineM) {
+                const key = metaLineM[1].toLowerCase();
+                const rhs = metaLineM[2];
+                // Postings with Beancount paths look like "Assets:Bank Account  10.00" —
+                // those have spaces + amount after the first segment; detect via trailing amount
+                // after additional account text. Pure metadata RHS has no "Name  amount" tail.
+                const rhsHasAccountAmount = /\S.+\s+(?:USD|\$)?\s*-?\d/.test(rhs)
+                    || /\s+(?:USD|\$)?\s*-?\d.+\s+(?:USD|\$)?\s*-?\d/.test(trimmed);
+                // If RHS is only a value (quoted, number, words without amount-as-posting), treat as meta
+                const rhsTrim = String(rhs || '').trim();
+                const rhsIsSimpleValue = rhsTrim === ''
+                    || /^["']/.test(rhsTrim)
+                    || /^-?\d[\d,]*(\.\d+)?\s*(USD|\$)?$/i.test(rhsTrim)
+                    || !/\s+-?\d/.test(rhsTrim);
+                if (!rhsHasAccountAmount && rhsIsSimpleValue) {
+                    if (key === 'reference') {
+                        referenceVal = stripMetaQuotes(rhsTrim);
+                    } else if (key === 'check') {
+                        checkVal = stripMetaQuotes(rhsTrim);
+                    }
+                    // else: ignore unknown metadata keys (memo, natural, etc.)
+                    if (comment) {
+                        const { memoText } = splitFundAndMemo(comment);
+                        if (memoText) memoParts.push(memoText);
+                    }
+                    continue;
+                }
+                // else fall through — e.g. Assets:Cash  10.00 parsed as posting below
+            }
+
+            // Posting: account … amount [currency]
+            amountRe.lastIndex = 0;
+            let lastAmt = null;
+            let m;
+            while ((m = amountRe.exec(trimmed)) !== null) {
+                lastAmt = m;
+            }
+
+            if (!lastAmt) {
+                errors.push('Line ' + lineNo + ': no amount found. Expected e.g. "Bank Account  -87.43" or "Accounts Payable  87.43 USD".');
+                continue;
+            }
+
+            const amountRaw = lastAmt[0];
+            const amount = parseAmountToken(amountRaw);
+            if (amount === null) {
+                errors.push('Line ' + lineNo + ': invalid or zero amount "' + amountRaw.trim() + '".');
+                continue;
+            }
+
+            let accountName = trimmed.slice(0, lastAmt.index).trim();
+            // Drop trailing cost/price braces if any slipped in before amount
+            accountName = accountName.replace(/\s*\{[^}]*\}\s*$/, '').trim();
+            // Guard: bare "invoice: 123" style that slipped through → ignore as non-posting
+            if (/^[A-Za-z_][A-Za-z0-9_-]*\s*:$/.test(accountName) || accountName === '') {
+                if (!accountName) {
+                    errors.push('Line ' + lineNo + ': missing account name before amount.');
+                }
+                // key: 123 alone — ignore (unknown meta with numeric value already handled above)
+                continue;
+            }
+
+            const { fundHint, memoText } = splitFundAndMemo(comment);
+            if (memoText) memoParts.push(memoText);
+
+            postings.push({
+                lineNo,
+                accountName,
+                amount,
+                fundHint
+            });
+        }
+
+        if (postings.length < 2) {
+            errors.push(
+                postings.length === 0
+                    ? 'No posting lines found. Add at least two lines with account and amount under the header.'
+                    : 'Only ' + postings.length + ' posting found. Double-entry requires at least 2 lines.'
+            );
+        }
+
+        // Resolve accounts / funds
+        const resolvedLines = [];
+        let sum = 0;
+        for (const p of postings) {
+            const accRes = resolveByName(ledgerImportLookups.accounts, p.accountName);
+            if (!accRes.ok) {
+                errors.push('Line ' + p.lineNo + ': ' + accRes.error);
+                continue;
+            }
+            if (accRes.fuzzy) {
+                warnings.push('Line ' + p.lineNo + ': account "' + p.accountName + '" matched as "' + accRes.item.name + '" (fuzzy).');
+            }
+
+            let fundId = '';
+            if (p.fundHint) {
+                const fRes = resolveByName(ledgerImportLookups.funds, p.fundHint, {
+                    alsoCode: true,
+                    label: 'fund'
+                });
+                if (!fRes.ok) {
+                    errors.push('Line ' + p.lineNo + ': ' + fRes.error + ' Use fund name or code (e.g. GOF).');
+                } else {
+                    fundId = fRes.item.id;
+                }
+            }
+
+            const type = p.amount > 0 ? 'debit' : 'credit';
+            const absAmt = Math.abs(p.amount);
+            sum += p.amount;
+
+            resolvedLines.push({
+                account_id: accRes.item.id,
+                fund_id: fundId,
+                natural_category_id: '',
+                functional_category_id: '',
+                amount: absAmt.toFixed(2),
+                type
+            });
+        }
+
+        const ref = String(referenceVal || '').trim();
+        const check = String(checkVal || '').trim();
+        // Memo: concatenate all ; comments (fund: hints excluded)
+        const memo = memoParts
+            .map(p => String(p || '').trim())
+            .filter(Boolean)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (ref && !/^\d{6}$/.test(ref)) {
+            warnings.push('Reference "' + ref + '" is not YY#### (6 digits). It was filled anyway — correct it before save if needed.');
+        }
+
+        if (errors.length) {
+            return { ok: false, errors, warnings };
+        }
+
+        // Balance check only after all postings resolved cleanly
+        if (Math.abs(sum) >= 0.005) {
+            warnings.push(
+                'Postings do not balance (signed sum = ' + sum.toFixed(2) + '). '
+                + 'The form will show the imbalance; fix amounts before saving.'
+            );
+        }
+
+        if (resolvedLines.length < 2) {
+            return {
+                ok: false,
+                errors: ['Fewer than 2 valid postings after account resolution. Double-entry requires at least 2 lines.'],
+                warnings
+            };
+        }
+
+        return {
+            ok: true,
+            warnings,
+            data: {
+                transaction_date: dateStr,
+                pay_to: payTo,
+                description: description,
+                memo: memo,
+                check_number: check,
+                reference_number: ref,
+                lines: resolvedLines
+            }
+        };
+    }
+
+    function clearImportTextFeedback() {
+        if (importTextErrors) importTextErrors.classList.add('d-none');
+        if (importTextErrorList) importTextErrorList.innerHTML = '';
+        if (importTextWarnings) importTextWarnings.classList.add('d-none');
+        if (importTextWarningList) importTextWarningList.innerHTML = '';
+    }
+
+    function clearImportTextArea() {
+        const area = document.getElementById('importTextArea') || importTextArea;
+        if (area) area.value = '';
+    }
+
+    function showImportTextErrors(msgs) {
+        if (!importTextErrors || !importTextErrorList) return;
+        importTextErrorList.innerHTML = (msgs || []).map(m => '<li>' + escHtml(String(m)) + '</li>').join('');
+        importTextErrors.classList.toggle('d-none', !(msgs && msgs.length));
+    }
+
+    function showImportTextWarnings(msgs) {
+        if (!importTextWarnings || !importTextWarningList) return;
+        importTextWarningList.innerHTML = (msgs || []).map(m => '<li>' + escHtml(String(m)) + '</li>').join('');
+        importTextWarnings.classList.toggle('d-none', !(msgs && msgs.length));
+    }
+
+    function applyImportToAddForm(data, warnings) {
+        // Form must already be in Add mode; populate fields + lines only
+        document.getElementById('transaction_date').value = data.transaction_date || '';
+        if (data.reference_number) {
+            if (refInput) refInput.value = data.reference_number;
+        }
+        document.getElementById('pay_to').value = data.pay_to || '';
+        document.getElementById('check_number').value = data.check_number || '';
+        document.getElementById('description').value = data.description || '';
+        document.getElementById('memo').value = data.memo || '';
+
+        // Budget follows transaction date (auto mode on Add)
+        budgetAutoMode = true;
+        applyBudgetForDate(data.transaction_date || '', { force: true });
+        clearReferenceReuseState();
+        refreshReferenceSuggestion().then(updateReferenceHintVisibility);
+        updateReferenceHintVisibility();
+
+        linesBody.innerHTML = '';
+        const lines = data.lines || [];
+        if (lines.length > 0) {
+            lines.forEach(l => {
+                const row = createLineRow(l);
+                linesBody.appendChild(row);
+                attachLineListeners(row);
+            });
+        } else {
+            addLine();
+            addLine();
+        }
+        recalcTotals();
+        if (form) form.setAttribute('data-dirty', '1');
+
+        // Clear paste box after successful populate, then close modal
+        clearImportTextArea();
+        clearImportTextFeedback();
+
+        if (importTextModalEl && typeof bootstrap !== 'undefined') {
+            const modal = bootstrap.Modal.getInstance(importTextModalEl);
+            if (modal) modal.hide();
+        }
+
+        const n = lines.length;
+        let msg = 'Form populated from text (' + n + ' line' + (n === 1 ? '' : 's') + '). Review and Save when ready — nothing was written to the database yet.';
+        if (warnings && warnings.length) {
+            msg += ' (' + warnings.length + ' warning' + (warnings.length === 1 ? '' : 's') + ')';
+            showToast(msg, 'warning');
+        } else {
+            showToast(msg, 'success');
+        }
+    }
+
+    function openImportTextModal() {
+        // Re-resolve in case a prior page left a body-mounted node
+        importTextModalEl = document.getElementById('importTextModal') || importTextModalEl;
+        if (!importTextModalEl || typeof bootstrap === 'undefined') return;
+
+        clearImportTextFeedback();
+        mountModalOnBody(importTextModalEl);
+
+        // Focus textarea only after the modal is shown (avoids focusing while aria-hidden)
+        const onShown = function() {
+            importTextModalEl.removeEventListener('shown.bs.modal', onShown);
+            const area = document.getElementById('importTextArea') || importTextArea;
+            if (area) {
+                try {
+                    area.focus();
+                    // Place caret at end for convenience when re-opening with prior text
+                    const len = area.value ? area.value.length : 0;
+                    if (typeof area.setSelectionRange === 'function') {
+                        area.setSelectionRange(len, len);
+                    }
+                } catch (e) { /* ignore */ }
+            }
+        };
+        importTextModalEl.addEventListener('shown.bs.modal', onShown);
+        showLedgerModal(importTextModalEl, { backdrop: true, keyboard: true, focus: true });
+    }
+
+    if (importTextBtn) {
+        importTextBtn.addEventListener('click', () => {
+            // Only on Add; button is hidden otherwise
+            openImportTextModal();
+        });
+    }
+
+    function runImportTextParse() {
+        clearImportTextFeedback();
+        // Always read live DOM (modal may have been reparented to body)
+        const area = document.getElementById('importTextArea') || importTextArea;
+        const text = area ? area.value : '';
+        const result = parseBeancountImportText(text);
+        if (!result.ok) {
+            showImportTextErrors(result.errors || ['Unknown parse error.']);
+            if (result.warnings && result.warnings.length) showImportTextWarnings(result.warnings);
+            return;
+        }
+        // Successful parse clears the textarea inside applyImportToAddForm
+        applyImportToAddForm(result.data, result.warnings || []);
+    }
+
+    if (importTextParseBtn) {
+        importTextParseBtn.addEventListener('click', runImportTextParse);
+    }
+    // Keydown on modal (delegation) so it works after reparent to body
+    if (importTextModalEl) {
+        importTextModalEl.addEventListener('keydown', (ev) => {
+            const t = ev.target;
+            if (!t || t.id !== 'importTextArea') return;
+            if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+                ev.preventDefault();
+                runImportTextParse();
+            }
+        });
+        importTextModalEl.addEventListener('hidden.bs.modal', () => {
+            // Cancel / close / backdrop: clear paste + errors so next open is clean
+            clearImportTextArea();
+            clearImportTextFeedback();
+        });
+    }
 
     // Initial state
     updateButtonStates();

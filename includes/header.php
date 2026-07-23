@@ -596,6 +596,19 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             }
         }
 
+        /*
+         * Fragment modals are reparented to body (see ledger showLedgerModal) so they
+         * stack above .modal-backdrop. If a modal remains under #main-content-col
+         * (z-index: 1), the body backdrop (1050) steals all clicks — open but dead.
+         * Ensure body-level modals/backdrops keep Bootstrap stacking.
+         */
+        body > .modal {
+            z-index: 1055;
+        }
+        body > .modal-backdrop {
+            z-index: 1050;
+        }
+
         /* ── Utility: page titles that wrap cleanly ──────────────────────── */
         .page-title-row {
             gap: 0.5rem;

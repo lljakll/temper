@@ -602,3 +602,4 @@ Stack trace:
 [22-Jul-2026 11:02:39 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_seconds=30 ip=::1
 [22-Jul-2026 11:04:03 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_seconds=600 ip=::1
 [22-Jul-2026 11:04:08 UTC] [AUDIT] user=admin action=system_config_update details=Updated: login_timeout_disabled=true ip=::1
+[22-Jul-2026 23:46:20 UTC] [AUDIT] user=admin action=ledger.created details=transaction=35 Transaction created for "DEPOSIT" totaling $1,850.00 (3 lines). {"debits":1850,"credits":1850,"changes":["Transaction created for \"DEPOSIT\" totaling $1,850.00 (3 lines).","Fund \"General Operating Fund\" $1,750.00.","Fund \"Missions Fund\" $100.00."]} ip=::1
