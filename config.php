@@ -11,7 +11,8 @@ if (basename($_SERVER['PHP_SELF']) === basename(__FILE__)) {
 // Based on Treasurer's Guide Conceptual Edition Rev 1.0
 
 define('APP_NAME', 'Hope Baptist Treasurer');
-define('APP_VERSION', '1.0.0');
+/** Application version string (hybrid: also stored in app_version table + VERSION.md). */
+define('APP_VERSION', '0.801');
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'temper_db');
 define('DB_USER', 'temper_user');

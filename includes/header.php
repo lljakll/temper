@@ -175,11 +175,19 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             border-bottom-color: var(--bs-border-color) !important;
         }
         .sidebar-panel .sidebar-footnote,
-        .sidebar-panel .sidebar-welcome {
+        .sidebar-panel .sidebar-welcome,
+        .sidebar-panel .sidebar-version {
             color: var(--bs-secondary-color);
         }
         .sidebar-panel .sidebar-welcome strong {
             color: var(--bs-body-color);
+        }
+        .sidebar-panel .sidebar-version-link {
+            color: var(--bs-secondary-color);
+        }
+        .sidebar-panel .sidebar-version-link:hover,
+        .sidebar-panel .sidebar-version-link:focus {
+            color: var(--bs-primary);
         }
         .sidebar-panel .sidebar-divider {
             border-color: var(--bs-border-color);
@@ -315,6 +323,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             body.sidebar-collapsed #appSidebar .sidebar-brand-text,
             body.sidebar-collapsed #appSidebar .sidebar-footnote,
             body.sidebar-collapsed #appSidebar .sidebar-welcome,
+            body.sidebar-collapsed #appSidebar .sidebar-version .sidebar-label,
             body.sidebar-collapsed #appSidebar .sidebar-btn-label {
                 opacity: 0;
                 width: 0 !important;
@@ -327,6 +336,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 display: inline-block;
                 vertical-align: middle;
                 transition: opacity 0.15s ease, max-width 0.2s ease;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-version {
+                text-align: center;
+            }
+            body.sidebar-collapsed #appSidebar .sidebar-version-link {
+                justify-content: center;
             }
             body.sidebar-collapsed #appSidebar .sidebar-brand {
                 justify-content: center;
@@ -387,11 +402,15 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand-text,
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-footnote,
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-welcome,
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-version .sidebar-label,
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-btn-label {
                 opacity: 1;
                 width: auto !important;
                 max-width: 14rem;
                 pointer-events: auto;
+            }
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-version {
+                text-align: start;
             }
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand {
                 justify-content: flex-start;

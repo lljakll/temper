@@ -59,6 +59,10 @@ if ($navDb instanceof mysqli) {
     archiveExpiredForcePasswordUsers($navDb);
 }
 
+// Application version for sidebar (all roles); DB-backed with constant fallback
+require_once __DIR__ . '/app_version.php';
+$navAppVersion = ($navDb instanceof mysqli) ? getAppVersion($navDb) : getAppVersion(null);
+
 $navDb->close();
 ?>
 <script>
@@ -297,10 +301,20 @@ function temper_render_nav_links(
                     $canConfig
                 ); ?>
 
-                <!-- Bottom: footer note + user info + logout -->
+                <!-- Bottom: footer note + version + user info + logout -->
                 <div class="pt-3 mt-auto">
                     <hr class="sidebar-divider">
                     <small class="sidebar-footnote d-block mb-3">Based on Treasurer's Guide, Rev 1.0</small>
+
+                    <div class="small sidebar-version mb-2">
+                        <a href="VERSION.md" target="_blank" rel="noopener noreferrer"
+                           class="sidebar-version-link text-decoration-none"
+                           title="View changelog (VERSION.md)"
+                           aria-label="Application version <?= htmlspecialchars($navAppVersion) ?>, open changelog">
+                            <i class="bi bi-tag me-1" aria-hidden="true"></i>
+                            <span class="sidebar-label">v<?= htmlspecialchars($navAppVersion) ?></span>
+                        </a>
+                    </div>
 
                     <div class="small sidebar-welcome mb-1">
                         Welcome, <strong><?= htmlspecialchars($user['name'] ?? 'User') ?></strong>

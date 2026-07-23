@@ -14,6 +14,7 @@ $setupFiles = [
     'setup-database/05-budgeting.php',
     'setup-database/06-users-roles.php',
     'setup-database/07-tasks.php',
+    'setup-database/08-app-version.php',
 ];
 
 $dropQueries = [
@@ -30,6 +31,7 @@ $dropQueries = [
     'accounts',
     'natural_categories',
     'functional_categories',
+    'app_version',
 ];
 
 $schemaProviders = [
@@ -40,6 +42,7 @@ $schemaProviders = [
     'setupSchemaBudgeting',
     'setupSchemaUsersRoles',
     'setupSchemaTasks',
+    'setupSchemaAppVersion',
 ];
 
 /**
