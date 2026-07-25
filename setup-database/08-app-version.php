@@ -9,11 +9,15 @@ function setupSchemaAppVersion(): array
     return [
         'tables' => [
             'app_version' => "CREATE TABLE IF NOT EXISTS app_version (
-    id TINYINT UNSIGNED NOT NULL PRIMARY KEY DEFAULT 1,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     version VARCHAR(32) NOT NULL,
-    schema_version INT UNSIGNED NOT NULL DEFAULT 1,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    schema_version INT NOT NULL DEFAULT 1,
+    patch_file VARCHAR(128) NULL DEFAULT NULL,
+    notes VARCHAR(512) NULL DEFAULT NULL,
+    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_app_version_applied (applied_at),
+    KEY idx_app_version_schema (schema_version)
+)",
         ],
     ];
 }
@@ -36,38 +40,15 @@ if ($db->query($createSql) === TRUE) {
     exit(1);
 }
 
-// Seed / refresh single-row version record to match this codebase
-$version = TEMPER_DEFAULT_APP_VERSION;
-$schema = TEMPER_EXPECTED_SCHEMA_VERSION;
-
-// Upsert id=1
-$res = $db->query('SELECT id FROM app_version WHERE id = 1 LIMIT 1');
-$exists = $res && $res->num_rows > 0;
-if ($res) {
-    $res->close();
+// Fresh install: seed complete version history (oldest → newest)
+if (!seedAppVersionHistory($db)) {
+    echo "Error seeding app_version history\n";
+    exit(1);
 }
 
-if ($exists) {
-    $stmt = $db->prepare(
-        'UPDATE app_version SET version = ?, schema_version = ? WHERE id = 1'
-    );
-    if ($stmt) {
-        $stmt->bind_param('si', $version, $schema);
-        $stmt->execute();
-        $stmt->close();
-    }
-    echo "app_version row updated to v{$version} (schema {$schema})\n";
-} else {
-    $stmt = $db->prepare(
-        'INSERT INTO app_version (id, version, schema_version) VALUES (1, ?, ?)'
-    );
-    if ($stmt) {
-        $stmt->bind_param('si', $version, $schema);
-        $stmt->execute();
-        $stmt->close();
-    }
-    echo "app_version row seeded as v{$version} (schema {$schema})\n";
-}
+$latest = getAppVersionInfo($db);
+echo "app_version history seeded (" . count(TEMPER_VERSION_HISTORY) . " rows); ";
+echo "current v{$latest['version']} (schema {$latest['schema_version']})\n";
 
 $db->close();
 ?>
