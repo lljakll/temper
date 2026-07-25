@@ -6,9 +6,69 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 }
 
 /**
- * Ensure accounts hold natural/functional category FKs and budget_lines
+ * Read-only check: accounts hold natural/functional category FKs and budget_lines
  * only references accounts (categories come from the linked account).
- * Safe to call repeatedly.
+ * Does not ALTER tables or migrate data. Schema is owned by setup_db / updates/*.sql.
+ *
+ * @return list<string>
+ */
+function budgetCheckSimplifiedSchema(mysqli $db): array {
+    $issues = [];
+
+    foreach (['accounts', 'budget_lines', 'budgets'] as $table) {
+        $escaped = $db->real_escape_string($table);
+        $res = $db->query("SHOW TABLES LIKE '{$escaped}'");
+        if (!$res || $res->num_rows === 0) {
+            $issues[] = "table {$table} is missing";
+        }
+        if ($res) {
+            $res->close();
+        }
+    }
+
+    if ($issues !== []) {
+        return $issues;
+    }
+
+    foreach (['natural_category_id', 'functional_category_id', 'coa_number'] as $col) {
+        $c = $db->query("SHOW COLUMNS FROM accounts LIKE '" . $db->real_escape_string($col) . "'");
+        if (!$c || $c->num_rows === 0) {
+            $issues[] = "column accounts.{$col} is missing";
+        }
+        if ($c) {
+            $c->close();
+        }
+    }
+
+    // Legacy layout: categories on budget_lines (must be migrated via updates/*.sql)
+    foreach (['natural_category_id', 'functional_category_id'] as $col) {
+        $c = $db->query("SHOW COLUMNS FROM budget_lines LIKE '" . $db->real_escape_string($col) . "'");
+        if ($c && $c->num_rows > 0) {
+            $issues[] = "legacy column budget_lines.{$col} still present (apply schema patches)";
+        }
+        if ($c) {
+            $c->close();
+        }
+    }
+
+    $aidCol = $db->query("SHOW COLUMNS FROM budget_lines LIKE 'account_id'");
+    if (!$aidCol || $aidCol->num_rows === 0) {
+        $issues[] = 'column budget_lines.account_id is missing';
+    } elseif ($row = $aidCol->fetch_assoc()) {
+        if (strtoupper((string)($row['Null'] ?? '')) === 'YES') {
+            $issues[] = 'column budget_lines.account_id must be NOT NULL';
+        }
+    }
+    if ($aidCol) {
+        $aidCol->close();
+    }
+
+    return $issues;
+}
+
+/**
+ * Ensure simplified budget schema is present (read-only). Logs and throws if outdated.
+ * Does not run live DDL or data backfills.
  */
 function budgetEnsureSimplifiedSchema(mysqli $db): void {
     static $done = false;
@@ -17,122 +77,9 @@ function budgetEnsureSimplifiedSchema(mysqli $db): void {
     }
     $done = true;
 
-    // --- accounts: natural_category_id / functional_category_id ---
-    $hasNat = $db->query("SHOW COLUMNS FROM accounts LIKE 'natural_category_id'");
-    if ($hasNat && $hasNat->num_rows === 0) {
-        $db->query(
-            'ALTER TABLE accounts
-             ADD COLUMN natural_category_id INT NULL AFTER normal_balance,
-             ADD COLUMN functional_category_id INT NULL AFTER natural_category_id'
-        );
-        // Best-effort indexes (ignore if already present)
-        @$db->query('CREATE INDEX idx_accounts_natural_category_id ON accounts(natural_category_id)');
-        @$db->query('CREATE INDEX idx_accounts_functional_category_id ON accounts(functional_category_id)');
-        // FKs if categories tables exist
-        $nc = $db->query("SHOW TABLES LIKE 'natural_categories'");
-        $fc = $db->query("SHOW TABLES LIKE 'functional_categories'");
-        if ($nc && $nc->num_rows > 0) {
-            @$db->query(
-                'ALTER TABLE accounts
-                 ADD CONSTRAINT fk_accounts_natural_category
-                 FOREIGN KEY (natural_category_id) REFERENCES natural_categories(id) ON DELETE SET NULL'
-            );
-        }
-        if ($fc && $fc->num_rows > 0) {
-            @$db->query(
-                'ALTER TABLE accounts
-                 ADD CONSTRAINT fk_accounts_functional_category
-                 FOREIGN KEY (functional_category_id) REFERENCES functional_categories(id) ON DELETE SET NULL'
-            );
-        }
-    }
-    if ($hasNat) {
-        $hasNat->close();
-    }
-
-    // --- accounts: coa_number (internal Chart of Accounts reference only) ---
-    $hasCoa = $db->query("SHOW COLUMNS FROM accounts LIKE 'coa_number'");
-    if ($hasCoa && $hasCoa->num_rows === 0) {
-        $db->query(
-            "ALTER TABLE accounts
-             ADD COLUMN coa_number VARCHAR(50) NULL AFTER normal_balance"
-        );
-    }
-    if ($hasCoa) {
-        $hasCoa->close();
-    }
-
-    // Backfill account categories from historical budget_lines when still NULL
-    $blHasNat = $db->query("SHOW COLUMNS FROM budget_lines LIKE 'natural_category_id'");
-    if ($blHasNat && $blHasNat->num_rows > 0) {
-        $db->query(
-            'UPDATE accounts a
-             INNER JOIN (
-                 SELECT account_id,
-                        MAX(natural_category_id) AS natural_category_id,
-                        MAX(functional_category_id) AS functional_category_id
-                 FROM budget_lines
-                 WHERE account_id IS NOT NULL
-                 GROUP BY account_id
-             ) bl ON bl.account_id = a.id
-             SET a.natural_category_id = COALESCE(a.natural_category_id, bl.natural_category_id),
-                 a.functional_category_id = COALESCE(a.functional_category_id, bl.functional_category_id)
-             WHERE a.natural_category_id IS NULL OR a.functional_category_id IS NULL'
-        );
-
-        // Drop FKs and columns on budget_lines
-        $fkRes = $db->query(
-            "SELECT CONSTRAINT_NAME, COLUMN_NAME
-             FROM information_schema.KEY_COLUMN_USAGE
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = 'budget_lines'
-               AND COLUMN_NAME IN ('natural_category_id', 'functional_category_id')
-               AND REFERENCED_TABLE_NAME IS NOT NULL"
-        );
-        if ($fkRes) {
-            while ($fk = $fkRes->fetch_assoc()) {
-                $name = $fk['CONSTRAINT_NAME'];
-                @$db->query('ALTER TABLE budget_lines DROP FOREIGN KEY `' . $db->real_escape_string($name) . '`');
-            }
-            $fkRes->close();
-        }
-        @$db->query('ALTER TABLE budget_lines DROP INDEX idx_budget_lines_natural_category_id');
-        @$db->query('ALTER TABLE budget_lines DROP INDEX idx_budget_lines_functional_category_id');
-        @$db->query('ALTER TABLE budget_lines DROP COLUMN natural_category_id');
-        @$db->query('ALTER TABLE budget_lines DROP COLUMN functional_category_id');
-    }
-    if ($blHasNat) {
-        $blHasNat->close();
-    }
-
-    // Ensure account_id is NOT NULL and FK does not SET NULL on delete
-    $aidCol = $db->query("SHOW COLUMNS FROM budget_lines LIKE 'account_id'");
-    if ($aidCol && ($row = $aidCol->fetch_assoc())) {
-        if (strtoupper((string)($row['Null'] ?? '')) === 'YES') {
-            $db->query('DELETE FROM budget_lines WHERE account_id IS NULL OR account_id = 0');
-            // Drop existing account FK (often ON DELETE SET NULL) before NOT NULL
-            $fkRes = $db->query(
-                "SELECT CONSTRAINT_NAME
-                 FROM information_schema.KEY_COLUMN_USAGE
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME = 'budget_lines'
-                   AND COLUMN_NAME = 'account_id'
-                   AND REFERENCED_TABLE_NAME IS NOT NULL"
-            );
-            if ($fkRes) {
-                while ($fk = $fkRes->fetch_assoc()) {
-                    @$db->query('ALTER TABLE budget_lines DROP FOREIGN KEY `' . $db->real_escape_string($fk['CONSTRAINT_NAME']) . '`');
-                }
-                $fkRes->close();
-            }
-            @$db->query('ALTER TABLE budget_lines MODIFY account_id INT NOT NULL');
-            @$db->query(
-                'ALTER TABLE budget_lines
-                 ADD CONSTRAINT fk_budget_lines_account
-                 FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT'
-            );
-        }
-        $aidCol->close();
+    $issues = budgetCheckSimplifiedSchema($db);
+    if ($issues !== []) {
+        temperSchemaOutOfDate('budget', $issues);
     }
 }
 

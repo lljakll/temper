@@ -49,14 +49,20 @@
 -- ---------------------------------------------------------------------------
 -- Record application in version history (required)
 -- ---------------------------------------------------------------------------
--- schema_version = this patch's filename stem (no .sql).
--- For an app release with NO schema change, do not add a patch file; instead
--- INSERT a history row with the previous schema_version carried forward and
--- patch_file = NULL (usually done in setup seed / tooling, not here).
+-- setup_db.php is frozen at v0.804. Post-0.804 releases MUST record here
+-- (never by extending TEMPER_VERSION_HISTORY / setup seed).
+--
+-- schema_version = this patch's filename stem when DDL is included;
+--                  otherwise carry forward the previous schema stem.
+-- patch_file     = this file's basename (even for process-only patches).
 INSERT INTO app_version (version, schema_version, patch_file, notes)
-VALUES (
+SELECT
     'X.YYY',
-    'YYYYMMDD_NN_short_description',
+    'YYYYMMDD_NN_short_description',  -- or prior stem if no DDL
     'YYYYMMDD_NN_short_description.sql',
     'Short note matching VERSION.md summary'
+WHERE NOT EXISTS (
+    SELECT 1 FROM app_version
+    WHERE version = 'X.YYY'
+       OR patch_file = 'YYYYMMDD_NN_short_description.sql'
 );

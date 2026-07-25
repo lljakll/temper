@@ -1,5 +1,11 @@
 <?php
 // Church Treasurer System - Run All Database Setup Scripts
+//
+// FROZEN BASELINE (app v0.804): this script + setup-database/* establish schema
+// and seed app_version history through 0.804 only. Releases 0.805+ are applied
+// solely via updates/*.sql patches after setup (see VERSION.md). Do not add
+// 0.805+ history rows to TEMPER_VERSION_HISTORY or these setup scripts.
+//
 require_once 'config.php';
 require_once 'setup-database/setup_cli.php';
 
@@ -15,6 +21,7 @@ $setupFiles = [
     'setup-database/06-users-roles.php',
     'setup-database/07-tasks.php',
     'setup-database/08-app-version.php',
+    'setup-database/09-audit-log.php',
 ];
 
 $dropQueries = [
@@ -23,6 +30,7 @@ $dropQueries = [
     'transaction_lines',
     'tasks',
     'budget_lines',
+    'user_roles',
     'users',
     'transaction_details',
     'budgets',
@@ -31,6 +39,7 @@ $dropQueries = [
     'accounts',
     'natural_categories',
     'functional_categories',
+    'audit_log',
     'app_version',
 ];
 
@@ -43,6 +52,7 @@ $schemaProviders = [
     'setupSchemaUsersRoles',
     'setupSchemaTasks',
     'setupSchemaAppVersion',
+    'setupSchemaAuditLog',
 ];
 
 /**

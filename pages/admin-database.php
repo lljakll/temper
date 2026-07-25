@@ -496,13 +496,12 @@ $exportDir = getExportsDir();
             clearAuditLog($db);
 
             $db->query('SET FOREIGN_KEY_CHECKS = 0');
-            if (function_exists('temperTableExists') || true) {
-                require_once __DIR__ . '/../includes/permissions.php';
-                ensureUsersRolesSchema($db);
-                if (temperTableExists($db, 'user_roles')) {
-                    if (!$db->query('TRUNCATE TABLE user_roles')) {
-                        $db->query('DELETE FROM user_roles');
-                    }
+            require_once __DIR__ . '/../includes/permissions.php';
+            // Schema check only (no live DDL). Truncate junction when present.
+            ensureUsersRolesSchema($db);
+            if (temperTableExists($db, 'user_roles')) {
+                if (!$db->query('TRUNCATE TABLE user_roles')) {
+                    $db->query('DELETE FROM user_roles');
                 }
             }
             if (!$db->query('TRUNCATE TABLE users')) {

@@ -89,7 +89,7 @@ $db->query("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)");
 $db->query("CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)");
 
-// Apply any additive migrations + seed predefined roles
+// Verify schema (read-only) then seed predefined roles (setup only — not page load)
 ensureUsersRolesSchema($db);
 $sync = ensureDefaultRoles($db);
 echo "Roles seeded/synced (inserted={$sync['inserted']}, updated={$sync['updated']})\n";

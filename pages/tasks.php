@@ -2,15 +2,18 @@
     // Tasks / Reminders - Inner content only for AJAX loading
 
 require_once __DIR__ . '/../includes/page_bootstrap.php';
-$db->query("CREATE TABLE IF NOT EXISTS tasks (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(200) NOT NULL,
-        description TEXT,
-        due_date DATE NULL,
-        status ENUM('upcoming', 'due_soon', 'overdue', 'in_progress', 'done') NOT NULL DEFAULT 'upcoming',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
+
+// Read-only: tasks table must exist (created by setup_db / patches only)
+$tasksTable = $db->query("SHOW TABLES LIKE 'tasks'");
+if (!$tasksTable || $tasksTable->num_rows === 0) {
+    if ($tasksTable) {
+        $tasksTable->close();
+    }
+    temperSchemaOutOfDate('tasks', ['table tasks is missing']);
+}
+if ($tasksTable) {
+    $tasksTable->close();
+}
 
     $today = date('Y-m-d');
     $validStatuses = ['upcoming', 'due_soon', 'overdue', 'in_progress', 'done'];

@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.805](#v0805)
+- [v0.804](#v0804)
 - [v0.803](#v0803)
 - [v0.802](#v0802)
 - [v0.801](#v0801)
@@ -27,20 +29,31 @@ There is **no** automatic schema detection or apply UI in the application.
 
 ## Conventions
 
+### Frozen setup baseline vs post-baseline patches
+
+| Layer | Role |
+|-------|------|
+| **`setup_db.php` + `setup-database/*`** | **Frozen at app v0.804.** Destructive setup always leaves the database at 0.804 with the 0.804 schema shape. |
+| **`TEMPER_VERSION_HISTORY`** | Seeds **only** through 0.804. Do **not** add 0.805+ rows here. |
+| **`updates/*.sql`** | **Only** path for 0.805 and later (DDL and/or `app_version` history rows). |
+
+After a fresh setup, operators who want the current release apply every post-baseline patch listed under that version in this file (in order).
+
 ### Schema version = patch filename stem
 
-The **schema version** is the patch file’s basename **without** `.sql`:
+The **schema version** is the patch file’s basename **without** `.sql` when that release changes schema:
 
 | Patch file | Schema version (`app_version.schema_version`) |
 |------------|-----------------------------------------------|
 | `updates/20260725_01_app_version_history.sql` | `20260725_01_app_version_history` |
 | `updates/20260725_02_schema_version_as_filename.sql` | `20260725_02_schema_version_as_filename` |
+| `updates/20260725_03_formalize_audit_log.sql` | `20260725_03_formalize_audit_log` |
 | *(schema from `setup_db.php` only)* | `setup_baseline` |
 
 Every app version history row **must** store a `schema_version`.  
-If a release has **no** schema change, **reuse the previous** schema version stem (carry forward) and leave `patch_file` null.
+If a release has **no** schema change, **reuse the previous** schema version stem (carry forward). Process-only post-baseline releases still get a minimal `updates/*.sql` file that inserts the new `app_version` row (and may set `patch_file` to that filename for auditability).
 
-### When a release needs a schema change
+### When a release needs a schema change (or any post-baseline patch)
 
 Include a **prominent** line in that version’s section:
 
@@ -69,7 +82,61 @@ After every **5–10** schema patches (or at a natural milestone), consolidate s
 
 ### Fresh installs
 
-`php setup_db.php` builds the current schema from `setup-database/*.php` and seeds the **complete** `app_version` history. Do not replay the entire `updates/` chain on a new database.
+`php setup_db.php` builds the **0.804 baseline** schema from `setup-database/*.php` and seeds `app_version` history **through 0.804 only**.  
+Do **not** expect setup to plant 0.805+ rows. After setup, apply post-baseline patches under `updates/` (see the current version section). Do not replay pre-baseline patches that are already embodied in the setup scripts.
+
+---
+
+## v0.805
+
+**Frozen setup baseline + patch-only model** — 2026-07-25
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260725_04_frozen_baseline_model.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log` *(carried forward — no DDL)*  
+> **Min app version:** 0.805
+
+- Formalizes the long-term model: **`setup_db.php` stays frozen at v0.804**; **0.805+ advances only via `updates/*.sql`**.
+- `TEMPER_VERSION_HISTORY` / setup seed intentionally stop at 0.804 (`TEMPER_SETUP_BASELINE_APP_VERSION`).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.805**.
+- This release has **no table DDL**; the patch only records the 0.805 history row (schema stem unchanged).
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.804 | `updates/20260725_04_frozen_baseline_model.sql` only |
+| Fresh setup (0.804 baseline) | Same patch after setup to reach 0.805 |
+| v0.803 or older | Prior patches through 0.804, then `20260725_04_…` |
+
+---
+
+## v0.804
+
+**Read-only schema checks — no live DDL/seed** — 2026-07-25
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260725_03_formalize_audit_log.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log`  
+> **Min app version:** 0.804
+
+- All runtime `ensure*` / live-migration helpers are **read-only checks** only: they detect missing tables/columns and log/throw a clear “schema is out of date” error. They no longer `CREATE`/`ALTER` tables or insert seed data on page load.
+- Covered paths: `app_version`, users/roles, budget simplified schema, ledger `budget_id` / reference number, `audit_log`, tasks.
+- Version history seeding (`TEMPER_VERSION_HISTORY` / `seedAppVersionHistory`) runs **only** from `setup_db.php` / `setup-database/08-app-version.php`.
+- Default role seeding (`ensureDefaultRoles`) is **setup-only** (no longer run from admin Users page load).
+- Formalized `audit_log` in `setup-database/09-audit-log.php` (was previously created on demand by `ensureAuditLogTable`).
+- Fail clearly when schema is missing/outdated; operators apply `updates/*.sql` or re-run setup for a fresh install. Validate with `php setup_db.php --check`.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.803 | `updates/20260725_03_formalize_audit_log.sql` only |
+| v0.802 | `20260725_02_…` then `20260725_03_…` (in order) |
+| v0.801 | `20260725_01_…` → `02` → `03` (in order) |
+| Fresh install | Setup seeds through 0.804; then apply `20260725_04_…` for 0.805+ |
 
 ---
 
@@ -94,7 +161,7 @@ After every **5–10** schema patches (or at a natural milestone), consolidate s
 |------|--------|
 | v0.802 | `updates/20260725_02_schema_version_as_filename.sql` only |
 | v0.801 | `20260725_01_…` then `20260725_02_…` (in order) |
-| Fresh install | No patches; setup seeds full history through 0.803 |
+| Fresh install | No patches; setup seeds full history through 0.803 (prefer current setup for 0.804+) |
 
 ---
 

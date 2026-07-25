@@ -12,7 +12,7 @@ if (basename($_SERVER['PHP_SELF']) === basename(__FILE__)) {
 
 define('APP_NAME', 'Hope Baptist Treasurer');
 /** Application version string (hybrid: also stored in app_version history + VERSION.md). */
-define('APP_VERSION', '0.803');
+define('APP_VERSION', '0.805');
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'temper_db');
 define('DB_USER', 'temper_user');
@@ -94,6 +94,22 @@ function getDbConnection() {
     // Set charset to prevent injection
     $mysqli->set_charset("utf8mb4");
     return $mysqli;
+}
+
+/**
+ * Report an outdated / missing database schema (read-only failure path).
+ * Never creates tables, alters columns, or seeds data — operators apply
+ * updates/*.sql or run setup_db.php for a fresh install.
+ *
+ * @param list<string> $issues Human-readable problems detected
+ */
+function temperSchemaOutOfDate(string $component, array $issues): void {
+    $detail = $issues !== [] ? implode('; ', $issues) : 'unknown problem';
+    $msg = "Database schema is out of date [{$component}]: {$detail}. "
+        . 'Apply pending updates/*.sql patches (see VERSION.md), or run '
+        . 'php setup_db.php for a fresh install. Validate with: php setup_db.php --check';
+    error_log('[temper-schema] ' . $msg);
+    throw new RuntimeException($msg);
 }
 
 // Enable error reporting during development

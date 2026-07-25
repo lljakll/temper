@@ -5,18 +5,53 @@ if (basename($_SERVER['PHP_SELF']) === basename(__FILE__)) {
     exit;
 }
 
+/**
+ * Read-only check: audit_log table must exist with required columns.
+ * Does not CREATE TABLE. Schema is owned by setup_db / updates/*.sql.
+ *
+ * @return list<string>
+ */
+function checkAuditLogTable(mysqli $db): array
+{
+    $issues = [];
+    $res = $db->query("SHOW TABLES LIKE 'audit_log'");
+    if (!$res || $res->num_rows === 0) {
+        if ($res) {
+            $res->close();
+        }
+        return ['table audit_log is missing'];
+    }
+    $res->close();
+
+    foreach (['id', 'user_id', 'username', 'action', 'details', 'ip_address', 'created_at'] as $col) {
+        $c = $db->query("SHOW COLUMNS FROM audit_log LIKE '" . $db->real_escape_string($col) . "'");
+        if (!$c || $c->num_rows === 0) {
+            $issues[] = "column audit_log.{$col} is missing";
+        }
+        if ($c) {
+            $c->close();
+        }
+    }
+
+    return $issues;
+}
+
+/**
+ * Ensure audit_log schema is present (read-only). Logs and throws if outdated.
+ * Does not create the table at runtime.
+ */
 function ensureAuditLogTable(mysqli $db): void {
-    $db->query("CREATE TABLE IF NOT EXISTS audit_log (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NULL,
-        username VARCHAR(50) NOT NULL,
-        action VARCHAR(100) NOT NULL,
-        details TEXT,
-        ip_address VARCHAR(45) NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_audit_log_created_at (created_at),
-        INDEX idx_audit_log_action (action)
-    )");
+    static $done = false;
+    if ($done) {
+        return;
+    }
+
+    $issues = checkAuditLogTable($db);
+    if ($issues !== []) {
+        temperSchemaOutOfDate('audit_log', $issues);
+    }
+
+    $done = true;
 }
 
 function logAuditAction(mysqli $db, ?int $userId, string $username, string $action, string $details = ''): void {

@@ -4,12 +4,19 @@
  * (VERSION.md + app_version history table + manual SQL patches in updates/).
  *
  * Schema updates are fully manual: operators apply files under updates/ via mysql.
- * This module only reads/writes version history rows; it does not apply patches.
+ * This module only reads/writes version history rows; it does not create tables,
+ * seed history on page load, or apply patches.
  *
- * Schema version identity = patch filename stem (no .sql), e.g.
- *   20260725_01_app_version_history
+ * ## Frozen setup baseline (0.804) vs post-baseline patches
+ *
+ * - `setup_db.php` / `TEMPER_VERSION_HISTORY` are **frozen at app v0.804**.
+ *   Fresh destructive setup always leaves the DB at 0.804.
+ * - Releases **0.805 and later** are applied **only** via `updates/*.sql` patches.
+ *   Do not append 0.805+ rows to TEMPER_VERSION_HISTORY or re-seed them in setup.
+ *
+ * Schema version identity = patch filename stem (no .sql) when a release has DDL;
+ * process-only releases carry forward the previous schema version stem.
  * Pre-patch baseline (setup_db only) uses TEMPER_SCHEMA_BASELINE.
- * App releases with no schema change carry forward the previous schema version.
  *
  * Security: Prevent direct access.
  */
@@ -18,8 +25,17 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
     exit;
 }
 
-/** Default / seed application version string (current release). */
-const TEMPER_DEFAULT_APP_VERSION = '0.803';
+/**
+ * Current application release (codebase). Advanced via deploy + updates/*.sql;
+ * not the setup seed ceiling.
+ */
+const TEMPER_DEFAULT_APP_VERSION = '0.805';
+
+/**
+ * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
+ * Frozen long-term baseline — do not raise this when shipping 0.805+.
+ */
+const TEMPER_SETUP_BASELINE_APP_VERSION = '0.804';
 
 /**
  * Schema id for the initial setup_db.php shape (no updates/*.sql patch yet).
@@ -30,11 +46,15 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
 /**
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
+ * v0.805 is process-only → still the 0.804 formalize_audit_log stem.
  */
-const TEMPER_EXPECTED_SCHEMA_VERSION = '20260725_02_schema_version_as_filename';
+const TEMPER_EXPECTED_SCHEMA_VERSION = '20260725_03_formalize_audit_log';
 
 /**
- * Complete version history for fresh installs (oldest → newest).
+ * Frozen setup seed: version history through TEMPER_SETUP_BASELINE_APP_VERSION (0.804).
+ * Used by seedAppVersionHistory() from setup_db.php / 08-app-version.php only.
+ * Never applied on page load. Never append 0.805+ here — those rows come from updates/*.sql.
+ *
  * schema_version is always set (patch stem, or TEMPER_SCHEMA_BASELINE).
  * patch_file is the .sql applied with that app version, or null if none
  * (schema_version is still set — carried forward or baseline).
@@ -60,6 +80,12 @@ const TEMPER_VERSION_HISTORY = [
         'patch_file' => '20260725_02_schema_version_as_filename.sql',
         'notes' => 'schema_version stores patch filename stem (not integer)',
     ],
+    [
+        'version' => '0.804',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260725_03_formalize_audit_log.sql',
+        'notes' => 'Read-only schema checks; audit_log in setup; no live DDL/seed',
+    ],
 ];
 
 /**
@@ -78,7 +104,7 @@ function temperSchemaVersionId(string $patchFileOrStem): string
 }
 
 /**
- * CREATE TABLE SQL for app_version (append-only version history).
+ * CREATE TABLE SQL for app_version (setup_db / patches only — not runtime).
  */
 function temperAppVersionCreateSql(): string
 {
@@ -95,8 +121,39 @@ function temperAppVersionCreateSql(): string
 }
 
 /**
- * Ensure app_version table exists and seed full history when empty.
- * Safe to call repeatedly (idempotent). Does not re-seed if any row exists.
+ * Read-only check: app_version table must exist with required columns.
+ * Does not create the table or seed history. Safe to call repeatedly.
+ *
+ * @return list<string> Empty when OK; otherwise human-readable issues
+ */
+function checkAppVersionTable(mysqli $db): array
+{
+    $issues = [];
+    $res = $db->query("SHOW TABLES LIKE 'app_version'");
+    if (!$res || $res->num_rows === 0) {
+        if ($res) {
+            $res->close();
+        }
+        return ['table app_version is missing'];
+    }
+    $res->close();
+
+    foreach (['version', 'schema_version', 'patch_file', 'notes', 'applied_at'] as $col) {
+        $c = $db->query("SHOW COLUMNS FROM app_version LIKE '" . $db->real_escape_string($col) . "'");
+        if (!$c || $c->num_rows === 0) {
+            $issues[] = "column app_version.{$col} is missing";
+        }
+        if ($c) {
+            $c->close();
+        }
+    }
+
+    return $issues;
+}
+
+/**
+ * Ensure app_version schema is present (read-only). Logs and throws if outdated.
+ * Does not CREATE TABLE or seed TEMPER_VERSION_HISTORY on page load.
  */
 function ensureAppVersionTable(mysqli $db): void
 {
@@ -105,26 +162,18 @@ function ensureAppVersionTable(mysqli $db): void
         return;
     }
 
-    if (!$db->query(temperAppVersionCreateSql())) {
-        error_log('[app_version] Failed to create table: ' . $db->error);
-        return;
-    }
-
-    $res = $db->query('SELECT id FROM app_version LIMIT 1');
-    $hasRows = $res && $res->num_rows > 0;
-    if ($res) {
-        $res->close();
-    }
-
-    if (!$hasRows) {
-        seedAppVersionHistory($db);
+    $issues = checkAppVersionTable($db);
+    if ($issues !== []) {
+        temperSchemaOutOfDate('app_version', $issues);
     }
 
     $done = true;
 }
 
 /**
- * Insert the full TEMPER_VERSION_HISTORY seed set (fresh installs only).
+ * Insert the frozen setup baseline history (through TEMPER_SETUP_BASELINE_APP_VERSION / 0.804).
+ * For setup_db.php / 08-app-version.php only — never call on page load.
+ * Does not seed 0.805+; apply those via updates/*.sql after setup.
  */
 function seedAppVersionHistory(mysqli $db): bool
 {
@@ -177,7 +226,12 @@ function getAppVersion(?mysqli $db = null): string
         return $fallback;
     }
 
-    ensureAppVersionTable($db);
+    try {
+        ensureAppVersionTable($db);
+    } catch (RuntimeException $e) {
+        // Sidebar / display paths: log already emitted; show codebase constant.
+        return $fallback;
+    }
 
     $res = $db->query(
         'SELECT version FROM app_version ORDER BY id DESC LIMIT 1'
@@ -212,7 +266,11 @@ function getAppVersionInfo(?mysqli $db = null): array
         return $fallback;
     }
 
-    ensureAppVersionTable($db);
+    try {
+        ensureAppVersionTable($db);
+    } catch (RuntimeException $e) {
+        return $fallback;
+    }
 
     // Prefer history-shaped table (v0.802+). Fall back to legacy single-row columns
     // so sidebar/diagnostics still work if a manual schema patch has not been applied yet.
@@ -297,7 +355,11 @@ function getAppVersionHistory(?mysqli $db = null): array
         return [];
     }
 
-    ensureAppVersionTable($db);
+    try {
+        ensureAppVersionTable($db);
+    } catch (RuntimeException $e) {
+        return [];
+    }
 
     $res = $db->query(
         'SELECT id, version, schema_version, patch_file, notes, applied_at
@@ -334,6 +396,7 @@ function getAppVersionHistory(?mysqli $db = null): array
 /**
  * Append a version history row (manual patch / release record).
  * Prefer recording via the SQL patch itself; this helper is for setup tooling.
+ * Requires app_version table to already exist (does not create it).
  *
  * @param string $schemaVersion Patch filename stem (or TEMPER_SCHEMA_BASELINE). Required.
  * @param string|null $patchFile Full .sql basename when this release applied a patch; null if carry-forward.
@@ -355,7 +418,11 @@ function recordAppVersion(
         return false;
     }
 
-    ensureAppVersionTable($db);
+    try {
+        ensureAppVersionTable($db);
+    } catch (RuntimeException $e) {
+        return false;
+    }
 
     $patch = ($patchFile !== null && trim($patchFile) !== '') ? trim($patchFile) : null;
     $note = ($notes !== null && trim($notes) !== '') ? trim($notes) : null;

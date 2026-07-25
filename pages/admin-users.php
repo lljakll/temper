@@ -12,8 +12,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/audit.php';
 
 $actor = requireAdministrator($db, 'Only administrators can manage users and roles.');
+// Schema check only — does not CREATE/ALTER or seed roles (setup_db owns that).
 ensureUsersRolesSchema($db);
-ensureDefaultRoles($db);
 clearUserAclCache();
 
 /** Whether permanent user deletion is currently permitted. */

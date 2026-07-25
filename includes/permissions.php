@@ -158,8 +158,46 @@ function temperColumnExists(mysqli $db, string $table, string $column): bool {
 }
 
 /**
- * Ensure users/roles schema supports multi-role, phone, force-password, custom perms.
- * Safe to call repeatedly (idempotent migrations).
+ * Read-only check: users/roles schema supports multi-role, phone, force-password, custom perms.
+ * Does not CREATE/ALTER tables or seed data. Schema is owned by setup_db / updates/*.sql.
+ *
+ * @return list<string>
+ */
+function checkUsersRolesSchema(mysqli $db): array {
+    $issues = [];
+
+    foreach (['roles', 'users', 'user_roles'] as $table) {
+        if (!temperTableExists($db, $table)) {
+            $issues[] = "table {$table} is missing";
+        }
+    }
+
+    if (temperTableExists($db, 'roles') && !temperColumnExists($db, 'roles', 'is_system')) {
+        $issues[] = 'column roles.is_system is missing';
+    }
+
+    if (temperTableExists($db, 'users')) {
+        foreach (['phone', 'must_change_password', 'custom_permissions', 'archived_at', 'force_password_set_at'] as $col) {
+            if (!temperColumnExists($db, 'users', $col)) {
+                $issues[] = "column users.{$col} is missing";
+            }
+        }
+    }
+
+    if (temperTableExists($db, 'user_roles')) {
+        foreach (['user_id', 'role_id', 'is_primary'] as $col) {
+            if (!temperColumnExists($db, 'user_roles', $col)) {
+                $issues[] = "column user_roles.{$col} is missing";
+            }
+        }
+    }
+
+    return $issues;
+}
+
+/**
+ * Ensure users/roles schema is present (read-only). Logs and throws if outdated.
+ * Does not run live DDL, backfills, or role seeding.
  */
 function ensureUsersRolesSchema(mysqli $db): void {
     static $done = false;
@@ -167,72 +205,9 @@ function ensureUsersRolesSchema(mysqli $db): void {
         return;
     }
 
-    // roles.is_system
-    if (temperTableExists($db, 'roles') && !temperColumnExists($db, 'roles', 'is_system')) {
-        $db->query('ALTER TABLE roles ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0 AFTER permissions');
-    }
-
-    // users extensions
-    if (temperTableExists($db, 'users')) {
-        if (!temperColumnExists($db, 'users', 'phone')) {
-            $db->query('ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL AFTER email');
-        }
-        if (!temperColumnExists($db, 'users', 'must_change_password')) {
-            $db->query('ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER is_active');
-        }
-        if (!temperColumnExists($db, 'users', 'custom_permissions')) {
-            $db->query('ALTER TABLE users ADD COLUMN custom_permissions JSON NULL AFTER must_change_password');
-        }
-        if (!temperColumnExists($db, 'users', 'archived_at')) {
-            $db->query('ALTER TABLE users ADD COLUMN archived_at DATETIME NULL AFTER last_login');
-        }
-        // When must_change_password was (re)asserted — grace period starts here, not at account creation.
-        // Prevents restore/unarchive from being immediately undone by auto-archive for old accounts.
-        if (!temperColumnExists($db, 'users', 'force_password_set_at')) {
-            $db->query('ALTER TABLE users ADD COLUMN force_password_set_at DATETIME NULL AFTER must_change_password');
-            // Legacy: active force-password users inherit created_at as grace start
-            $db->query(
-                'UPDATE users SET force_password_set_at = created_at
-                 WHERE must_change_password = 1 AND force_password_set_at IS NULL AND created_at IS NOT NULL'
-            );
-        }
-        // Keep is_active and archived_at aligned for legacy rows (one-time style; safe if already aligned)
-        if (temperColumnExists($db, 'users', 'archived_at')) {
-            $db->query('UPDATE users SET archived_at = COALESCE(archived_at, updated_at, created_at, NOW()) WHERE is_active = 0 AND archived_at IS NULL');
-            $db->query('UPDATE users SET archived_at = NULL WHERE is_active = 1 AND archived_at IS NOT NULL');
-            $db->query('CREATE INDEX IF NOT EXISTS idx_users_archived_at ON users (archived_at)');
-        }
-    }
-
-    // Multi-role junction
-    if (!temperTableExists($db, 'user_roles')) {
-        $db->query(
-            'CREATE TABLE IF NOT EXISTS user_roles (
-                user_id INT NOT NULL,
-                role_id INT NOT NULL,
-                is_primary TINYINT(1) NOT NULL DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, role_id),
-                KEY idx_user_roles_role_id (role_id),
-                CONSTRAINT fk_user_roles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                CONSTRAINT fk_user_roles_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE RESTRICT
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
-    }
-
-    // Backfill user_roles from users.role_id
-    if (temperTableExists($db, 'user_roles') && temperColumnExists($db, 'users', 'role_id')) {
-        $db->query(
-            'INSERT IGNORE INTO user_roles (user_id, role_id, is_primary)
-             SELECT id, role_id, 1 FROM users WHERE role_id IS NOT NULL AND role_id > 0'
-        );
-    }
-
-    // Mark known system roles
-    $names = array_map(static fn($r) => $r['name'], temperDefaultRoles());
-    if ($names !== [] && temperColumnExists($db, 'roles', 'is_system')) {
-        $in = implode(',', array_map(static fn($n) => "'" . $db->real_escape_string($n) . "'", $names));
-        $db->query("UPDATE roles SET is_system = 1 WHERE name IN ({$in})");
+    $issues = checkUsersRolesSchema($db);
+    if ($issues !== []) {
+        temperSchemaOutOfDate('users/roles', $issues);
     }
 
     $done = true;
@@ -693,8 +668,10 @@ function requirePagePermission(mysqli $db, ?string $pageKey = null): ?array {
 }
 
 /**
- * Ensure predefined roles exist. Does NOT overwrite permissions of existing roles
- * (so admin role edits are preserved). Only inserts missing system roles.
+ * Seed predefined system roles (setup_db.php only).
+ * Does NOT overwrite permissions of existing roles (admin edits are preserved).
+ * Only inserts missing system roles and marks known names as is_system.
+ * Do not call from page load — runtime must not seed data.
  *
  * @return array{inserted:int,updated:int}
  */

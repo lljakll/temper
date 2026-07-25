@@ -40,15 +40,18 @@ if ($db->query($createSql) === TRUE) {
     exit(1);
 }
 
-// Fresh install: seed complete version history (oldest → newest)
+// Fresh install: seed frozen baseline history only (through v0.804).
+// Releases 0.805+ are applied solely via updates/*.sql after setup — not here.
 if (!seedAppVersionHistory($db)) {
     echo "Error seeding app_version history\n";
     exit(1);
 }
 
 $latest = getAppVersionInfo($db);
-echo "app_version history seeded (" . count(TEMPER_VERSION_HISTORY) . " rows); ";
+echo "app_version baseline seeded (" . count(TEMPER_VERSION_HISTORY) . " rows through v"
+    . TEMPER_SETUP_BASELINE_APP_VERSION . "); ";
 echo "current v{$latest['version']} (schema {$latest['schema_version']})\n";
+echo "Note: post-baseline releases (0.805+) require updates/*.sql patches — see VERSION.md\n";
 
 $db->close();
 ?>

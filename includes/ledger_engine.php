@@ -35,13 +35,13 @@ function ledgerRequireTables(mysqli $db): void {
     }
 
     if ($missing !== []) {
-        throw new RuntimeException(
-            'Ledger tables are not initialized (missing: ' . implode(', ', $missing) . '). '
-            . 'Run: php setup_db.php or php setup_db.php --check'
+        temperSchemaOutOfDate(
+            'ledger',
+            ['missing tables: ' . implode(', ', $missing)]
         );
     }
 
-    // Reference # (YY####) lives in reference_number; migrate off sequence_number if present
+    // Reference # (YY####) lives in reference_number — check only, no live migration
     ledgerEnsureReferenceNumberSchema($db);
     // Optional link from transaction header to a budget period
     ledgerEnsureBudgetIdSchema($db);
@@ -50,8 +50,25 @@ function ledgerRequireTables(mysqli $db): void {
 }
 
 /**
- * Ensure transaction_details.budget_id exists (nullable FK to budgets when present).
- * Safe to call repeatedly.
+ * Read-only check: transaction_details.budget_id exists.
+ * Does not ALTER or add FKs. Schema is owned by setup_db / updates/*.sql.
+ *
+ * @return list<string>
+ */
+function ledgerCheckBudgetIdSchema(mysqli $db): array {
+    $issues = [];
+    $col = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'budget_id'");
+    if (!$col || $col->num_rows === 0) {
+        $issues[] = 'column transaction_details.budget_id is missing';
+    }
+    if ($col) {
+        $col->close();
+    }
+    return $issues;
+}
+
+/**
+ * Ensure transaction_details.budget_id is present (read-only). Logs and throws if outdated.
  */
 function ledgerEnsureBudgetIdSchema(mysqli $db): void {
     static $done = false;
@@ -60,51 +77,42 @@ function ledgerEnsureBudgetIdSchema(mysqli $db): void {
     }
     $done = true;
 
-    $col = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'budget_id'");
-    if ($col && $col->num_rows === 0) {
-        if (!$db->query(
-            'ALTER TABLE transaction_details
-             ADD COLUMN budget_id INT NULL AFTER reference_number'
-        )) {
-            error_log('ledgerEnsureBudgetIdSchema: add column failed: ' . $db->error);
-        }
-        @$db->query('CREATE INDEX idx_transaction_details_budget_id ON transaction_details(budget_id)');
-    }
-    if ($col) {
-        $col->close();
-    }
-
-    $budgets = $db->query("SHOW TABLES LIKE 'budgets'");
-    if ($budgets && $budgets->num_rows > 0) {
-        $fk = $db->query(
-            "SELECT CONSTRAINT_NAME
-             FROM information_schema.KEY_COLUMN_USAGE
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = 'transaction_details'
-               AND COLUMN_NAME = 'budget_id'
-               AND REFERENCED_TABLE_NAME = 'budgets'
-             LIMIT 1"
-        );
-        if ($fk && $fk->num_rows === 0) {
-            @$db->query(
-                'ALTER TABLE transaction_details
-                 ADD CONSTRAINT fk_transaction_details_budget
-                 FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE SET NULL'
-            );
-        }
-        if ($fk) {
-            $fk->close();
-        }
-    }
-    if ($budgets) {
-        $budgets->close();
+    $issues = ledgerCheckBudgetIdSchema($db);
+    if ($issues !== []) {
+        temperSchemaOutOfDate('ledger.budget_id', $issues);
     }
 }
 
 /**
- * Ensure transaction Reference # (YY####) is stored in reference_number.
- * Migrates legacy sequence_number column into reference_number, then drops it.
- * Index is non-unique so confirmed reuse is allowed.
+ * Read-only check: Reference # is stored in reference_number (no legacy sequence_number).
+ *
+ * @return list<string>
+ */
+function ledgerCheckReferenceNumberSchema(mysqli $db): array {
+    $issues = [];
+
+    $refCol = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'reference_number'");
+    if (!$refCol || $refCol->num_rows === 0) {
+        $issues[] = 'column transaction_details.reference_number is missing';
+    }
+    if ($refCol) {
+        $refCol->close();
+    }
+
+    $seqCol = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'sequence_number'");
+    if ($seqCol && $seqCol->num_rows > 0) {
+        $issues[] = 'legacy column transaction_details.sequence_number still present (apply schema patches)';
+    }
+    if ($seqCol) {
+        $seqCol->close();
+    }
+
+    return $issues;
+}
+
+/**
+ * Ensure transaction Reference # schema is present (read-only). Logs and throws if outdated.
+ * Does not migrate or DROP sequence_number at runtime.
  */
 function ledgerEnsureReferenceNumberSchema(mysqli $db): void {
     static $done = false;
@@ -113,30 +121,9 @@ function ledgerEnsureReferenceNumberSchema(mysqli $db): void {
     }
     $done = true;
 
-    $seqCol = $db->query("SHOW COLUMNS FROM transaction_details LIKE 'sequence_number'");
-    if ($seqCol && $seqCol->num_rows > 0) {
-        // Prefer explicit YY#### sequence values when present
-        $db->query(
-            "UPDATE transaction_details
-             SET reference_number = sequence_number
-             WHERE sequence_number IS NOT NULL
-               AND sequence_number <> ''
-               AND sequence_number REGEXP '^[0-9]{6}$'"
-        );
-        $oldIdx = $db->query("SHOW INDEX FROM transaction_details WHERE Key_name = 'idx_transaction_details_sequence'");
-        if ($oldIdx && $oldIdx->num_rows > 0) {
-            $db->query('DROP INDEX idx_transaction_details_sequence ON transaction_details');
-        }
-        if (!$db->query('ALTER TABLE transaction_details DROP COLUMN sequence_number')) {
-            error_log('ledgerEnsureReferenceNumberSchema: drop sequence_number failed: ' . $db->error);
-        }
-    }
-
-    $idxRes = $db->query("SHOW INDEX FROM transaction_details WHERE Key_name = 'idx_transaction_details_reference'");
-    if (!$idxRes || $idxRes->num_rows === 0) {
-        if (!$db->query('CREATE INDEX idx_transaction_details_reference ON transaction_details(reference_number)')) {
-            error_log('ledgerEnsureReferenceNumberSchema: index create failed: ' . $db->error);
-        }
+    $issues = ledgerCheckReferenceNumberSchema($db);
+    if ($issues !== []) {
+        temperSchemaOutOfDate('ledger.reference_number', $issues);
     }
 }
 

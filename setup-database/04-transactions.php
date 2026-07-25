@@ -8,7 +8,7 @@ function setupSchemaTransactions(): array
 {
     return [
         'tables' => [
-            // budget_id FK is added after budgets exist (05-budgeting / live migrate).
+            // budget_id column is defined here; FK to budgets is added in 05-budgeting after budgets exist.
             'transaction_details' => "CREATE TABLE IF NOT EXISTS transaction_details (
     id INT AUTO_INCREMENT PRIMARY KEY,
     transaction_date DATE NOT NULL,
