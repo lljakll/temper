@@ -7,7 +7,7 @@ There is **no in-app update system**. Operators apply schema changes by hand.
 | **Code** | `git pull` / deploy as usual |
 | **Schema** | Run the matching `.sql` file in this folder with the `mysql` client |
 | **Changelog** | Human-readable notes live in [`../VERSION.md`](../VERSION.md) |
-| **Version history (DB)** | Append-only rows in `app_version` (app version + schema version + timestamp) |
+| **Version history (DB)** | Append-only rows in `app_version` (app version + **schema version** + timestamp) |
 
 ---
 
@@ -48,7 +48,13 @@ YYYYMMDD_NN_short_description.sql
 
 **Example:** `20260725_01_app_version_history.sql`
 
-The filename **is** the schema patch id. Reference it exactly in `VERSION.md` and in the patch’s own `INSERT INTO app_version` row.
+The **schema version** is the filename **stem** (no `.sql`):
+
+```text
+20260725_01_app_version_history
+```
+
+Store that stem in `app_version.schema_version` and in patch headers as **Schema ver.**
 
 ---
 
@@ -61,7 +67,7 @@ Order of content:
 1. Metadata comment block (required)
 2. Schema DDL (`ALTER` / `CREATE` / `DROP` / indexes / FKs)
 3. Data fixes (`UPDATE` / `INSERT` / cleanup) when needed
-4. **Always** append an `app_version` history row at the end so the DB records that the patch was applied
+4. **Always** append an `app_version` history row at the end so the DB records that the patch was applied (`schema_version` = this file’s stem)
 
 Do **not** rely on the application to detect or apply patches.
 
@@ -69,9 +75,13 @@ Do **not** rely on the application to detect or apply patches.
 
 ## Versioning conventions
 
-- **App version** (e.g. `0.802`) — product / release version in `config.php` (`APP_VERSION`), `TEMPER_DEFAULT_APP_VERSION`, `VERSION.md`, and `app_version.version`.
-- **Schema version** (integer) — bumps when a patch changes structure. Stored in `app_version.schema_version` and `TEMPER_EXPECTED_SCHEMA_VERSION` in `includes/app_version.php`.
-- Aim for **one schema patch per app version**. If multiple schema edits land in one release, either merge them into a single patch before release, or bump app versions accordingly.
+- **App version** (e.g. `0.803`) — product / release version in `config.php` (`APP_VERSION`), `TEMPER_DEFAULT_APP_VERSION`, `VERSION.md`, and `app_version.version`.
+- **Schema version** — **patch filename stem** (no `.sql`), stored in `app_version.schema_version` and `TEMPER_EXPECTED_SCHEMA_VERSION`.
+  - Example: `20260725_02_schema_version_as_filename`
+  - Pre-patch baseline (schema from `setup_db.php` only): `setup_baseline`
+- **Every** app version history row **must** include a `schema_version`.
+- If a new app version has **no** schema changes, **carry forward** the previous schema version stem (same string); set `patch_file` to `NULL` for that row.
+- Aim for **one schema patch per app version** when DDL is needed.
 
 ---
 

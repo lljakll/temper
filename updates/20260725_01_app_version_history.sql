@@ -2,7 +2,8 @@
 -- TEMPER SCHEMA PATCH
 -- =============================================================================
 -- Filename     : 20260725_01_app_version_history.sql
--- Schema ver.  : 2
+-- Schema ver.  : 20260725_01_app_version_history
+--                (historical builds stored integer 2; v0.803 renorms to this stem)
 -- App version  : 0.802
 -- Min app ver. : 0.802
 -- Author date  : 2026-07-25
@@ -14,6 +15,8 @@
 -- applied_at). Formalizes the fully manual schema-update process under
 -- updates/. Fresh installs already get this shape from setup_db.php; this
 -- patch is for installs that still have the v0.801 single-row table.
+-- Canonical schema id for this patch is the filename stem
+-- 20260725_01_app_version_history (see 20260725_02 for INT→VARCHAR migration).
 --
 -- DATA CONFLICTS / PRE-CHECKS
 -- ---------------------------

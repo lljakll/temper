@@ -2,7 +2,7 @@
 -- TEMPER SCHEMA PATCH
 -- =============================================================================
 -- Filename     : YYYYMMDD_NN_short_description.sql
--- Schema ver.  : N                    (integer; must match app_version insert)
+-- Schema ver.  : YYYYMMDD_NN_short_description   (filename stem; no .sql)
 -- App version  : X.YYY                (release that requires this patch)
 -- Min app ver. : X.YYY                (do not apply on older codebases)
 -- Author date  : YYYY-MM-DD
@@ -49,10 +49,14 @@
 -- ---------------------------------------------------------------------------
 -- Record application in version history (required)
 -- ---------------------------------------------------------------------------
+-- schema_version = this patch's filename stem (no .sql).
+-- For an app release with NO schema change, do not add a patch file; instead
+-- INSERT a history row with the previous schema_version carried forward and
+-- patch_file = NULL (usually done in setup seed / tooling, not here).
 INSERT INTO app_version (version, schema_version, patch_file, notes)
 VALUES (
     'X.YYY',
-    N,
+    'YYYYMMDD_NN_short_description',
     'YYYYMMDD_NN_short_description.sql',
     'Short note matching VERSION.md summary'
 );

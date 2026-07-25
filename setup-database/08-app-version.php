@@ -11,7 +11,7 @@ function setupSchemaAppVersion(): array
             'app_version' => "CREATE TABLE IF NOT EXISTS app_version (
     id INT AUTO_INCREMENT PRIMARY KEY,
     version VARCHAR(32) NOT NULL,
-    schema_version INT NOT NULL DEFAULT 1,
+    schema_version VARCHAR(128) NOT NULL,
     patch_file VARCHAR(128) NULL DEFAULT NULL,
     notes VARCHAR(512) NULL DEFAULT NULL,
     applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
