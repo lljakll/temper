@@ -115,6 +115,7 @@ if ($cli->check) {
 
     define('SETUP_DB_COLLECT_SCHEMA_ONLY', true);
     require_once 'setup-database/schema_validator.php';
+    require_once __DIR__ . '/includes/app_version.php';
 
     foreach ($setupFiles as $file) {
         if (file_exists($file)) {
@@ -128,9 +129,24 @@ if ($cli->check) {
     $db = getDbConnection();
     $validator = new DbSchemaValidator($db, $cli->verbose);
     $validator->validateAll($tables);
-    $exitCode = $validator->printReport($cli->verbose);
+    $structureExit = $validator->printReport($cli->verbose);
+
+    // Baseline awareness: compare highest app_version to frozen setup ceiling (0.804).
+    // Read-only — never runs destructive setup or applies patches.
+    $baselineOk = setupDbPrintBaselineVersionReport($db);
+
     $db->close();
-    exit($exitCode);
+
+    if ($structureExit !== 0) {
+        exit($structureExit);
+    }
+    if (!$baselineOk) {
+        echo "=== Overall ===\n";
+        echo "Structure validation passed, but setup baseline version check FAILED.\n";
+        echo "Resolve the baseline warning before relying on this database for upgrades.\n";
+        exit(1);
+    }
+    exit(0);
 }
 
 if ($cli->dryRun) {

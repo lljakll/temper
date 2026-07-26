@@ -29,13 +29,19 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.805';
+const TEMPER_DEFAULT_APP_VERSION = '0.807';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
  * Frozen long-term baseline — do not raise this when shipping 0.805+.
  */
 const TEMPER_SETUP_BASELINE_APP_VERSION = '0.804';
+
+/**
+ * Schema version (patch stem) of the frozen setup_db.php baseline (0.804).
+ * Matches the last TEMPER_VERSION_HISTORY entry's schema_version.
+ */
+const TEMPER_SETUP_BASELINE_SCHEMA_VERSION = '20260725_03_formalize_audit_log';
 
 /**
  * Schema id for the initial setup_db.php shape (no updates/*.sql patch yet).
@@ -46,7 +52,7 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
 /**
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
- * v0.805 is process-only → still the 0.804 formalize_audit_log stem.
+ * v0.805–0.807 are process-only → still the 0.804 formalize_audit_log stem.
  */
 const TEMPER_EXPECTED_SCHEMA_VERSION = '20260725_03_formalize_audit_log';
 
@@ -168,6 +174,237 @@ function ensureAppVersionTable(mysqli $db): void
     }
 
     $done = true;
+}
+
+/**
+ * Compare live app_version history against the frozen setup_db.php baseline.
+ * Read-only — never mutates the database.
+ *
+ * Status values:
+ * - match: highest DB app version equals baseline (fresh setup, no post-baseline patches)
+ * - ahead: highest DB app version is above baseline (expected after updates/*.sql)
+ * - behind: highest DB app version is below baseline
+ * - missing: app_version table or rows unavailable
+ * - incomplete: baseline seed rows from TEMPER_VERSION_HISTORY are not all present
+ *
+ * @return array{
+ *   ok: bool,
+ *   status: 'match'|'ahead'|'behind'|'missing'|'incomplete',
+ *   db_version: ?string,
+ *   db_schema: ?string,
+ *   baseline_version: string,
+ *   baseline_schema: string,
+ *   missing_seed_versions: list<string>,
+ *   requires_full_setup: bool,
+ *   messages: list<string>
+ * }
+ */
+function assessSetupBaselineVsDatabase(?mysqli $db): array
+{
+    $baselineVersion = TEMPER_SETUP_BASELINE_APP_VERSION;
+    $baselineSchema = TEMPER_SETUP_BASELINE_SCHEMA_VERSION;
+
+    $result = [
+        'ok' => false,
+        'status' => 'missing',
+        'db_version' => null,
+        'db_schema' => null,
+        'baseline_version' => $baselineVersion,
+        'baseline_schema' => $baselineSchema,
+        'missing_seed_versions' => [],
+        'requires_full_setup' => true,
+        'messages' => [],
+    ];
+
+    if (!$db instanceof mysqli) {
+        $result['messages'][] = 'No database connection; cannot read app_version history.';
+        return $result;
+    }
+
+    $tableIssues = checkAppVersionTable($db);
+    if ($tableIssues !== []) {
+        $result['messages'][] = 'app_version table is missing or incomplete: ' . implode('; ', $tableIssues);
+        return $result;
+    }
+
+    $res = $db->query(
+        'SELECT version, schema_version, patch_file FROM app_version ORDER BY id ASC'
+    );
+    if (!$res) {
+        $result['messages'][] = 'Failed to query app_version: ' . $db->error;
+        return $result;
+    }
+
+    $rows = [];
+    $versionsPresent = [];
+    while ($row = $res->fetch_assoc()) {
+        $rows[] = $row;
+        $v = trim((string)($row['version'] ?? ''));
+        if ($v !== '') {
+            $versionsPresent[$v] = true;
+        }
+    }
+    $res->close();
+
+    if ($rows === []) {
+        $result['messages'][] = 'app_version table exists but has no history rows.';
+        return $result;
+    }
+
+    // Highest app version by semantic compare (not id order alone).
+    $highestVersion = null;
+    $highestSchema = null;
+    foreach ($rows as $row) {
+        $v = trim((string)($row['version'] ?? ''));
+        if ($v === '') {
+            continue;
+        }
+        if ($highestVersion === null || version_compare($v, $highestVersion) > 0) {
+            $highestVersion = $v;
+            $highestSchema = temperNormalizeStoredSchemaVersion(
+                (string)($row['schema_version'] ?? ''),
+                $row['patch_file'] ?? null
+            );
+        }
+    }
+
+    $result['db_version'] = $highestVersion;
+    $result['db_schema'] = $highestSchema;
+
+    $missingSeed = [];
+    foreach (TEMPER_VERSION_HISTORY as $entry) {
+        $seedV = (string)($entry['version'] ?? '');
+        if ($seedV !== '' && !isset($versionsPresent[$seedV])) {
+            $missingSeed[] = $seedV;
+        }
+    }
+    $result['missing_seed_versions'] = $missingSeed;
+
+    if ($highestVersion === null) {
+        $result['messages'][] = 'Could not determine a highest app version from app_version rows.';
+        return $result;
+    }
+
+    if ($missingSeed !== []) {
+        $result['status'] = 'incomplete';
+        $result['ok'] = false;
+        $result['requires_full_setup'] = true;
+        $result['messages'][] = 'Version history is incomplete; missing seed version(s): '
+            . implode(', ', $missingSeed) . '.';
+        $result['messages'][] = 'A full (destructive) setup_db.php run is required to establish the '
+            . $baselineVersion . ' baseline before applying any newer updates/*.sql patches.';
+        $result['messages'][] = 'Back up application data first — full setup drops and recreates tables.';
+        return $result;
+    }
+
+    $cmp = version_compare($highestVersion, $baselineVersion);
+
+    if ($cmp < 0) {
+        $result['status'] = 'behind';
+        $result['ok'] = false;
+        $result['requires_full_setup'] = true;
+        $result['messages'][] = "Database app version ({$highestVersion}) is behind the setup_db.php baseline ({$baselineVersion}).";
+        $result['messages'][] = 'A full (destructive) setup_db.php run is required to reach the '
+            . $baselineVersion . ' / ' . $baselineSchema
+            . ' baseline before applying any newer updates/*.sql patches.';
+        $result['messages'][] = 'Back up application data first — full setup drops and recreates tables.';
+        return $result;
+    }
+
+    if ($cmp === 0) {
+        $result['status'] = 'match';
+        $result['ok'] = true;
+        $result['requires_full_setup'] = false;
+        $schemaMatch = ($highestSchema === $baselineSchema);
+        if ($schemaMatch) {
+            $result['messages'][] = 'Database is at the setup_db.php baseline (app and schema match).';
+        } else {
+            // App version at baseline but schema stem differs — still usable but note it.
+            $result['messages'][] = 'Database app version matches the setup baseline, but schema version differs '
+                . "(db: {$highestSchema}; baseline: {$baselineSchema}).";
+            $result['messages'][] = 'If structure validation fails, run full setup after backup, or apply missing patches carefully.';
+        }
+        return $result;
+    }
+
+    // Ahead of baseline — normal after post-baseline patches
+    $result['status'] = 'ahead';
+    $result['ok'] = true;
+    $result['requires_full_setup'] = false;
+    $result['messages'][] = "Database is ahead of the setup_db.php baseline ({$highestVersion} > {$baselineVersion}); post-baseline patches appear applied.";
+    return $result;
+}
+
+/**
+ * Print the setup baseline vs database report for setup_db.php --check.
+ * Returns true when baseline status is acceptable (match or ahead).
+ */
+function setupDbPrintBaselineVersionReport(?mysqli $db): bool
+{
+    $assessment = assessSetupBaselineVsDatabase($db);
+
+    echo "\n=== Setup Baseline Version Check ===\n\n";
+
+    $dbVer = $assessment['db_version'] ?? '(none / unknown)';
+    $dbSchema = $assessment['db_schema'] ?? '(none / unknown)';
+    $baseVer = $assessment['baseline_version'];
+    $baseSchema = $assessment['baseline_schema'];
+
+    echo "  Database (highest app_version row):\n";
+    echo "    App version    : {$dbVer}\n";
+    echo "    Schema version : {$dbSchema}\n";
+    echo "\n";
+    echo "  setup_db.php internal baseline (frozen seed ceiling):\n";
+    echo "    App version    : {$baseVer}\n";
+    echo "    Schema version : {$baseSchema}\n";
+    echo "\n";
+
+    $statusLabel = match ($assessment['status']) {
+        'match' => 'MATCH — database is at the setup baseline',
+        'ahead' => 'AHEAD — database is above the setup baseline (OK)',
+        'behind' => 'BEHIND — database is below the setup baseline',
+        'incomplete' => 'INCOMPLETE — setup baseline history is missing rows',
+        'missing' => 'MISSING — app_version history unavailable',
+        default => strtoupper((string)$assessment['status']),
+    };
+    echo "  Comparison       : {$statusLabel}\n";
+
+    if ($assessment['status'] === 'match' || $assessment['status'] === 'ahead') {
+        $appEqual = ($assessment['db_version'] === $baseVer);
+        $schemaEqual = ($assessment['db_schema'] === $baseSchema);
+        if ($appEqual && $schemaEqual) {
+            echo "  Match detail     : app version and schema version both match baseline\n";
+        } elseif ($assessment['status'] === 'ahead') {
+            echo "  Match detail     : not equal (expected when post-baseline patches are applied)\n";
+        } else {
+            echo "  Match detail     : app version matches baseline"
+                . ($schemaEqual ? '; schema matches' : '; schema does NOT match') . "\n";
+        }
+    } else {
+        echo "  Match detail     : do NOT match — remediation required\n";
+    }
+
+    echo "\n";
+    foreach ($assessment['messages'] as $msg) {
+        $prefix = $assessment['requires_full_setup'] ? '  WARNING: ' : '  ';
+        echo $prefix . $msg . "\n";
+    }
+
+    if ($assessment['requires_full_setup']) {
+        echo "\n";
+        echo "  ---------------------------------------------------------------------------\n";
+        echo "  DO NOT apply newer updates/*.sql patches until the baseline is established.\n";
+        echo "  Recommended steps:\n";
+        echo "    1. Back up the database and any needed application data\n";
+        echo "    2. Run: php setup_db.php   (destructive — requires confirmations)\n";
+        echo "    3. Re-run: php setup_db.php --check\n";
+        echo "    4. Then apply post-baseline patches from VERSION.md in order\n";
+        echo "  ---------------------------------------------------------------------------\n";
+    }
+
+    echo "\n";
+
+    return $assessment['ok'];
 }
 
 /**
@@ -391,6 +628,140 @@ function getAppVersionHistory(?mysqli $db = null): array
     $res->close();
 
     return $rows;
+}
+
+/**
+ * Normalize a dotted app version string (e.g. 0.807). Empty if invalid.
+ */
+function temperNormalizeAppVersionString(string $version): string
+{
+    $version = trim($version);
+    $version = ltrim($version, 'vV');
+    if ($version === '' || !preg_match('/^\d+(?:\.\d+)+$/', $version)) {
+        return '';
+    }
+    return $version;
+}
+
+/**
+ * Keep the higher of two app version strings (version_compare). Empty loses.
+ */
+function temperMaxAppVersion(string $a, string $b): string
+{
+    $a = temperNormalizeAppVersionString($a);
+    $b = temperNormalizeAppVersionString($b);
+    if ($a === '') {
+        return $b;
+    }
+    if ($b === '') {
+        return $a;
+    }
+    return version_compare($a, $b) >= 0 ? $a : $b;
+}
+
+/**
+ * Highest app version declared in VERSION.md (## vX.Y headings).
+ */
+function temperDiscoverLatestVersionFromVersionMd(?string $versionMdPath = null): string
+{
+    $path = $versionMdPath ?? (dirname(__DIR__) . '/VERSION.md');
+    if (!is_readable($path)) {
+        return '';
+    }
+    $content = @file_get_contents($path);
+    if (!is_string($content) || $content === '') {
+        return '';
+    }
+    $latest = '';
+    if (preg_match_all('/^##\s+v?(\d+(?:\.\d+)+)\b/mi', $content, $matches)) {
+        foreach ($matches[1] as $ver) {
+            $latest = temperMaxAppVersion($latest, (string)$ver);
+        }
+    }
+    return $latest;
+}
+
+/**
+ * Highest app version declared in updates/*.sql patch headers ("App version : X.Y").
+ * Does not apply patches — filesystem scan only.
+ */
+function temperDiscoverLatestVersionFromUpdatesDir(?string $updatesDir = null): string
+{
+    $dir = $updatesDir ?? (dirname(__DIR__) . '/updates');
+    if (!is_dir($dir)) {
+        return '';
+    }
+    $latest = '';
+    $files = glob(rtrim($dir, '/\\') . '/*.sql') ?: [];
+    foreach ($files as $file) {
+        $base = basename($file);
+        if ($base === '' || $base[0] === '_') {
+            continue; // skip templates like _header_template.sql
+        }
+        $content = @file_get_contents($file);
+        if (!is_string($content) || $content === '') {
+            continue;
+        }
+        // Prefer explicit header field
+        if (preg_match('/^\s*--\s*App version\s*:\s*v?(\d+(?:\.\d+)+)\b/mi', $content, $m)) {
+            $latest = temperMaxAppVersion($latest, (string)$m[1]);
+            continue;
+        }
+        // Fallback: INSERT history row version literal
+        if (preg_match("/INSERT\\s+INTO\\s+app_version[\\s\\S]*?SELECT\\s+'(\\d+(?:\\.\\d+)+)'/i", $content, $m)) {
+            $latest = temperMaxAppVersion($latest, (string)$m[1]);
+        }
+    }
+    return $latest;
+}
+
+/**
+ * Latest available application version known to this deployment.
+ * Max of: APP_VERSION / TEMPER_DEFAULT_APP_VERSION, VERSION.md, updates/*.sql headers.
+ * Cached per request. Never applies patches.
+ */
+function getLatestAvailableAppVersion(): string
+{
+    static $cached = null;
+    if (is_string($cached)) {
+        return $cached;
+    }
+
+    $latest = '';
+    if (defined('APP_VERSION') && is_string(APP_VERSION)) {
+        $latest = temperMaxAppVersion($latest, APP_VERSION);
+    }
+    $latest = temperMaxAppVersion($latest, TEMPER_DEFAULT_APP_VERSION);
+    $latest = temperMaxAppVersion($latest, temperDiscoverLatestVersionFromVersionMd());
+    $latest = temperMaxAppVersion($latest, temperDiscoverLatestVersionFromUpdatesDir());
+
+    if ($latest === '') {
+        $latest = TEMPER_DEFAULT_APP_VERSION;
+    }
+
+    $cached = $latest;
+    return $cached;
+}
+
+/**
+ * Whether the database's highest app_version is behind the latest known release.
+ *
+ * @return array{behind: bool, db_version: string, latest_version: string}
+ */
+function getDatabaseVersionLagStatus(?mysqli $db = null): array
+{
+    $latest = getLatestAvailableAppVersion();
+    $dbVersion = getAppVersion($db);
+    $dbVersion = temperNormalizeAppVersionString($dbVersion) ?: $dbVersion;
+    $behind = $dbVersion !== ''
+        && $latest !== ''
+        && version_compare($dbVersion, $latest, '<');
+
+    return [
+        'behind' => $behind,
+        'db_version' => $dbVersion,
+        'latest_version' => $latest,
+    ];
 }
 
 /**

@@ -189,6 +189,17 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .sidebar-panel .sidebar-version-link:focus {
             color: var(--bs-primary);
         }
+        /* Admin-only: DB app version behind latest known release (VERSION.md / updates/) */
+        .sidebar-panel .sidebar-version-link.sidebar-version-outdated,
+        .sidebar-panel .sidebar-version-link.sidebar-version-outdated .sidebar-label {
+            color: var(--bs-danger) !important;
+            font-weight: 600;
+        }
+        .sidebar-panel .sidebar-version-link.sidebar-version-outdated:hover,
+        .sidebar-panel .sidebar-version-link.sidebar-version-outdated:focus {
+            color: var(--bs-danger) !important;
+            filter: brightness(0.9);
+        }
         .sidebar-panel .sidebar-divider {
             border-color: var(--bs-border-color);
             opacity: 1;

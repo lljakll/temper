@@ -59,9 +59,30 @@ if ($navDb instanceof mysqli) {
     archiveExpiredForcePasswordUsers($navDb);
 }
 
-// Application version for sidebar (all roles); DB-backed with constant fallback
+// Application version for sidebar (all roles); DB-backed with constant fallback.
+// Administrators see a red version + tooltip when the DB lags the latest known release.
 require_once __DIR__ . '/app_version.php';
 $navAppVersion = ($navDb instanceof mysqli) ? getAppVersion($navDb) : getAppVersion(null);
+$navIsAdministrator = $user && $navDb instanceof mysqli
+    && userIsAdministrator($navDb, (int)$user['id']);
+$navVersionLag = getDatabaseVersionLagStatus($navDb instanceof mysqli ? $navDb : null);
+$navVersionOutdated = $navIsAdministrator && !empty($navVersionLag['behind']);
+$navVersionOutdatedTitle = $navVersionOutdated
+    ? sprintf(
+        'Database is at v%s — latest available is v%s. See VERSION.md or updates/ folder.',
+        $navVersionLag['db_version'],
+        $navVersionLag['latest_version']
+    )
+    : 'View changelog (VERSION.md)';
+$navVersionLinkClass = 'sidebar-version-link text-decoration-none'
+    . ($navVersionOutdated ? ' sidebar-version-outdated' : '');
+$navVersionAriaLabel = $navVersionOutdated
+    ? sprintf(
+        'Application version %s is behind latest %s; open changelog',
+        $navAppVersion,
+        $navVersionLag['latest_version']
+    )
+    : 'Application version ' . $navAppVersion . ', open changelog';
 
 $navDb->close();
 ?>
@@ -308,9 +329,9 @@ function temper_render_nav_links(
 
                     <div class="small sidebar-version mb-2">
                         <a href="VERSION.md" target="_blank" rel="noopener noreferrer"
-                           class="sidebar-version-link text-decoration-none"
-                           title="View changelog (VERSION.md)"
-                           aria-label="Application version <?= htmlspecialchars($navAppVersion) ?>, open changelog">
+                           class="<?= htmlspecialchars($navVersionLinkClass) ?>"
+                           title="<?= htmlspecialchars($navVersionOutdatedTitle) ?>"
+                           aria-label="<?= htmlspecialchars($navVersionAriaLabel) ?>">
                             <i class="bi bi-tag me-1" aria-hidden="true"></i>
                             <span class="sidebar-label">v<?= htmlspecialchars($navAppVersion) ?></span>
                         </a>

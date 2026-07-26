@@ -54,15 +54,20 @@ Usage:
 
 Options:
   -h, --help       Show this help message and exit
-      --check      Validate database schema without making changes
+      --check      Validate schema + setup baseline version (read-only; no changes)
   -v, --verbose    Detailed output (use with --check)
       --dry-run    Show what full setup would do without modifying the database
 
 Modes:
   (no options)     Run full database setup (destructive — drops and recreates all tables)
-  --check          Concise validation summary (tables, columns, types, permissions, FKs)
+  --check          Structure validation plus setup baseline (v0.804) vs app_version report
   --check -v       Detailed per-table/column/permission validation output
   --dry-run        Preview drop/create steps for full setup without executing them
+
+Notes:
+  --check never runs destructive setup or applies updates/*.sql patches.
+  If the database is behind the frozen setup baseline, --check warns that a full
+  setup_db.php run (after backup) is required before applying newer patches.
 
 Examples:
   php setup_db.php

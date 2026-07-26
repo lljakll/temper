@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.807](#v0807)
+- [v0.806](#v0806)
 - [v0.805](#v0805)
 - [v0.804](#v0804)
 - [v0.803](#v0803)
@@ -87,6 +89,58 @@ Do **not** expect setup to plant 0.805+ rows. After setup, apply post-baseline p
 
 ---
 
+## v0.807
+
+**Admin sidebar indicator when DB lags latest release** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_02_admin_version_outdated_indicator.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log` *(carried forward — no DDL)*  
+> **Min app version:** 0.807
+
+- Sidebar still shows the current **database** app version for all users (link to `VERSION.md` unchanged).
+- **Administrators only:** if the DB version is behind the latest known release (`VERSION.md`, `updates/*.sql` headers, and `APP_VERSION`), the version number is shown in **red** with a tooltip such as:  
+  `Database is at v0.803 — latest available is v0.805. See VERSION.md or updates/ folder.`
+- Non-admin users always see the normal (non-red) version with the standard changelog tooltip.
+- No automatic patch detection/application UI beyond this visual cue.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.806 | `updates/20260726_02_admin_version_outdated_indicator.sql` only |
+| Fresh setup (0.804) | Post-baseline patches through 0.806, then `20260726_02_…` |
+
+---
+
+## v0.806
+
+**setup_db.php --check baseline awareness** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_01_setup_check_baseline_awareness.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log` *(carried forward — no DDL)*  
+> **Min app version:** 0.806
+
+- `php setup_db.php --check` now reports:
+  - Database highest app version + schema (from `app_version`)
+  - Frozen setup baseline app **0.804** / schema **`20260725_03_formalize_audit_log`**
+  - Whether they match, the DB is ahead, behind, or history is incomplete
+- If the database is **behind** the baseline or history is **missing/incomplete**, prints a clear **WARNING** that a full (destructive) `setup_db.php` run is required before applying newer patches, and recommends backing up data first.
+- Structure validation is unchanged; `--check` remains read-only (no auto setup, no patch apply).
+- This release has **no table DDL**; the patch only records the 0.806 history row.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.805 | `updates/20260726_01_setup_check_baseline_awareness.sql` only |
+| Fresh setup (0.804) | Post-baseline patches through 0.805, then `20260726_01_…` |
+
+---
+
 ## v0.805
 
 **Frozen setup baseline + patch-only model** — 2026-07-25
@@ -99,7 +153,7 @@ Do **not** expect setup to plant 0.805+ rows. After setup, apply post-baseline p
 
 - Formalizes the long-term model: **`setup_db.php` stays frozen at v0.804**; **0.805+ advances only via `updates/*.sql`**.
 - `TEMPER_VERSION_HISTORY` / setup seed intentionally stop at 0.804 (`TEMPER_SETUP_BASELINE_APP_VERSION`).
-- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.805**.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.805** (superseded by later releases).
 - This release has **no table DDL**; the patch only records the 0.805 history row (schema stem unchanged).
 
 **Upgrade path**
