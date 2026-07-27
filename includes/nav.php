@@ -59,30 +59,42 @@ if ($navDb instanceof mysqli) {
     archiveExpiredForcePasswordUsers($navDb);
 }
 
-// Application version for sidebar (all roles); DB-backed with constant fallback.
-// Administrators see a red version + tooltip when the DB lags the latest known release.
+// Sidebar versions: non-admins see application (code) version only.
+// Administrators see App + DB side-by-side; DB portion turns red when behind latest.
 require_once __DIR__ . '/app_version.php';
-$navAppVersion = ($navDb instanceof mysqli) ? getAppVersion($navDb) : getAppVersion(null);
+$navCodeAppVersion = defined('APP_VERSION') && is_string(APP_VERSION) && APP_VERSION !== ''
+    ? APP_VERSION
+    : TEMPER_DEFAULT_APP_VERSION;
+$navDbAppVersion = ($navDb instanceof mysqli) ? getAppVersion($navDb) : getAppVersion(null);
 $navIsAdministrator = $user && $navDb instanceof mysqli
     && userIsAdministrator($navDb, (int)$user['id']);
 $navVersionLag = getDatabaseVersionLagStatus($navDb instanceof mysqli ? $navDb : null);
-$navVersionOutdated = $navIsAdministrator && !empty($navVersionLag['behind']);
-$navVersionOutdatedTitle = $navVersionOutdated
+$navDbVersionOutdated = $navIsAdministrator && !empty($navVersionLag['behind']);
+$navVersionLinkTitle = 'View changelog (VERSION.md)';
+$navDbVersionTitle = $navDbVersionOutdated
     ? sprintf(
         'Database is at v%s — latest available is v%s. See VERSION.md or updates/ folder.',
         $navVersionLag['db_version'],
         $navVersionLag['latest_version']
     )
-    : 'View changelog (VERSION.md)';
-$navVersionLinkClass = 'sidebar-version-link text-decoration-none'
-    . ($navVersionOutdated ? ' sidebar-version-outdated' : '');
-$navVersionAriaLabel = $navVersionOutdated
-    ? sprintf(
-        'Application version %s is behind latest %s; open changelog',
-        $navAppVersion,
-        $navVersionLag['latest_version']
+    : $navVersionLinkTitle;
+$navVersionLinkClass = 'sidebar-version-link text-decoration-none';
+$navVersionAriaLabel = $navIsAdministrator
+    ? (
+        $navDbVersionOutdated
+            ? sprintf(
+                'Application version %s, database version %s is behind latest %s; open changelog',
+                $navCodeAppVersion,
+                $navVersionLag['db_version'],
+                $navVersionLag['latest_version']
+            )
+            : sprintf(
+                'Application version %s, database version %s, open changelog',
+                $navCodeAppVersion,
+                $navDbAppVersion
+            )
     )
-    : 'Application version ' . $navAppVersion . ', open changelog';
+    : 'Application version ' . $navCodeAppVersion . ', open changelog';
 
 $navDb->close();
 ?>
@@ -330,10 +342,23 @@ function temper_render_nav_links(
                     <div class="small sidebar-version mb-2">
                         <a href="VERSION.md" target="_blank" rel="noopener noreferrer"
                            class="<?= htmlspecialchars($navVersionLinkClass) ?>"
-                           title="<?= htmlspecialchars($navVersionOutdatedTitle) ?>"
+                           title="<?= htmlspecialchars($navVersionLinkTitle) ?>"
                            aria-label="<?= htmlspecialchars($navVersionAriaLabel) ?>">
                             <i class="bi bi-tag me-1" aria-hidden="true"></i>
-                            <span class="sidebar-label">v<?= htmlspecialchars($navAppVersion) ?></span>
+                            <?php if ($navIsAdministrator): ?>
+                            <span class="sidebar-label sidebar-version-dual">
+                                <span class="sidebar-version-app">App: v<?= htmlspecialchars($navCodeAppVersion) ?></span>
+                                <span class="sidebar-version-sep" aria-hidden="true"> </span>
+                                <span class="sidebar-version-db<?= $navDbVersionOutdated ? ' sidebar-version-outdated' : '' ?>"
+                                      <?php if ($navDbVersionOutdated): ?>
+                                      title="<?= htmlspecialchars($navDbVersionTitle) ?>"
+                                      <?php endif; ?>>
+                                    DB: v<?= htmlspecialchars($navDbAppVersion) ?>
+                                </span>
+                            </span>
+                            <?php else: ?>
+                            <span class="sidebar-label">v<?= htmlspecialchars($navCodeAppVersion) ?></span>
+                            <?php endif; ?>
                         </a>
                     </div>
 

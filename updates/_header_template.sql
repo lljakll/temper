@@ -1,8 +1,8 @@
 -- =============================================================================
 -- TEMPER SCHEMA PATCH
 -- =============================================================================
--- Filename     : YYYYMMDD_NN_short_description.sql
--- Schema ver.  : YYYYMMDD_NN_short_description   (filename stem; no .sql)
+-- Filename     : YYYYMMDD_<appversion_without_decimal>_short_description.sql
+-- Schema ver.  : YYYYMMDD_<appversion_without_decimal>_short_description   (filename stem; no .sql)
 -- App version  : X.YYY                (release that requires this patch)
 -- Min app ver. : X.YYY                (do not apply on older codebases)
 -- Author date  : YYYY-MM-DD
@@ -23,13 +23,20 @@
 --
 -- MYSQL COMMAND (copy-paste; adjust -u/-h/-p and database name as needed)
 -- ----------------------------------------------------------------------
---   mysql -u temper_user -p temper_db < updates/YYYYMMDD_NN_short_description.sql
+--   mysql -u temper_user -p temper_db < updates/YYYYMMDD_<appversion_without_decimal>_short_description.sql
 --
 -- Or interactive:
 --   mysql -u temper_user -p temper_db
---   SOURCE /absolute/path/to/temper/updates/YYYYMMDD_NN_short_description.sql;
+--   SOURCE /absolute/path/to/temper/updates/YYYYMMDD_<appversion_without_decimal>_short_description.sql;
 --
 -- BACKUP FIRST. There is no automatic rollback.
+-- =============================================================================
+--
+-- Filename convention (new patches, app 0.808+):
+--   YYYYMMDD_<appversion_without_decimal>_short_description.sql
+--   Example: app version 0.806 → 20260726_0806_description.sql
+-- Older patches may still use YYYYMMDD_NN_description.sql; leave them as-is.
+-- Helper: temperBuildPatchFilename() / temperAppVersionToPatchToken() in includes/app_version.php
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -58,11 +65,11 @@
 INSERT INTO app_version (version, schema_version, patch_file, notes)
 SELECT
     'X.YYY',
-    'YYYYMMDD_NN_short_description',  -- or prior stem if no DDL
-    'YYYYMMDD_NN_short_description.sql',
+    'YYYYMMDD_<appversion_without_decimal>_short_description',  -- or prior stem if no DDL
+    'YYYYMMDD_<appversion_without_decimal>_short_description.sql',
     'Short note matching VERSION.md summary'
 WHERE NOT EXISTS (
     SELECT 1 FROM app_version
     WHERE version = 'X.YYY'
-       OR patch_file = 'YYYYMMDD_NN_short_description.sql'
+       OR patch_file = 'YYYYMMDD_<appversion_without_decimal>_short_description.sql'
 );

@@ -29,7 +29,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.807';
+const TEMPER_DEFAULT_APP_VERSION = '0.808';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
@@ -52,7 +52,7 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
 /**
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
- * v0.805–0.807 are process-only → still the 0.804 formalize_audit_log stem.
+ * v0.805–0.808 are process-only → still the 0.804 formalize_audit_log stem.
  */
 const TEMPER_EXPECTED_SCHEMA_VERSION = '20260725_03_formalize_audit_log';
 
@@ -107,6 +107,49 @@ function temperSchemaVersionId(string $patchFileOrStem): string
         $base = substr($base, 0, -4);
     }
     return $base !== '' ? $base : TEMPER_SCHEMA_BASELINE;
+}
+
+/**
+ * Convert a dotted app version to the compact token used in new patch filenames.
+ * Example: "0.806" → "0806", "0.808" → "0808", "1.2.3" → "123".
+ *
+ * New patch convention (0.808+):
+ *   YYYYMMDD_<appversion_without_decimal>_short_description.sql
+ * Older patches may still use YYYYMMDD_NN_description.sql — leave them as-is.
+ */
+function temperAppVersionToPatchToken(string $version): string
+{
+    $version = temperNormalizeAppVersionString($version);
+    if ($version === '') {
+        return '';
+    }
+    return str_replace('.', '', $version);
+}
+
+/**
+ * Build a new-format patch basename (with .sql) for an app version + description.
+ * Does not write files — naming helper only.
+ *
+ * @param string $appVersion Dotted app version (e.g. 0.808)
+ * @param string $description Short lowercase underscore description (normalized)
+ * @param string|null $dateYmd Author date YYYYMMDD; defaults to today
+ */
+function temperBuildPatchFilename(string $appVersion, string $description, ?string $dateYmd = null): string
+{
+    $date = $dateYmd !== null && preg_match('/^\d{8}$/', $dateYmd)
+        ? $dateYmd
+        : date('Ymd');
+    $token = temperAppVersionToPatchToken($appVersion);
+    if ($token === '') {
+        $token = '0';
+    }
+    $desc = strtolower(trim($description));
+    $desc = preg_replace('/[^a-z0-9]+/', '_', $desc) ?? '';
+    $desc = trim($desc, '_');
+    if ($desc === '') {
+        $desc = 'patch';
+    }
+    return "{$date}_{$token}_{$desc}.sql";
 }
 
 /**

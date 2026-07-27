@@ -189,14 +189,19 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .sidebar-panel .sidebar-version-link:focus {
             color: var(--bs-primary);
         }
-        /* Admin-only: DB app version behind latest known release (VERSION.md / updates/) */
-        .sidebar-panel .sidebar-version-link.sidebar-version-outdated,
-        .sidebar-panel .sidebar-version-link.sidebar-version-outdated .sidebar-label {
+        .sidebar-panel .sidebar-version-dual {
+            white-space: nowrap;
+        }
+        .sidebar-panel .sidebar-version-db {
+            color: inherit;
+        }
+        /* Admin-only: DB version portion red when behind latest known release */
+        .sidebar-panel .sidebar-version-db.sidebar-version-outdated {
             color: var(--bs-danger) !important;
             font-weight: 600;
         }
-        .sidebar-panel .sidebar-version-link.sidebar-version-outdated:hover,
-        .sidebar-panel .sidebar-version-link.sidebar-version-outdated:focus {
+        .sidebar-panel .sidebar-version-link:hover .sidebar-version-db.sidebar-version-outdated,
+        .sidebar-panel .sidebar-version-link:focus .sidebar-version-db.sidebar-version-outdated {
             color: var(--bs-danger) !important;
             filter: brightness(0.9);
         }

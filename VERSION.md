@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.808](#v0808)
 - [v0.807](#v0807)
 - [v0.806](#v0806)
 - [v0.805](#v0805)
@@ -72,9 +73,22 @@ Operators open that file, read the header (notes, min app version, data conflict
 
 ### Patch filenames
 
+**New patches (0.808+):**
+
 ```text
-YYYYMMDD_NN_short_description.sql
+YYYYMMDD_<appversion_without_decimal>_short_description.sql
 ```
+
+| Part | Example (`0.806`) |
+|------|-------------------|
+| Date | `20260726` |
+| App version without decimal | `0806` |
+| Description | `description` |
+| Full name | `20260726_0806_description.sql` |
+
+Helpers: `temperAppVersionToPatchToken()` / `temperBuildPatchFilename()` in `includes/app_version.php`.
+
+**Legacy** patches may still use `YYYYMMDD_NN_short_description.sql` (e.g. `20260725_01_app_version_history.sql`). Leave those files as-is; only new patches use the app-version token form.
 
 Aim for **one schema patch per app version**. Details and the SQL header template live in [`updates/README.md`](updates/README.md) and [`updates/_header_template.sql`](updates/_header_template.sql).
 
@@ -86,6 +100,35 @@ After every **5–10** schema patches (or at a natural milestone), consolidate s
 
 `php setup_db.php` builds the **0.804 baseline** schema from `setup-database/*.php` and seeds `app_version` history **through 0.804 only**.  
 Do **not** expect setup to plant 0.805+ rows. After setup, apply post-baseline patches under `updates/` (see the current version section). Do not replay pre-baseline patches that are already embodied in the setup scripts.
+
+---
+
+## v0.808
+
+**Patch naming by app version + sidebar App/DB dual display** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_0808_patch_naming_and_sidebar_dual_version.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log` *(carried forward — no DDL)*  
+> **Min app version:** 0.808
+
+- **New patch filename convention:** `YYYYMMDD_<appversion_without_decimal>_description.sql`  
+  Example: app `0.806` → `20260726_0806_description.sql`. Existing older patches keep their historical names.
+- Helpers added: `temperAppVersionToPatchToken()`, `temperBuildPatchFilename()` in `includes/app_version.php`.
+- Templates/docs updated: `updates/_header_template.sql`, `updates/README.md`, this conventions section.
+- **Sidebar versions:**
+  - **Administrators:** `App: vX.Y  DB: vX.Y` side-by-side (link to `VERSION.md` unchanged).
+  - When the database app version is behind the latest known release, the **DB** portion is shown in **red** with a tooltip (current DB vs latest available).
+  - **Non-admins:** single normal (non-red) application version only — not the dual display.
+- No table DDL in this release (process / UI / convention only).
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.807 | `updates/20260726_0808_patch_naming_and_sidebar_dual_version.sql` only |
+| Fresh setup (0.804) | Post-baseline patches through 0.807, then `20260726_0808_…` |
 
 ---
 

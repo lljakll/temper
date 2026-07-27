@@ -41,23 +41,40 @@ There is **no in-app update system**. Operators apply schema changes by hand.
 
 ## Filename format
 
+**New patches (app 0.808+):**
+
 ```
-YYYYMMDD_NN_short_description.sql
+YYYYMMDD_<appversion_without_decimal>_short_description.sql
 ```
 
 | Part | Meaning |
 |------|---------|
 | `YYYYMMDD` | Date the patch was authored (UTC or local project convention) |
-| `NN` | Two-digit sequence for that day (`01`, `02`, …) |
+| `<appversion_without_decimal>` | App version with dots removed (e.g. `0.806` → `0806`, `0.808` → `0808`) |
 | `short_description` | Lowercase words separated by underscores |
 
-**Example:** `20260725_01_app_version_history.sql`
+**Example:** app version `0.806` → `20260726_0806_description.sql`
+
+PHP helpers in `includes/app_version.php`:
+
+- `temperAppVersionToPatchToken('0.806')` → `0806`
+- `temperBuildPatchFilename('0.808', 'patch_naming_and_sidebar_dual_version', '20260726')` → `20260726_0808_patch_naming_and_sidebar_dual_version.sql`
+
+**Legacy patches** (already shipped) may still use the older daily sequence form:
+
+```
+YYYYMMDD_NN_short_description.sql
+```
+
+Example: `20260725_01_app_version_history.sql`. Leave existing files as-is; only **new** patches must use the app-version token form.
 
 The **schema version** is the filename **stem** (no `.sql`):
 
 ```text
-20260725_01_app_version_history
+20260726_0808_patch_naming_and_sidebar_dual_version
 ```
+
+(or a carried-forward prior stem when the release has no DDL)
 
 Store that stem in `app_version.schema_version` and in patch headers as **Schema ver.**
 
@@ -88,6 +105,7 @@ Do **not** rely on the application to detect or apply patches.
 - **Every** app version history row **must** include a `schema_version`.
 - If a new app version has **no** schema changes, **carry forward** the previous schema version stem (same string). Post-baseline process-only releases still ship a **minimal patch** that `INSERT`s the new `app_version` row (see `20260725_04_frozen_baseline_model.sql`).
 - Aim for **one patch file per app version** after the 0.804 freeze.
+- **New** patch basenames use `YYYYMMDD_<appversion_without_decimal>_description.sql` (see above).
 
 ---
 
