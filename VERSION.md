@@ -19,6 +19,10 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.900](#v0900)
+- [v0.811](#v0811)
+- [v0.810](#v0810)
+- [v0.809](#v0809)
 - [v0.808](#v0808)
 - [v0.807](#v0807)
 - [v0.806](#v0806)
@@ -36,11 +40,11 @@ There is **no** automatic schema detection or apply UI in the application.
 
 | Layer | Role |
 |-------|------|
-| **`setup_db.php` + `setup-database/*`** | **Frozen at app v0.804.** Destructive setup always leaves the database at 0.804 with the 0.804 schema shape. |
-| **`TEMPER_VERSION_HISTORY`** | Seeds **only** through 0.804. Do **not** add 0.805+ rows here. |
-| **`updates/*.sql`** | **Only** path for 0.805 and later (DDL and/or `app_version` history rows). |
+| **`setup_db.php` + `setup-database/*`** | **Frozen at app v0.900 (beta).** Destructive setup always leaves the database at 0.900 with full history through 0.900 and schema shape through 0.811 (`transaction_details.description`). |
+| **`TEMPER_VERSION_HISTORY`** | Seeds **through 0.900** (complete alpha history + beta baseline). Do **not** add post-0.900 rows here. |
+| **`updates/*.sql`** | **Only** path for releases **after 0.900** (DDL and/or `app_version` history rows). Historical pre-0.900 patches remain for operators upgrading old databases. |
 
-After a fresh setup, operators who want the current release apply every post-baseline patch listed under that version in this file (in order).
+After a fresh setup at the current baseline, no further patches are required until the next post-0.900 release. Operators on older databases apply listed patches (or re-run full setup for a clean beta baseline).
 
 ### Schema version = patch filename stem
 
@@ -51,7 +55,8 @@ The **schema version** is the patch file’s basename **without** `.sql` when th
 | `updates/20260725_01_app_version_history.sql` | `20260725_01_app_version_history` |
 | `updates/20260725_02_schema_version_as_filename.sql` | `20260725_02_schema_version_as_filename` |
 | `updates/20260725_03_formalize_audit_log.sql` | `20260725_03_formalize_audit_log` |
-| *(schema from `setup_db.php` only)* | `setup_baseline` |
+| `updates/20260726_0811_tx_memo_to_description.sql` | `20260726_0811_tx_memo_to_description` |
+| *(schema from early setup only)* | `setup_baseline` |
 
 Every app version history row **must** store a `schema_version`.  
 If a release has **no** schema change, **reuse the previous** schema version stem (carry forward). Process-only post-baseline releases still get a minimal `updates/*.sql` file that inserts the new `app_version` row (and may set `patch_file` to that filename for auditability).
@@ -94,12 +99,127 @@ Aim for **one schema patch per app version**. Details and the SQL header templat
 
 ### Consolidation (developers)
 
-After every **5–10** schema patches (or at a natural milestone), consolidate small patches into one clean schema update file, keep older files for historical upgrades, and document the consolidation under the release that introduces the consolidated patch.
+After every **5–10** schema patches (or at a natural milestone such as beta), fold post-baseline DDL into `setup-database/*`, raise `TEMPER_SETUP_BASELINE_APP_VERSION`, seed full history through the new baseline, keep older patch files for historical upgrades, and document under the consolidating release.
 
 ### Fresh installs
 
-`php setup_db.php` builds the **0.804 baseline** schema from `setup-database/*.php` and seeds `app_version` history **through 0.804 only**.  
-Do **not** expect setup to plant 0.805+ rows. After setup, apply post-baseline patches under `updates/` (see the current version section). Do not replay pre-baseline patches that are already embodied in the setup scripts.
+`php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
+No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
+Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.900
+
+**Official beta start — clean setup baseline** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_0900_beta_baseline.sql`  
+> **Schema version:** `20260726_0811_tx_memo_to_description` *(carried forward — no DDL for installs already at 0.811)*  
+> **Min app version:** 0.900
+
+**Start of beta.** From this release onward: **bugfixes, clarifications, and enhancements only** (no further alpha feature churn as a phase).
+
+- **Setup baseline consolidated at 0.900:** `setup_db.php` + `setup-database/*` fold all alpha patches through 0.811 into a single destructive-setup outcome.
+  - Fresh setup seeds **full** `app_version` history **0.801 → 0.900**.
+  - Schema shape matches post-0.811 (`transaction_details.description` created directly; no `memo` column on new installs).
+- **No demo / seed operational data:**
+  - Accounts table is empty (create real CoA via Accounts setup).
+  - Budgets / budget lines are empty.
+  - Ledger / transactions (details, lines, documents, events) are empty.
+  - Lookup/reference data **remains**: roles, natural/functional categories, structural funds, default users.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` / `TEMPER_SETUP_BASELINE_APP_VERSION` = **0.900**.
+- Existing installs already at 0.811: apply the process-only patch below (records 0.900; no table DDL). Optional: re-run full setup for a clean empty beta database (destructive — backup first).
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.811 | `updates/20260726_0900_beta_baseline.sql` only |
+| Fresh setup (0.900) | No further patches required for 0.900 |
+| v0.810 or older | Prior patches through 0.811, then `20260726_0900_…` — or full `setup_db.php` for a clean beta baseline |
+
+---
+
+## v0.811
+
+**Transaction Description field; rename `memo` → `description`** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_0811_tx_memo_to_description.sql`  
+> **Schema version:** `20260726_0811_tx_memo_to_description`  
+> **Min app version:** 0.811
+
+- Removes the duplicate **Memo** input from the Add/Edit transaction form; single **Description** field remains.
+- Stops concatenating Description + Memo with `" | "` on save / split on load.
+- **DDL:** `transaction_details.memo` renamed to `transaction_details.description`.
+- Legacy values that used `" | "` are normalized to a space-separated single description before the rename.
+- All ledger/engine/report reads and writes use `description` (search, list, import text, reference usage, audit change text).
+- **Note (historical):** When 0.811 shipped, the then-frozen 0.804 setup still created `memo`. From **v0.900** onward, setup creates `description` directly.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.810 | `updates/20260726_0811_tx_memo_to_description.sql` only |
+| Fresh setup (0.900+) | Already included; no 0.811 patch needed |
+| Fresh setup (legacy 0.804) | Post-baseline patches through 0.810, then `20260726_0811_…` |
+
+---
+
+## v0.810
+
+**Transaction lines: Natural/Functional from account (budget-style)** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_0810_tx_account_category_labels.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log` *(carried forward — no DDL)*  
+> **Min app version:** 0.810
+
+- **Add/Edit Transaction** line Natural and Functional classes are **read-only labels** pulled from the selected account (same pattern as budget lines).
+- Account options carry CoA / natural / functional metadata; changing the account updates the labels immediately.
+- Users can no longer pick Natural/Functional independently on a transaction line.
+- On save, the server **re-resolves** Natural/Functional from the account record (client values cannot override).
+- No table DDL in this release (UI + save-path logic only).
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.809 | `updates/20260726_0810_tx_account_category_labels.sql` only |
+| Fresh setup (0.804) | Post-baseline patches through 0.809, then `20260726_0810_…` |
+
+---
+
+## v0.809
+
+**Account View default + CoA-ordered account dropdowns** — 2026-07-26
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260726_0809_account_filter_coa_order.sql`  
+> **Schema version:** `20260725_03_formalize_audit_log` *(carried forward — no DDL)*  
+> **Min app version:** 0.809
+
+- **Ledger Account View filter** defaults to **All Accounts** (no longer Bank Account / first debit account on bare page load).
+- **Account dropdowns** ordered by `coa_number` ascending across the app:
+  - Ledger transaction line account picker
+  - Ledger Account View filter
+  - Budget line account picker (`budgetFetchAccountLookups`)
+  - Reports account filter
+- **Accounts setup list** uses the same CoA ordering for consistency.
+- Null or empty CoA numbers sort **last**, then by name, then id (stable).
+- No table DDL in this release (UI / query ordering only).
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.808 | `updates/20260726_0809_account_filter_coa_order.sql` only |
+| Fresh setup (0.804) | Post-baseline patches through 0.808, then `20260726_0809_…` |
 
 ---
 

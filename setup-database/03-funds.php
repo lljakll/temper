@@ -51,7 +51,8 @@ $db->query("CREATE INDEX idx_funds_type ON funds(type)");
 $db->query("CREATE INDEX idx_funds_is_active ON funds(is_active)");
 $db->query("CREATE INDEX idx_funds_archived ON funds(archived)");
 
-// Insert seed data: Funds
+// Structural reference funds (kept for beta baseline — not operational demo ledger data).
+// Operators may archive/rename/add funds as needed for real data entry.
 $general_fund = "INSERT INTO funds (name, code, type, description, purpose) VALUES
 ('General Operating Fund', 'GOF', 'WODR', 'Main operating fund for general church activities', 'General church operations')";
 
@@ -62,7 +63,6 @@ if ($db->query($general_fund) === TRUE) {
     exit(1);
 }
 
-// Insert seed data: 3 sample WDR funds
 $wdr_funds = "INSERT INTO funds (name, code, type, description, purpose) VALUES
 ('Missions Fund', 'MF', 'WDR', 'Donor-restricted funds for missionary work', 'Mission work'),
 ('Benevolence Fund', 'BF', 'WDR', 'Donor-restricted funds for assistance to members in need', 'Member assistance'),

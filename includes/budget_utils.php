@@ -103,7 +103,7 @@ function budgetFetchAccountLookups(mysqli $db): array {
             LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
             LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
             WHERE a.archived = FALSE
-            ORDER BY a.name";
+            ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC, a.id ASC";
     $r = $db->query($sql);
     if ($r) {
         while ($row = $r->fetch_assoc()) {

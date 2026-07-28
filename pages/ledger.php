@@ -142,13 +142,8 @@ require_once __DIR__ . '/../includes/permissions.php';
             echo json_encode(['error' => 'Transaction not found']);
             exit;
         }
-        $fullMemo = $det['memo'] ?? '';
-        if (strpos($fullMemo, ' | ') !== false) {
-            list($det['description'], $det['memo']) = explode(' | ', $fullMemo, 2);
-        } else {
-            $det['description'] = '';
-            $det['memo'] = $fullMemo;
-        }
+        // Single description column (no memo / no " | " split)
+        $det['description'] = $det['description'] ?? '';
         $det['budget_id'] = !empty($det['budget_id']) ? (int)$det['budget_id'] : '';
         $lines = [];
         foreach ($det['lines'] as $l) {
@@ -409,7 +404,6 @@ require_once __DIR__ . '/../includes/permissions.php';
             $refRaw = $_POST['reference_number'] ?? '';
             $c = trim($_POST['check_number'] ?? '');
             $desc = trim($_POST['description'] ?? '');
-            $mem = trim($_POST['memo'] ?? '');
             $budgetIdRaw = (int)($_POST['budget_id'] ?? 0);
             $budgetId = $budgetIdRaw > 0 ? $budgetIdRaw : null;
             $allowBudgetOutOfPeriod = in_array(
@@ -495,7 +489,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         'pay_to' => (string)($lockedTx['pay_to'] ?? ''),
                                         'reference_number' => (string)($lockedTx['reference_number'] ?? ''),
                                         'check_number' => (string)($lockedTx['check_number'] ?? ''),
-                                        'memo' => (string)($lockedTx['memo'] ?? ''),
+                                        'description' => (string)($lockedTx['description'] ?? ''),
                                         'budget_id' => $newBudgetId,
                                     ],
                                     array_map(static function ($ol) {
@@ -561,6 +555,36 @@ require_once __DIR__ . '/../includes/permissions.php';
                 $dt = $ct = 0.0;
                 $vlines = [];
                 $typeError = false;
+                // Natural/Functional always come from the selected account (not client overrides).
+                $accountCatCache = [];
+                $resolveAccountCategories = static function (mysqli $db, int $aid, array &$cache): array {
+                    if (isset($cache[$aid])) {
+                        return $cache[$aid];
+                    }
+                    $nid = null;
+                    $fid2 = null;
+                    $st = $db->prepare(
+                        'SELECT natural_category_id, functional_category_id FROM accounts WHERE id = ? AND archived = FALSE LIMIT 1'
+                    );
+                    if ($st) {
+                        $st->bind_param('i', $aid);
+                        $st->execute();
+                        $row = $st->get_result()->fetch_assoc();
+                        $st->close();
+                        if ($row) {
+                            $nid = $row['natural_category_id'] !== null ? (int)$row['natural_category_id'] : null;
+                            $fid2 = $row['functional_category_id'] !== null ? (int)$row['functional_category_id'] : null;
+                            if ($nid !== null && $nid <= 0) {
+                                $nid = null;
+                            }
+                            if ($fid2 !== null && $fid2 <= 0) {
+                                $fid2 = null;
+                            }
+                        }
+                    }
+                    $cache[$aid] = ['nid' => $nid, 'fid2' => $fid2];
+                    return $cache[$aid];
+                };
                 foreach ($lines as $l) {
                     $aid = (int)($l['account_id'] ?? 0);
                     $am = (float)($l['amount'] ?? 0);
@@ -572,11 +596,12 @@ require_once __DIR__ . '/../includes/permissions.php';
                         break;
                     }
                     if ($t === 'debit') $dt += $am; else $ct += $am;
+                    $cats = $resolveAccountCategories($db, $aid, $accountCatCache);
                     $vlines[] = [
                         'aid' => $aid,
                         'fid' => !empty($l['fund_id']) ? (int)$l['fund_id'] : null,
-                        'nid' => !empty($l['natural_category_id']) ? (int)$l['natural_category_id'] : null,
-                        'fid2' => !empty($l['functional_category_id']) ? (int)$l['functional_category_id'] : null,
+                        'nid' => $cats['nid'],
+                        'fid2' => $cats['fid2'],
                         'am' => $am,
                         't' => $t
                     ];
@@ -588,7 +613,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                 } elseif (abs($dt - $ct) > 0.005) {
                     $error = "Debits do not equal Credits.";
                 } else {
-                    $mm = $desc ? ($desc . ($mem ? ' | ' . $mem : '')) : $mem;
+                    // Single Description field → transaction_details.description (no memo / no " | " join)
+                    $description = $desc;
 
                     if ($tx_id > 0) {
                         $existing = ledgerFetchTransaction($db, $tx_id);
@@ -599,8 +625,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                         } else {
                             $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
                             $budgetBind = $budgetId !== null ? (string)$budgetId : null;
-                            $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, memo=?, budget_id=? WHERE id=?");
-                            $upd->bind_param("ssssssi", $d, $c, $p, $ref, $mm, $budgetBind, $tx_id);
+                            $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, description=?, budget_id=? WHERE id=?");
+                            $upd->bind_param("ssssssi", $d, $c, $p, $ref, $description, $budgetBind, $tx_id);
                             if ($upd->execute()) {
                                 $upd->close();
 
@@ -619,7 +645,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         'pay_to' => $p,
                                         'reference_number' => $ref,
                                         'check_number' => $c,
-                                        'memo' => $mm,
+                                        'description' => $description,
                                         'budget_id' => $budgetId ?? 0,
                                     ],
                                     $vlines
@@ -664,7 +690,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                             $d,
                             $p,
                             (string)$ref,
-                            $mm,
+                            $description,
                             $createdBy,
                             null,
                             $budgetId
@@ -708,8 +734,19 @@ require_once __DIR__ . '/../includes/permissions.php';
         }
     }
 
-    // Dropdown options (needed for Add/Edit form)
-    $ar = $db->query("SELECT id,name,normal_balance FROM accounts WHERE archived=FALSE ORDER BY name");
+    // Dropdown options (needed for Add/Edit form). Accounts ordered by CoA number (null/empty last).
+    // Natural/Functional classes come from the account (same pattern as budget lines).
+    $ar = $db->query(
+        "SELECT a.id, a.name, a.normal_balance, a.coa_number,
+                a.natural_category_id, a.functional_category_id,
+                COALESCE(nc.name, '') AS natural_name,
+                COALESCE(fc.name, '') AS functional_name
+         FROM accounts a
+         LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
+         LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
+         WHERE a.archived = FALSE
+         ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC, a.id ASC"
+    );
     $fr = $db->query("SELECT id,name,code FROM funds WHERE is_active=TRUE AND archived=FALSE ORDER BY name");
     $nr = $db->query("SELECT id,name FROM natural_categories WHERE archived=FALSE ORDER BY name");
     $fur = $db->query("SELECT id,name FROM functional_categories WHERE archived=FALSE ORDER BY name");
@@ -725,13 +762,32 @@ require_once __DIR__ . '/../includes/permissions.php';
     $aopt = '';
     if ($ar) {
         while ($a = $ar->fetch_assoc()) {
+            $coa = trim((string)($a['coa_number'] ?? ''));
+            $natName = ($a['natural_name'] ?? '') !== '' ? $a['natural_name'] : '—';
+            $funName = ($a['functional_name'] ?? '') !== '' ? $a['functional_name'] : '—';
+            $natId = $a['natural_category_id'] !== null && $a['natural_category_id'] !== ''
+                ? (int)$a['natural_category_id'] : 0;
+            $funId = $a['functional_category_id'] !== null && $a['functional_category_id'] !== ''
+                ? (int)$a['functional_category_id'] : 0;
             $accountsLookup[] = [
                 'id' => (int)$a['id'],
                 'name' => $a['name'],
                 'normal_balance' => $a['normal_balance'],
+                'coa_number' => $coa,
+                'natural_category_id' => $natId > 0 ? $natId : '',
+                'functional_category_id' => $funId > 0 ? $funId : '',
+                'natural_name' => $natName,
+                'functional_name' => $funName,
             ];
             $nb = htmlspecialchars($a['normal_balance']);
-            $aopt .= '<option value="' . (int)$a['id'] . '" data-normal-balance="' . $nb . '">' . htmlspecialchars($a['name']) . ' (' . $nb . ')</option>';
+            $aopt .= '<option value="' . (int)$a['id'] . '"'
+                . ' data-normal-balance="' . $nb . '"'
+                . ' data-coa-number="' . htmlspecialchars($coa) . '"'
+                . ' data-natural-id="' . ($natId > 0 ? $natId : '') . '"'
+                . ' data-functional-id="' . ($funId > 0 ? $funId : '') . '"'
+                . ' data-natural-name="' . htmlspecialchars($natName) . '"'
+                . ' data-functional-name="' . htmlspecialchars($funName) . '"'
+                . '>' . htmlspecialchars($a['name']) . ' (' . $nb . ')</option>';
         }
     }
     $fopt = '<option value="">—</option>';
@@ -745,30 +801,27 @@ require_once __DIR__ . '/../includes/permissions.php';
             $fopt .= '<option value="' . (int)$f['id'] . '">' . htmlspecialchars($f['name'] . ($f['code'] ? ' (' . $f['code'] . ')' : '')) . '</option>';
         }
     }
-    $nopt = '<option value="">—</option>';
     if ($nr) {
         while ($n = $nr->fetch_assoc()) {
             $naturalLookup[] = [
                 'id' => (int)$n['id'],
                 'name' => $n['name'],
             ];
-            $nopt .= '<option value="' . (int)$n['id'] . '">' . htmlspecialchars($n['name']) . '</option>';
         }
     }
-    $fuopt = '<option value="">—</option>';
     if ($fur) {
         while ($f = $fur->fetch_assoc()) {
             $functionalLookup[] = [
                 'id' => (int)$f['id'],
                 'name' => $f['name'],
             ];
-            $fuopt .= '<option value="' . (int)$f['id'] . '">' . htmlspecialchars($f['name']) . '</option>';
         }
     }
 
-    // Curated accounts for Account View dropdown: only Assets, Liabilities, Equity (exclude revenue accounts like Contributions)
+    // Curated accounts for Account View dropdown: exclude revenue accounts like Contributions.
+    // Ordered by CoA number ascending (null/empty CoA at end), then name, then id.
     $view_accts = [];
-    $vaq = $db->query("SELECT id, name, normal_balance FROM accounts WHERE archived=FALSE ORDER BY FIELD(normal_balance, 'debit', 'credit'), name");
+    $vaq = $db->query("SELECT id, name, normal_balance, coa_number FROM accounts WHERE archived=FALSE ORDER BY (coa_number IS NULL OR coa_number = '') ASC, coa_number ASC, name ASC, id ASC");
     if ($vaq) {
         while ($va = $vaq->fetch_assoc()) {
             if (stripos($va['name'], 'contribution') !== false) continue;
@@ -783,29 +836,12 @@ require_once __DIR__ . '/../includes/permissions.php';
     $page = max(1, (int)($_GET['page'] ?? 1));
     $per_page = 25;
 
-    // Account View filter (defaults to Bank Account or first Asset only on bare loads; explicit 0 forces All)
-    $account_param = $_GET['account_id'] ?? null;
-    $raw_account_id = $account_param !== null ? (int)$account_param : 0;
-    $filter_account_id = $raw_account_id;
-    if ($account_param === null) {
-        // Default to main Bank Account (or first debit/asset account)
-        $dstmt = $db->prepare("SELECT id FROM accounts WHERE name = 'Bank Account' AND archived = FALSE LIMIT 1");
-        $dstmt->execute();
-        $drow = $dstmt->get_result()->fetch_assoc();
-        $dstmt->close();
-        if ($drow && !empty($drow['id'])) {
-            $filter_account_id = (int)$drow['id'];
-        } else {
-            $dstmt = $db->prepare("SELECT id FROM accounts WHERE normal_balance = 'debit' AND archived = FALSE ORDER BY id LIMIT 1");
-            $dstmt->execute();
-            $drow = $dstmt->get_result()->fetch_assoc();
-            $dstmt->close();
-            if ($drow && !empty($drow['id'])) {
-                $filter_account_id = (int)$drow['id'];
-            }
-        }
+    // Account View filter defaults to All Accounts (0)
+    $filter_account_id = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
+    if ($filter_account_id < 0) {
+        $filter_account_id = 0;
     }
-    $dropdown_selected = ($account_param === null ? $filter_account_id : $raw_account_id);
+    $dropdown_selected = $filter_account_id;
 
     $conditions = [];
     $bind_params = [];
@@ -822,7 +858,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
     if ($search !== '') {
         $like = '%' . $search . '%';
-        $conditions[] = "(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.memo LIKE ? OR CAST(COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS CHAR) LIKE ?)";
+        $conditions[] = "(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.description LIKE ? OR CAST(COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS CHAR) LIKE ?)";
         $bind_params = array_merge($bind_params, [$like, $like, $like, $like, $like]);
         $bind_types .= str_repeat('s', 5);
     }
@@ -866,7 +902,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     $list_types .= 'ii';
 
     $tx_stmt = $db->prepare("
-        SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.memo, td.status, td.cleared_date,
+        SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.description, td.status, td.cleared_date,
                td.validated_by_user_id, td.validated_at,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0) AS total_debits,
                COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
@@ -980,7 +1016,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                     </select>
                 </div>
                 <div class="col-12 col-md-3">
-                    <label class="form-label small mb-1"><span class="d-none d-md-inline">Search (Pay To / Ref # / Check # / Memo / Amount)</span><span class="d-md-none">Search</span></label>
+                    <label class="form-label small mb-1"><span class="d-none d-md-inline">Search (Pay To / Ref # / Check # / Description / Amount)</span><span class="d-md-none">Search</span></label>
                     <input type="search" id="filterSearch" class="form-control form-control-sm" value="<?= htmlspecialchars($search) ?>" placeholder="Search transactions...">
                 </div>
                 <div class="col-12 col-md-auto d-flex flex-wrap gap-2">
@@ -1010,7 +1046,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 <th>Ref #</th>
                                 <th>Pay To</th>
                                 <th>Check #</th>
-                                <th>Memo</th>
+                                <th>Description</th>
                                 <th class="text-end text-nowrap" style="min-width:5.5rem" title="Debit amounts">Debit</th>
                                 <th class="text-end text-nowrap" style="min-width:5.5rem" title="Credit amounts">Credit</th>
                                 <th>Status</th>
@@ -1043,7 +1079,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                         <td class="font-monospace"><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
-                                        <td class="small text-muted"><?= htmlspecialchars(substr($r['memo'] ?? '', 0, 70)) ?></td>
+                                        <td class="small text-muted"><?= htmlspecialchars(substr($r['description'] ?? '', 0, 70)) ?></td>
                                         <td class="text-end font-monospace text-primary fw-semibold ledger-debit-col"><?= $debDisplay !== '' ? htmlspecialchars($debDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
                                         <td class="text-end font-monospace text-success fw-semibold ledger-credit-col"><?= $credDisplay !== '' ? htmlspecialchars($credDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
@@ -1128,13 +1164,9 @@ require_once __DIR__ . '/../includes/permissions.php';
                             <div class="form-text small text-warning d-none lh-sm" id="budgetStatusWarn" style="font-size:0.7rem;"></div>
                             <input type="hidden" name="allow_budget_out_of_period" id="allow_budget_out_of_period" value="0">
                         </div>
-                        <div class="col-12 col-sm-4 col-md-3 col-xl-2">
+                        <div class="col-12 col-sm-6 col-md-4 col-xl-3">
                             <label class="form-label small mb-1">Description</label>
-                            <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Short description">
-                        </div>
-                        <div class="col-12 col-md-12 col-xl-3">
-                            <label class="form-label small mb-1">Memo</label>
-                            <input type="text" class="form-control form-control-sm" name="memo" id="memo" placeholder="Additional notes">
+                            <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Transaction description">
                         </div>
                     </div>
 
@@ -1145,7 +1177,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                         </div>
 
                         <div class="table-responsive">
-                            <table class="table table-sm table-bordered align-middle mb-1">
+                            <table class="table table-sm table-bordered align-middle mb-1" id="txLinesTable">
                                 <thead class="table-light">
                                     <tr>
                                         <th>Account *</th>
@@ -1160,6 +1192,17 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 <tbody id="linesBody"></tbody>
                             </table>
                         </div>
+                        <style>
+                            #txLinesTable .line-cat-label {
+                                display: block;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                                white-space: nowrap;
+                                color: var(--bs-secondary-color);
+                                font-size: 0.875rem;
+                                max-width: 9rem;
+                            }
+                        </style>
 
                         <div class="d-flex flex-wrap gap-2 gap-md-3 align-items-center small">
                             <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">0.00</span></div>
@@ -1278,7 +1321,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 <p class="small text-muted mb-2">
                     Header: first quoted string = <strong>Pay To</strong>, second = <strong>Description</strong>.
                     Metadata lines recognized: <code>reference:</code> and <code>check:</code> only (others ignored).
-                    Memo is built from <code>;</code> comments (full-line or trailing), concatenated when several appear.
+                    <code>;</code> comments (full-line or trailing) are appended to Description when present.
                     Per-line fund: <code>; fund: GOF</code> or fund name. Account names must match the chart (case-insensitive).
                 </p>
                 <label class="form-label small mb-1" for="importTextArea">Ledger text</label>
@@ -1370,8 +1413,6 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     const accountOpts = `<?= $aopt ?>`;
     const fundOpts = `<?= $fopt ?>`;
-    const natOpts = `<?= $nopt ?>`;
-    const funcOpts = `<?= $fuopt ?>`;
     const budgetOptions = <?= json_encode($budgetOptions, JSON_UNESCAPED_UNICODE) ?> || [];
     const defaultBudgetIdToday = <?= $defaultBudgetIdToday !== null ? (int)$defaultBudgetIdToday : 'null' ?>;
     /** Name→id lookups for text paste import (read-only populate). */
@@ -1646,6 +1687,27 @@ require_once __DIR__ . '/../includes/permissions.php';
         status.className = balanced ? 'text-success' : 'text-danger';
     }
 
+    /**
+     * Pull Natural / Functional class labels from the selected account option
+     * (same pattern as budget page — read-only, not user-editable).
+     */
+    function syncLineCategoryLabels(row) {
+        const sel = row.querySelector('.line-account');
+        const natEl = row.querySelector('.line-natural-label');
+        const funEl = row.querySelector('.line-functional-label');
+        if (!natEl || !funEl) return;
+        const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+        const hasAcct = !!(opt && opt.value);
+        const nat = hasAcct ? (opt.dataset.naturalName || '—') : '—';
+        const fun = hasAcct ? (opt.dataset.functionalName || '—') : '—';
+        natEl.textContent = nat;
+        natEl.title = nat;
+        funEl.textContent = fun;
+        funEl.title = fun;
+        row.dataset.naturalId = hasAcct ? (opt.dataset.naturalId || '') : '';
+        row.dataset.functionalId = hasAcct ? (opt.dataset.functionalId || '') : '';
+    }
+
     function attachLineListeners(row) {
         if (row.dataset.attached === '1') return;
         row.dataset.attached = '1';
@@ -1654,8 +1716,13 @@ require_once __DIR__ . '/../includes/permissions.php';
         const credIn = row.querySelector('.line-credit-amt');
         const remBtn = row.querySelector('.remove-line');
 
-        // Account selection no longer locks Debit/Credit — user may debit or credit any account
-        if (accSel) accSel.addEventListener('change', () => recalcTotals());
+        // Account selection drives Natural/Functional labels; user may debit or credit any account
+        if (accSel) {
+            accSel.addEventListener('change', () => {
+                syncLineCategoryLabels(row);
+                recalcTotals();
+            });
+        }
         if (debIn) debIn.addEventListener('input', () => {
             if (credIn && parseFloat(debIn.value || '0') > 0) credIn.value = '';
             row.dataset.lineType = parseFloat(debIn.value || '0') > 0 ? 'debit' : (row.dataset.lineType || '');
@@ -1671,6 +1738,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             recalcTotals();
         });
 
+        syncLineCategoryLabels(row);
         recalcTotals();
     }
 
@@ -1678,12 +1746,13 @@ require_once __DIR__ . '/../includes/permissions.php';
         const ro = readonly ? ' disabled' : '';
         const remStyle = readonly ? ' style="display:none"' : '';
         const row = document.createElement('tr');
-        // Debit / Credit columns: user enters amount in either column for any account
+        // Debit / Credit columns: user enters amount in either column for any account.
+        // Natural / Functional are read-only labels pulled from the account (budget-page pattern).
         row.innerHTML = `
             <td><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
             <td><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
-            <td><select class="form-select form-select-sm line-nat"${ro}>${natOpts}</select></td>
-            <td><select class="form-select form-select-sm line-func"${ro}>${funcOpts}</select></td>
+            <td><span class="line-cat-label line-natural-label" title="">—</span></td>
+            <td><span class="line-cat-label line-functional-label" title="">—</span></td>
             <td>
                 <input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder=""${ro}>
             </td>
@@ -1693,15 +1762,13 @@ require_once __DIR__ . '/../includes/permissions.php';
             <td><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
         `;
         row.dataset.lineType = '';
+        row.dataset.naturalId = '';
+        row.dataset.functionalId = '';
         if (prefill) {
             const acc = row.querySelector('.line-account');
             if (prefill.account_id) acc.value = prefill.account_id;
             const fund = row.querySelector('.line-fund');
             if (prefill.fund_id !== undefined && prefill.fund_id !== '') fund.value = prefill.fund_id;
-            const nat = row.querySelector('.line-nat');
-            if (prefill.natural_category_id !== undefined && prefill.natural_category_id !== '') nat.value = prefill.natural_category_id;
-            const func = row.querySelector('.line-func');
-            if (prefill.functional_category_id !== undefined && prefill.functional_category_id !== '') func.value = prefill.functional_category_id;
             // Place amount in debit or credit column from saved line type (not account normal_balance)
             const debIn = row.querySelector('.line-debit-amt');
             const credIn = row.querySelector('.line-credit-amt');
@@ -1716,6 +1783,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 }
             }
         }
+        syncLineCategoryLabels(row);
         if (readonly) {
             row.querySelectorAll('select, input').forEach(el => el.classList.add('bg-body-secondary'));
         }
@@ -1754,7 +1822,7 @@ require_once __DIR__ . '/../includes/permissions.php';
      */
     function setMainFieldsReadOnly(readonly, opts = {}) {
         const budgetEnabled = !!opts.budgetEnabled;
-        ['transaction_date', 'reference_number', 'pay_to', 'check_number', 'description', 'memo'].forEach(fid => {
+        ['transaction_date', 'reference_number', 'pay_to', 'check_number', 'description'].forEach(fid => {
             const el = document.getElementById(fid);
             if (!el) return;
             el.readOnly = readonly;
@@ -2383,7 +2451,6 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
-        document.getElementById('memo').value = data.memo || '';
         setBudgetSelection(data.budget_id || '', { auto: false });
         clearReferenceReuseState();
         refreshReferenceSuggestion().then(updateReferenceHintVisibility);
@@ -2424,7 +2491,6 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
-        document.getElementById('memo').value = data.memo || '';
         // Keep saved budget; do not auto-override unless user changes the date later
         setBudgetSelection(data.budget_id || '', { auto: false });
         clearReferenceReuseState();
@@ -2568,7 +2634,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             return isBudgetSelectionChanged();
         }
         // form always visible; consider unsaved if has tx id in edit or any data entered
-        const fields = ['reference_number', 'pay_to', 'check_number', 'description', 'memo'];
+        const fields = ['reference_number', 'pay_to', 'check_number', 'description'];
         for (const fid of fields) {
             const el = document.getElementById(fid);
             if (el && el.value.trim() !== '') return true;
@@ -2867,7 +2933,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 const parts = [];
                 if (d && d.taken) {
                     const u = d.usage || {};
-                    const who = [u.transaction_date, u.pay_to || u.memo].filter(Boolean).join(' — ');
+                    const who = [u.transaction_date, u.pay_to || u.description].filter(Boolean).join(' — ');
                     parts.push('⚠ Already used'
                         + (u.id ? (' by <strong>#' + u.id + '</strong>') : '')
                         + (who ? (' (' + escHtml(who) + ')') : '')
@@ -2953,7 +3019,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                     return '<tr>'
                         + '<td class="ps-3 font-monospace fw-semibold">' + escHtml(it.reference_number || it.sequence_number || '') + '</td>'
                         + '<td class="text-nowrap">' + escHtml(it.transaction_date || '—') + '</td>'
-                        + '<td class="small">' + escHtml(it.description || '—') + '</td>'
+                        + '<td class="small">' + escHtml(it.label || it.pay_to || it.description || '—') + '</td>'
                         + '<td class="pe-3 text-end text-muted">#' + escHtml(String(it.id || '')) + '</td>'
                         + '</tr>';
                 }).join('');
@@ -3088,15 +3154,25 @@ require_once __DIR__ . '/../includes/permissions.php';
 
             const lines = [];
             linesBody.querySelectorAll('tr').forEach(row => {
-                const acc = row.querySelector('.line-account')?.value;
+                const accSel = row.querySelector('.line-account');
+                const acc = accSel?.value;
                 const { amount: amt, type: lineType } = getLineAmountAndType(row);
                 if (!acc || !amt || (lineType !== 'debit' && lineType !== 'credit')) return;
+
+                // Prefer dataset filled by syncLineCategoryLabels; fall back to selected option.
+                const opt = accSel && accSel.selectedOptions ? accSel.selectedOptions[0] : null;
+                const natId = row.dataset.naturalId
+                    || (opt && opt.dataset.naturalId)
+                    || '';
+                const funId = row.dataset.functionalId
+                    || (opt && opt.dataset.functionalId)
+                    || '';
 
                 lines.push({
                     account_id: acc,
                     fund_id: row.querySelector('.line-fund')?.value || '',
-                    natural_category_id: row.querySelector('.line-nat')?.value || '',
-                    functional_category_id: row.querySelector('.line-func')?.value || '',
+                    natural_category_id: natId,
+                    functional_category_id: funId,
                     amount: amt,
                     type: lineType
                 });
@@ -3505,13 +3581,13 @@ require_once __DIR__ . '/../includes/permissions.php';
             description = unquoted;
         }
 
-        // Also harvest ; comments on the header line into memo
-        const memoParts = [];
+        // Harvest ; comments on the header line into description extras
+        const descParts = [];
         const headerRaw = lines[headerIdx] || '';
         const headerSemi = headerRaw.indexOf(';');
         if (headerSemi >= 0) {
             const hc = headerRaw.slice(headerSemi + 1).trim();
-            if (hc) memoParts.push(hc);
+            if (hc) descParts.push(hc);
         }
 
         // Scan for a second transaction header (only first is imported)
@@ -3532,19 +3608,19 @@ require_once __DIR__ . '/../includes/permissions.php';
         const amountRe = /(?:USD|\$)?\s*(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s*(?:USD|\$)?/gi;
 
         /**
-         * Pull fund: hint out of a ; comment; return remaining text for memo.
-         * @returns {{ fundHint: string, memoText: string }}
+         * Pull fund: hint out of a ; comment; return remaining text for description.
+         * @returns {{ fundHint: string, descText: string }}
          */
-        function splitFundAndMemo(comment) {
-            let memoText = String(comment || '').trim();
-            if (!memoText) return { fundHint: '', memoText: '' };
-            const m = memoText.match(/fund\s*:\s*(.+)$/i);
+        function splitFundAndDesc(comment) {
+            let descText = String(comment || '').trim();
+            if (!descText) return { fundHint: '', descText: '' };
+            const m = descText.match(/fund\s*:\s*(.+)$/i);
             if (m) {
                 const fundHint = m[1].trim().replace(/^["']|["']$/g, '');
-                memoText = memoText.replace(/;?\s*fund\s*:\s*.+$/i, '').trim();
-                return { fundHint, memoText };
+                descText = descText.replace(/;?\s*fund\s*:\s*.+$/i, '').trim();
+                return { fundHint, descText };
             }
-            return { fundHint: '', memoText };
+            return { fundHint: '', descText };
         }
 
         function stripMetaQuotes(val) {
@@ -3559,12 +3635,12 @@ require_once __DIR__ . '/../includes/permissions.php';
             let line = lines[i];
             if (line.trim() === '') continue;
 
-            // Full-line comment → memo (do not skip)
+            // Full-line comment → description extras (do not skip)
             if (line.trim().startsWith(';')) {
                 const c = line.trim().slice(1).trim();
                 if (c) {
-                    const { fundHint: _fh, memoText } = splitFundAndMemo(c);
-                    if (memoText) memoParts.push(memoText);
+                    const { fundHint: _fh, descText } = splitFundAndDesc(c);
+                    if (descText) descParts.push(descText);
                     // bare "; fund: X" full-line is not a posting fund (no account); ignore fund
                 }
                 continue;
@@ -3582,8 +3658,8 @@ require_once __DIR__ . '/../includes/permissions.php';
             if (!trimmed) {
                 // comment-only after stripping empty code part
                 if (comment) {
-                    const { memoText } = splitFundAndMemo(comment);
-                    if (memoText) memoParts.push(memoText);
+                    const { descText } = splitFundAndDesc(comment);
+                    if (descText) descParts.push(descText);
                 }
                 continue;
             }
@@ -3615,8 +3691,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                     }
                     // else: ignore unknown metadata keys (memo, natural, etc.)
                     if (comment) {
-                        const { memoText } = splitFundAndMemo(comment);
-                        if (memoText) memoParts.push(memoText);
+                        const { descText } = splitFundAndDesc(comment);
+                        if (descText) descParts.push(descText);
                     }
                     continue;
                 }
@@ -3655,8 +3731,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                 continue;
             }
 
-            const { fundHint, memoText } = splitFundAndMemo(comment);
-            if (memoText) memoParts.push(memoText);
+            const { fundHint, descText } = splitFundAndDesc(comment);
+            if (descText) descParts.push(descText);
 
             postings.push({
                 lineNo,
@@ -3707,8 +3783,9 @@ require_once __DIR__ . '/../includes/permissions.php';
             resolvedLines.push({
                 account_id: accRes.item.id,
                 fund_id: fundId,
-                natural_category_id: '',
-                functional_category_id: '',
+                // Categories follow the account (labels sync on row create); server re-resolves on save
+                natural_category_id: accRes.item.natural_category_id || '',
+                functional_category_id: accRes.item.functional_category_id || '',
                 amount: absAmt.toFixed(2),
                 type
             });
@@ -3716,13 +3793,19 @@ require_once __DIR__ . '/../includes/permissions.php';
 
         const ref = String(referenceVal || '').trim();
         const check = String(checkVal || '').trim();
-        // Memo: concatenate all ; comments (fund: hints excluded)
-        const memo = memoParts
+        // Append ; comments (fund: hints excluded) to Description with spaces (no " | ")
+        const commentDesc = descParts
             .map(p => String(p || '').trim())
             .filter(Boolean)
             .join(' ')
             .replace(/\s+/g, ' ')
             .trim();
+        let finalDescription = String(description || '').trim();
+        if (commentDesc) {
+            finalDescription = finalDescription
+                ? (finalDescription + ' ' + commentDesc)
+                : commentDesc;
+        }
 
         if (ref && !/^\d{6}$/.test(ref)) {
             warnings.push('Reference "' + ref + '" is not YY#### (6 digits). It was filled anyway — correct it before save if needed.');
@@ -3754,8 +3837,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             data: {
                 transaction_date: dateStr,
                 pay_to: payTo,
-                description: description,
-                memo: memo,
+                description: finalDescription,
                 check_number: check,
                 reference_number: ref,
                 lines: resolvedLines
@@ -3796,7 +3878,6 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('pay_to').value = data.pay_to || '';
         document.getElementById('check_number').value = data.check_number || '';
         document.getElementById('description').value = data.description || '';
-        document.getElementById('memo').value = data.memo || '';
 
         // Budget follows transaction date (auto mode on Add)
         budgetAutoMode = true;

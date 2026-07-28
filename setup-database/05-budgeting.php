@@ -84,31 +84,8 @@ $db->query("CREATE INDEX idx_budget_lines_budget_id ON budget_lines(budget_id)")
 $db->query("CREATE INDEX idx_budget_lines_account_id ON budget_lines(account_id)");
 $db->query("CREATE INDEX idx_budget_lines_budgeted_amount ON budget_lines(budgeted_amount)");
 
-// Insert seed data: Budgets
-$budgets = "INSERT INTO budgets (fiscal_year, name, start_date, end_date, approved_date, reference_number, status, total_budgeted, description) VALUES 
-    (2024, '2024 Church Budget', '2024-01-01', '2024-12-31', '2023-12-15', '2023-12-15-001', 'active', 500000.00, 'Annual church budget for 2024')";
-
-if ($db->query($budgets) === TRUE) {
-    echo "Seed data for 'budgets' inserted successfully\n";
-} else {
-    echo "Error inserting budgets: " . $db->error . "\n";
-    exit(1);
-}
-
-// Insert seed data: Budget lines (categories are derived from the linked account)
-$budget_lines = "INSERT INTO budget_lines (budget_id, account_id, budgeted_amount, notes) VALUES 
-    (1, 10, 200000.00, 'Contributions income'),
-    (1, 2, 150000.00, 'Program / operating via bank'),
-    (1, 4, 50000.00, 'Administrative prepaid / insurance'),
-    (1, 5, 100000.00, 'Capital / fixed assets')";
-
-if ($db->query($budget_lines) === TRUE) {
-    echo "Seed data for 'budget_lines' inserted successfully\n";
-} else {
-    echo "Error inserting budget_lines: " . $db->error . "\n";
-    exit(1);
-}
-
+// Beta baseline: no demo budgets or budget lines — empty structure only.
+echo "Budget tables ready (no demo budgets seeded)\n";
 echo "Budgeting setup completed successfully!\n";
 
 // Close connection

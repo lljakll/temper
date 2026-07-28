@@ -68,7 +68,7 @@ This is a lightweight single-page pattern — no router, no Composer, no ORM.
 ├────────────────────────┼───────────────────────────────────────────────────────────────────────┤
 │ funds                  │ Fund accounting; type = WODR or WDR                                   │
 ├────────────────────────┼───────────────────────────────────────────────────────────────────────┤
-│ transaction_details    │ Header: date, pay-to, ref#, memo, status (pending/cleared/reconciled) │
+│ transaction_details    │ Header: date, pay-to, ref#, description, status (pending/cleared/reconciled) │
 ├────────────────────────┼───────────────────────────────────────────────────────────────────────┤
 │ transaction_lines      │ Double-entry lines: account, fund, amount, debit/credit, categories   │
 ├────────────────────────┼───────────────────────────────────────────────────────────────────────┤
@@ -97,7 +97,7 @@ Ledger (pages/ledger.php) — Core accounting engine
 • Each line: account, optional fund, natural + functional category, amount.
 • Server validates: ≥2 lines, debits = credits (±$0.005), account normal_balance drives debit/credit type.
 • Status workflow: pending → cleared → reconciled (bulk actions; reconcile is status-only, not bank matching).
-• Filtering: date range, text search (pay-to, ref#, memo, amount), account view with running balance.
+• Filtering: date range, text search (pay-to, ref#, description, amount), account view with running balance.
 • JSON endpoint ?get_transaction=<id> for edit modal.
 
 Budget (pages/budget.php)

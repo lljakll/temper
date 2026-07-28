@@ -1,10 +1,12 @@
 <?php
 // Church Treasurer System - Run All Database Setup Scripts
 //
-// FROZEN BASELINE (app v0.804): this script + setup-database/* establish schema
-// and seed app_version history through 0.804 only. Releases 0.805+ are applied
+// FROZEN BASELINE (app v0.900 beta): this script + setup-database/* establish
+// schema (through 0.811 shape) and seed app_version history through 0.900 only.
+// No demo accounts, budgets, or transactions — lookup data (roles, categories,
+// structural funds) and default users only. Releases after 0.900 are applied
 // solely via updates/*.sql patches after setup (see VERSION.md). Do not add
-// 0.805+ history rows to TEMPER_VERSION_HISTORY or these setup scripts.
+// post-0.900 history rows to TEMPER_VERSION_HISTORY or these setup scripts.
 //
 require_once 'config.php';
 require_once 'setup-database/setup_cli.php';
@@ -72,7 +74,8 @@ function setupDbRequireDestructiveConfirmation(int $tableCount): void
     echo "  Actions that will be performed:\n";
     echo "    • DROP all {$tableCount} application tables\n";
     echo "    • Recreate schema from setup-database/*.php scripts\n";
-    echo "    • Re-seed default data (accounts, users, transactions, etc.)\n";
+    echo "    • Re-seed lookup data (roles, categories, funds) and default users\n";
+    echo "    • Leave accounts, budgets, and transactions empty (no demo ledger data)\n";
     echo "\n";
     echo "  Target database : " . DB_NAME . " @ " . DB_HOST . "\n";
     echo "  This CANNOT be undone.\n";
@@ -131,7 +134,7 @@ if ($cli->check) {
     $validator->validateAll($tables);
     $structureExit = $validator->printReport($cli->verbose);
 
-    // Baseline awareness: compare highest app_version to frozen setup ceiling (0.804).
+    // Baseline awareness: compare highest app_version to frozen setup ceiling (0.900).
     // Read-only — never runs destructive setup or applies patches.
     $baselineOk = setupDbPrintBaselineVersionReport($db);
 

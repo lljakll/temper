@@ -32,10 +32,11 @@ There is **no in-app update system**. Operators apply schema changes by hand.
 
 ### Fresh installs vs post-baseline
 
-- **`setup_db.php` is frozen at app v0.804.** It creates the baseline schema and seeds `app_version` history **through 0.804 only**.
-- **Do not** add 0.805+ rows to setup seed scripts. Those releases exist only as files in this folder.
-- After a destructive setup, apply every **post-0.804** patch listed in [`VERSION.md`](../VERSION.md) (in order) to reach the current release.
-- Pre-0.804 patches remain here for operators upgrading old databases; they are already embodied in the setup scripts for new databases.
+- **`setup_db.php` is frozen at app v0.900 (beta).** It creates the baseline schema (through 0.811 shape) and seeds `app_version` history **through 0.900**.
+- Setup does **not** insert demo accounts, budgets, or transactions — only lookup data (roles, categories, funds) and default users.
+- **Do not** add post-0.900 rows to setup seed scripts. Those releases exist only as files in this folder.
+- After a destructive setup at 0.900, apply every **post-0.900** patch listed in [`VERSION.md`](../VERSION.md) (in order) to reach a later release.
+- Pre-0.900 patches remain here for operators upgrading old databases; they are already embodied in the setup scripts for new databases.
 
 ---
 
@@ -97,26 +98,26 @@ Do **not** rely on the application to detect or apply patches.
 
 ## Versioning conventions
 
-- **App version** (e.g. `0.805`) — product / release version in `config.php` (`APP_VERSION`), `TEMPER_DEFAULT_APP_VERSION`, `VERSION.md`, and `app_version.version`.
-- **Setup baseline app version** — `TEMPER_SETUP_BASELINE_APP_VERSION` (**0.804**). Highest version seeded by `setup_db.php`.
+- **App version** (e.g. `0.900`) — product / release version in `config.php` (`APP_VERSION`), `TEMPER_DEFAULT_APP_VERSION`, `VERSION.md`, and `app_version.version`.
+- **Setup baseline app version** — `TEMPER_SETUP_BASELINE_APP_VERSION` (**0.900**). Highest version seeded by `setup_db.php`.
 - **Schema version** — **patch filename stem** (no `.sql`) when the release includes DDL; stored in `app_version.schema_version` and `TEMPER_EXPECTED_SCHEMA_VERSION`.
-  - Example: `20260725_03_formalize_audit_log`
-  - Pre-patch baseline (schema from `setup_db.php` only): `setup_baseline`
+  - Example: `20260726_0811_tx_memo_to_description` (beta baseline schema stem)
+  - Pre-patch alpha baseline id: `setup_baseline`
 - **Every** app version history row **must** include a `schema_version`.
-- If a new app version has **no** schema changes, **carry forward** the previous schema version stem (same string). Post-baseline process-only releases still ship a **minimal patch** that `INSERT`s the new `app_version` row (see `20260725_04_frozen_baseline_model.sql`).
-- Aim for **one patch file per app version** after the 0.804 freeze.
+- If a new app version has **no** schema changes, **carry forward** the previous schema version stem (same string). Post-baseline process-only releases still ship a **minimal patch** that `INSERT`s the new `app_version` row (see `20260726_0900_beta_baseline.sql`).
+- Aim for **one patch file per app version** after a setup freeze.
 - **New** patch basenames use `YYYYMMDD_<appversion_without_decimal>_description.sql` (see above).
 
 ---
 
 ## Development rule: consolidate patches
 
-After every **5–10** small schema patches (or at a natural milestone such as beta freeze):
+After every **5–10** small schema patches (or at a natural milestone such as a new setup baseline):
 
-1. Produce one **clean consolidated** schema update that represents the net schema delta since the last consolidation (or since the 0.804 setup baseline).
-2. Prefer a single well-reviewed file over a long chain of tiny patches for operators who lag behind.
-3. Document the consolidation in `VERSION.md` (which old patch files it supersedes, and that those files remain in git for history but are not re-applied on fresh installs).
-4. Fresh installs always take **baseline** schema from `setup-database/*.php` via `setup_db.php` (through 0.804), then apply post-baseline patches from this folder — not by replaying the entire historical chain into setup seed.
+1. Fold post-baseline DDL into `setup-database/*.php` so destructive setup matches the current schema shape.
+2. Raise `TEMPER_SETUP_BASELINE_APP_VERSION` / expand `TEMPER_VERSION_HISTORY` through the new baseline.
+3. Document the consolidation in `VERSION.md` (which old patch files remain for historical upgrades but are not re-applied on fresh installs).
+4. Fresh installs always take **baseline** schema from `setup-database/*.php` via `setup_db.php` (through **0.900**), then apply only **post-0.900** patches from this folder.
 
 Individual historical patches stay in this folder for operators upgrading from older releases and for auditability.
 

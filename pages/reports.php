@@ -119,7 +119,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                 }
                 if ($search !== '') {
                     $like = '%' . $search . '%';
-                    $conds[] = "(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.memo LIKE ?)";
+                    $conds[] = "(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.description LIKE ?)";
                     $params = array_merge($params, [$like, $like, $like, $like]);
                     $types .= 'ssss';
                 }
@@ -461,7 +461,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
     $wdr_funds = array_values(array_filter($funds_list, fn($f) => $f['type'] === 'WDR'));
 
     $accounts_list = [];
-    $r = $db->query("SELECT id, name FROM accounts WHERE archived = FALSE ORDER BY name");
+    $r = $db->query("SELECT id, name, coa_number FROM accounts WHERE archived = FALSE ORDER BY (coa_number IS NULL OR coa_number = '') ASC, coa_number ASC, name ASC, id ASC");
     while ($row = $r->fetch_assoc()) $accounts_list[] = $row;
 
     $categories_list = [];
@@ -737,7 +737,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                     </div>
                     <div class="col-12 col-md-3">
                         <label class="form-label small mb-1">Search</label>
-                        <input type="text" id="tl-search" class="form-control form-control-sm" placeholder="Pay to, ref, memo...">
+                        <input type="text" id="tl-search" class="form-control form-control-sm" placeholder="Pay to, ref, description...">
                     </div>
                 </div>`;
         }

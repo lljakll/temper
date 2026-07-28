@@ -7,16 +7,16 @@
  * This module only reads/writes version history rows; it does not create tables,
  * seed history on page load, or apply patches.
  *
- * ## Frozen setup baseline (0.804) vs post-baseline patches
+ * ## Setup baseline (0.900 beta) vs post-baseline patches
  *
- * - `setup_db.php` / `TEMPER_VERSION_HISTORY` are **frozen at app v0.804**.
- *   Fresh destructive setup always leaves the DB at 0.804.
- * - Releases **0.805 and later** are applied **only** via `updates/*.sql` patches.
- *   Do not append 0.805+ rows to TEMPER_VERSION_HISTORY or re-seed them in setup.
+ * - `setup_db.php` / `TEMPER_VERSION_HISTORY` are **frozen at app v0.900** (beta start).
+ *   Fresh destructive setup always leaves the DB at 0.900 with full history through 0.900.
+ * - Releases **after 0.900** are applied **only** via `updates/*.sql` patches.
+ *   Do not append post-0.900 rows to TEMPER_VERSION_HISTORY or re-seed them in setup.
  *
  * Schema version identity = patch filename stem (no .sql) when a release has DDL;
  * process-only releases carry forward the previous schema version stem.
- * Pre-patch baseline (setup_db only) uses TEMPER_SCHEMA_BASELINE.
+ * Pre-patch baseline (setup_db only, v0.801 era) uses TEMPER_SCHEMA_BASELINE.
  *
  * Security: Prevent direct access.
  */
@@ -29,19 +29,20 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.808';
+const TEMPER_DEFAULT_APP_VERSION = '0.900';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
- * Frozen long-term baseline — do not raise this when shipping 0.805+.
+ * Beta baseline — raise only when consolidating a new setup milestone.
  */
-const TEMPER_SETUP_BASELINE_APP_VERSION = '0.804';
+const TEMPER_SETUP_BASELINE_APP_VERSION = '0.900';
 
 /**
- * Schema version (patch stem) of the frozen setup_db.php baseline (0.804).
+ * Schema version (patch stem) of the frozen setup_db.php baseline (0.900).
  * Matches the last TEMPER_VERSION_HISTORY entry's schema_version.
+ * Embodies schema through 0.811 (transaction_details.description).
  */
-const TEMPER_SETUP_BASELINE_SCHEMA_VERSION = '20260725_03_formalize_audit_log';
+const TEMPER_SETUP_BASELINE_SCHEMA_VERSION = '20260726_0811_tx_memo_to_description';
 
 /**
  * Schema id for the initial setup_db.php shape (no updates/*.sql patch yet).
@@ -52,14 +53,14 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
 /**
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
- * v0.805–0.808 are process-only → still the 0.804 formalize_audit_log stem.
+ * Beta 0.900 setup creates description column directly (folded from 0.811 DDL).
  */
-const TEMPER_EXPECTED_SCHEMA_VERSION = '20260725_03_formalize_audit_log';
+const TEMPER_EXPECTED_SCHEMA_VERSION = '20260726_0811_tx_memo_to_description';
 
 /**
- * Frozen setup seed: version history through TEMPER_SETUP_BASELINE_APP_VERSION (0.804).
+ * Frozen setup seed: full version history through TEMPER_SETUP_BASELINE_APP_VERSION (0.900).
  * Used by seedAppVersionHistory() from setup_db.php / 08-app-version.php only.
- * Never applied on page load. Never append 0.805+ here — those rows come from updates/*.sql.
+ * Never applied on page load. Never append post-0.900 here — those rows come from updates/*.sql.
  *
  * schema_version is always set (patch stem, or TEMPER_SCHEMA_BASELINE).
  * patch_file is the .sql applied with that app version, or null if none
@@ -91,6 +92,54 @@ const TEMPER_VERSION_HISTORY = [
         'schema_version' => '20260725_03_formalize_audit_log',
         'patch_file' => '20260725_03_formalize_audit_log.sql',
         'notes' => 'Read-only schema checks; audit_log in setup; no live DDL/seed',
+    ],
+    [
+        'version' => '0.805',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260725_04_frozen_baseline_model.sql',
+        'notes' => 'Frozen setup baseline at 0.804; post-0.804 releases via updates/ only',
+    ],
+    [
+        'version' => '0.806',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260726_01_setup_check_baseline_awareness.sql',
+        'notes' => 'setup_db.php --check reports setup baseline vs database app_version',
+    ],
+    [
+        'version' => '0.807',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260726_02_admin_version_outdated_indicator.sql',
+        'notes' => 'Admin sidebar red version + tooltip when DB lags latest available release',
+    ],
+    [
+        'version' => '0.808',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260726_0808_patch_naming_and_sidebar_dual_version.sql',
+        'notes' => 'Patch names use app version token; admin sidebar App+DB dual display with lag warning',
+    ],
+    [
+        'version' => '0.809',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260726_0809_account_filter_coa_order.sql',
+        'notes' => 'Account View defaults to All Accounts; account dropdowns ordered by coa_number',
+    ],
+    [
+        'version' => '0.810',
+        'schema_version' => '20260725_03_formalize_audit_log',
+        'patch_file' => '20260726_0810_tx_account_category_labels.sql',
+        'notes' => 'Transaction lines pull Natural/Functional from account as read-only labels',
+    ],
+    [
+        'version' => '0.811',
+        'schema_version' => '20260726_0811_tx_memo_to_description',
+        'patch_file' => '20260726_0811_tx_memo_to_description.sql',
+        'notes' => 'Rename transaction_details.memo to description; single Description field (no | join)',
+    ],
+    [
+        'version' => '0.900',
+        'schema_version' => '20260726_0811_tx_memo_to_description',
+        'patch_file' => '20260726_0900_beta_baseline.sql',
+        'notes' => 'Beta start: setup baseline consolidated through 0.811; no demo accounts/budgets/transactions',
     ],
 ];
 
@@ -451,9 +500,9 @@ function setupDbPrintBaselineVersionReport(?mysqli $db): bool
 }
 
 /**
- * Insert the frozen setup baseline history (through TEMPER_SETUP_BASELINE_APP_VERSION / 0.804).
+ * Insert the frozen setup baseline history (through TEMPER_SETUP_BASELINE_APP_VERSION / 0.900).
  * For setup_db.php / 08-app-version.php only — never call on page load.
- * Does not seed 0.805+; apply those via updates/*.sql after setup.
+ * Does not seed post-0.900 rows; apply those via updates/*.sql after setup.
  */
 function seedAppVersionHistory(mysqli $db): bool
 {

@@ -172,7 +172,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                            FROM accounts a
                            LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
                            LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
-                           ORDER BY a.name";
+                           ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC, a.id ASC";
     } else {
         $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.coa_number, a.archived, a.mutable_fund,
                                   a.natural_category_id, a.functional_category_id,
@@ -182,7 +182,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                            LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
                            LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
                            WHERE a.archived = FALSE
-                           ORDER BY a.name";
+                           ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC, a.id ASC";
     }
 
     $accounts_result = $db->query($accounts_query);

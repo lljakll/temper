@@ -60,14 +60,15 @@ Options:
 
 Modes:
   (no options)     Run full database setup (destructive — drops and recreates all tables)
-  --check          Structure validation plus setup baseline (v0.804) vs app_version report
+  --check          Structure validation plus setup baseline (v0.900) vs app_version report
   --check -v       Detailed per-table/column/permission validation output
   --dry-run        Preview drop/create steps for full setup without executing them
 
 Notes:
   --check never runs destructive setup or applies updates/*.sql patches.
-  If the database is behind the frozen setup baseline, --check warns that a full
-  setup_db.php run (after backup) is required before applying newer patches.
+  If the database is behind the frozen setup baseline (v0.900), --check warns that
+  a full setup_db.php run (after backup) is required before applying newer patches.
+  Full setup seeds lookup data only (no demo accounts, budgets, or transactions).
 
 Examples:
   php setup_db.php

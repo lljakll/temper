@@ -186,7 +186,7 @@ function ledgerSequenceNumberTaken(mysqli $db, string $sequenceNumber, ?int $exc
 /**
  * First transaction using this Reference # (excluding optional id), or null.
  *
- * @return array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,memo:?string}|null
+ * @return array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,description:?string}|null
  */
 function ledgerReferenceUsage(mysqli $db, string $referenceNumber, ?int $excludeTransactionId = null): ?array {
     ledgerRequireTables($db);
@@ -196,7 +196,7 @@ function ledgerReferenceUsage(mysqli $db, string $referenceNumber, ?int $exclude
     }
     if ($excludeTransactionId !== null && $excludeTransactionId > 0) {
         $stmt = $db->prepare(
-            'SELECT id, reference_number, transaction_date, pay_to, memo
+            'SELECT id, reference_number, transaction_date, pay_to, description
              FROM transaction_details
              WHERE reference_number = ? AND id <> ?
              ORDER BY id ASC LIMIT 1'
@@ -204,7 +204,7 @@ function ledgerReferenceUsage(mysqli $db, string $referenceNumber, ?int $exclude
         $stmt->bind_param('si', $ref, $excludeTransactionId);
     } else {
         $stmt = $db->prepare(
-            'SELECT id, reference_number, transaction_date, pay_to, memo
+            'SELECT id, reference_number, transaction_date, pay_to, description
              FROM transaction_details
              WHERE reference_number = ?
              ORDER BY id ASC LIMIT 1'
@@ -352,12 +352,12 @@ function ledgerSuggestNextSequenceNumber(mysqli $db, ?string $asOfDate = null, s
 /**
  * All used YY#### Reference # values for the lookup modal (highest first).
  *
- * @return list<array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,memo:?string,description:string}>
+ * @return list<array{id:int,reference_number:string,transaction_date:?string,pay_to:?string,description:?string,label:string}>
  */
 function ledgerListUsedReferenceNumbers(mysqli $db, int $limit = 1000): array {
     ledgerRequireTables($db);
     $limit = max(1, min(5000, $limit));
-    $sql = "SELECT id, reference_number, transaction_date, pay_to, memo
+    $sql = "SELECT id, reference_number, transaction_date, pay_to, description
             FROM transaction_details
             WHERE reference_number IS NOT NULL
               AND reference_number <> ''
@@ -370,11 +370,12 @@ function ledgerListUsedReferenceNumbers(mysqli $db, int $limit = 1000): array {
         return [];
     }
     while ($row = $res->fetch_assoc()) {
-        $memo = trim((string)($row['memo'] ?? ''));
+        $txDesc = trim((string)($row['description'] ?? ''));
         $pay = trim((string)($row['pay_to'] ?? ''));
-        $desc = $pay !== '' ? $pay : ($memo !== '' ? $memo : '—');
-        if (mb_strlen($desc) > 80) {
-            $desc = mb_substr($desc, 0, 77) . '…';
+        // Modal list label: prefer pay_to, then description
+        $label = $pay !== '' ? $pay : ($txDesc !== '' ? $txDesc : '—');
+        if (mb_strlen($label) > 80) {
+            $label = mb_substr($label, 0, 77) . '…';
         }
         $rows[] = [
             'id' => (int)$row['id'],
@@ -383,8 +384,9 @@ function ledgerListUsedReferenceNumbers(mysqli $db, int $limit = 1000): array {
             'sequence_number' => (string)$row['reference_number'],
             'transaction_date' => $row['transaction_date'] ?? null,
             'pay_to' => $row['pay_to'] ?? null,
-            'memo' => $row['memo'] ?? null,
-            'description' => $desc,
+            'description' => $row['description'] ?? null,
+            // Backward-compatible display field used by reference list modal
+            'label' => $label,
         ];
     }
     return $rows;
@@ -546,7 +548,7 @@ function ledgerNameMaps(mysqli $db): array {
  * Build human-readable change lines when a manual transaction is updated.
  *
  * @param array $existing Row from ledgerFetchTransaction (includes lines)
- * @param array $newHeader Keys: transaction_date, pay_to, reference_number, check_number, memo, budget_id
+ * @param array $newHeader Keys: transaction_date, pay_to, reference_number, check_number, description, budget_id
  * @param array $newLines  List of [aid, fid, am, t, nid, fid2]
  * @return array{summary:string,changes:array<int,string>,debits:float,credits:float}
  */
@@ -604,10 +606,10 @@ function ledgerDescribeTransactionUpdate(
             . '" to "' . $budgetLabel($db, $newBudgetId) . '".';
     }
 
-    $oldMemo = trim((string)($existing['memo'] ?? ''));
-    $newMemo = trim((string)($newHeader['memo'] ?? ''));
-    if ($oldMemo !== $newMemo) {
-        $changes[] = 'Memo / description updated.';
+    $oldDesc = trim((string)($existing['description'] ?? ''));
+    $newDesc = trim((string)($newHeader['description'] ?? ''));
+    if ($oldDesc !== $newDesc) {
+        $changes[] = 'Description updated.';
     }
 
     // Normalize lines for comparison: key by account|fund|type
@@ -758,7 +760,7 @@ function ledgerCreateHeader(
     string $transactionDate,
     string $payTo,
     string $referenceNumber,
-    string $memo,
+    string $description,
     ?int $createdByUserId = null,
     ?array $transactionData = null,
     ?int $budgetId = null
@@ -771,7 +773,7 @@ function ledgerCreateHeader(
     $budgetParam = ($budgetId !== null && $budgetId > 0) ? (string)(int)$budgetId : null;
     $stmt = $db->prepare(
         "INSERT INTO transaction_details (
-            transaction_date, pay_to, reference_number, memo, budget_id, status,
+            transaction_date, pay_to, reference_number, description, budget_id, status,
             created_by_user_id, transaction_data
          ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)"
     );
@@ -780,7 +782,7 @@ function ledgerCreateHeader(
         $transactionDate,
         $payTo,
         $refParam,
-        $memo,
+        $description,
         $budgetParam,
         $createdByUserId,
         $dataJson
@@ -797,7 +799,7 @@ function ledgerUpdateHeader(
     ?string $transactionDate = null,
     ?string $payTo = null,
     ?string $referenceNumber = null,
-    ?string $memo = null,
+    ?string $description = null,
     ?array $transactionData = null,
     ?int $budgetId = null,
     bool $setBudgetId = false
@@ -822,10 +824,10 @@ function ledgerUpdateHeader(
         $types .= 's';
         $params[] = $ref !== '' ? $ref : null;
     }
-    if ($memo !== null) {
-        $sets[] = 'memo = ?';
+    if ($description !== null) {
+        $sets[] = 'description = ?';
         $types .= 's';
-        $params[] = $memo;
+        $params[] = $description;
     }
     if ($transactionData !== null) {
         $sets[] = 'transaction_data = ?';
