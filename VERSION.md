@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.901](#v0901)
 - [v0.900](#v0900)
 - [v0.811](#v0811)
 - [v0.810](#v0810)
@@ -106,6 +107,38 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.901
+
+**Chart of Accounts: required Account Type; Normal Balance guidance** — 2026-08-01
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260801_0901_account_type_classification.sql`  
+> **Schema version:** `20260801_0901_account_type_classification`  
+> **Min app version:** 0.901
+
+- **DDL:** `accounts.account_type` — `ENUM('asset','liability','equity','income','expense') NOT NULL`, plus index `idx_accounts_account_type`.
+  - Classic accounting element classification (Asset / Liability / Equity / Income / Expense).
+  - Distinct from optional Natural and Functional category FKs (unchanged).
+- **Existing rows:** patch backfills a temporary type from `normal_balance` (`debit` → `asset`, `credit` → `liability`). **Operators must review and correct** any pre-existing Chart of Accounts.
+- Clean 0.900 installs have an empty `accounts` table; new accounts require Account Type on create.
+- **Accounts setup UI (`setup_accounts.php`):**
+  - Required Account Type select on add/edit; column shown in the account list.
+  - On add, Normal Balance auto-populates from Account Type (asset/expense → debit; liability/equity/income → credit) but remains fully editable.
+  - Non-blocking caution when Normal Balance diverges from the usual value for the selected type; confirm dialog on save (does not hard-block).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.901**; `TEMPER_EXPECTED_SCHEMA_VERSION` = `20260801_0901_account_type_classification`.
+- Setup baseline remains frozen at **0.900** — apply this patch after setup (or after upgrading from 0.900).
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.900 | `updates/20260801_0901_account_type_classification.sql` |
+| Fresh setup (0.900) | Same patch after `php setup_db.php` |
+| Older | Reach 0.900 first, then this patch |
 
 ---
 

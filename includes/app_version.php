@@ -29,7 +29,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.900';
+const TEMPER_DEFAULT_APP_VERSION = '0.901';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
@@ -53,9 +53,9 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
 /**
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
- * Beta 0.900 setup creates description column directly (folded from 0.811 DDL).
+ * 0.901 adds accounts.account_type via updates/20260801_0901_account_type_classification.sql.
  */
-const TEMPER_EXPECTED_SCHEMA_VERSION = '20260726_0811_tx_memo_to_description';
+const TEMPER_EXPECTED_SCHEMA_VERSION = '20260801_0901_account_type_classification';
 
 /**
  * Frozen setup seed: full version history through TEMPER_SETUP_BASELINE_APP_VERSION (0.900).

@@ -7,6 +7,46 @@ require_once __DIR__ . '/../includes/budget_utils.php';
 
 budgetEnsureSimplifiedSchema($db);
 
+/** @var list<string> Classic accounting element types (accounts.account_type ENUM). */
+const SETUP_ACCOUNTS_ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
+
+/**
+ * Expected normal balance for a classic account type.
+ * asset/expense → debit; liability/equity/income → credit.
+ */
+function setupAccountsExpectedNormalBalance(string $accountType): string {
+    return in_array($accountType, ['asset', 'expense'], true) ? 'debit' : 'credit';
+}
+
+function setupAccountsParseCategoryId($raw): ?int {
+    if ($raw === null || $raw === '' || $raw === '0') {
+        return null;
+    }
+    $id = (int)$raw;
+    return $id > 0 ? $id : null;
+}
+
+function setupAccountsParseAccountType($raw): ?string {
+    $type = strtolower(trim((string)($raw ?? '')));
+    return in_array($type, SETUP_ACCOUNTS_ACCOUNT_TYPES, true) ? $type : null;
+}
+
+function setupAccountsParseNormalBalance($raw): ?string {
+    $nb = strtolower(trim((string)($raw ?? '')));
+    return in_array($nb, ['debit', 'credit'], true) ? $nb : null;
+}
+
+function setupAccountsAccountTypeLabel(string $type): string {
+    $labels = [
+        'asset' => 'Asset',
+        'liability' => 'Liability',
+        'equity' => 'Equity',
+        'income' => 'Income',
+        'expense' => 'Expense',
+    ];
+    return $labels[$type] ?? ucfirst($type);
+}
+
 // Category lookups for account form
 $naturalOpts = [];
 $functionalOpts = [];
@@ -23,14 +63,6 @@ if ($fr) {
     }
 }
 
-function setupAccountsParseCategoryId($raw): ?int {
-    if ($raw === null || $raw === '' || $raw === '0') {
-        return null;
-    }
-    $id = (int)$raw;
-    return $id > 0 ? $id : null;
-}
-
 // Handle form submissions
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($_POST['action'])) {
@@ -40,7 +72,8 @@ function setupAccountsParseCategoryId($raw): ?int {
                 // Insert new account record
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
-                $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $account_type = setupAccountsParseAccountType($_POST['account_type'] ?? null);
+                $normal_balance = setupAccountsParseNormalBalance($_POST['normal_balance'] ?? null);
                 $coa_number = trim((string)($_POST['coa_number'] ?? ''));
                 if ($coa_number === '') {
                     $coa_number = null;
@@ -55,9 +88,13 @@ function setupAccountsParseCategoryId($raw): ?int {
                 // Validate required fields
                 if (empty($name)) {
                     echo "Error: Account name is required\n";
+                } elseif ($account_type === null) {
+                    echo "Error: Account Type is required (asset, liability, equity, income, or expense)\n";
+                } elseif ($normal_balance === null) {
+                    echo "Error: Normal Balance must be debit or credit\n";
                 } else {
-                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, coa_number, natural_category_id, functional_category_id, archived, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("ssssiiii", $name, $description, $normal_balance, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund);
+                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, account_type, coa_number, natural_category_id, functional_category_id, archived, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->bind_param("sssssiiii", $name, $description, $normal_balance, $account_type, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund);
                     if ($stmt->execute() === TRUE) {
                         echo "Account added successfully\n";
                     } else {
@@ -71,7 +108,8 @@ function setupAccountsParseCategoryId($raw): ?int {
                 $id = $_POST['id'] ?? 0;
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
-                $normal_balance = $_POST['normal_balance'] ?? 'debit';
+                $account_type = setupAccountsParseAccountType($_POST['account_type'] ?? null);
+                $normal_balance = setupAccountsParseNormalBalance($_POST['normal_balance'] ?? null);
                 $coa_number = trim((string)($_POST['coa_number'] ?? ''));
                 if ($coa_number === '') {
                     $coa_number = null;
@@ -86,6 +124,10 @@ function setupAccountsParseCategoryId($raw): ?int {
                 // Validate required fields and account exists
                 if (empty($name) || $id <= 0) {
                     echo "Error: Invalid account data\n";
+                } elseif ($account_type === null) {
+                    echo "Error: Account Type is required (asset, liability, equity, income, or expense)\n";
+                } elseif ($normal_balance === null) {
+                    echo "Error: Normal Balance must be debit or credit\n";
                 } else {
                     // Check if account exists before updating
                     $check_stmt = $db->prepare("SELECT id FROM accounts WHERE id = ?");
@@ -94,8 +136,8 @@ function setupAccountsParseCategoryId($raw): ?int {
                     $result = $check_stmt->get_result();
                     
                     if ($result->num_rows > 0) {
-                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, coa_number=?, natural_category_id=?, functional_category_id=?, archived=?, mutable_fund=? WHERE id=?");
-                        $stmt->bind_param("ssssiiiii", $name, $description, $normal_balance, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund, $id);
+                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, account_type=?, coa_number=?, natural_category_id=?, functional_category_id=?, archived=?, mutable_fund=? WHERE id=?");
+                        $stmt->bind_param("sssssiiiii", $name, $description, $normal_balance, $account_type, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund, $id);
                         if ($stmt->execute() === TRUE) {
                             echo "Account updated successfully\n";
                         } else {
@@ -165,7 +207,7 @@ function setupAccountsParseCategoryId($raw): ?int {
 
     // Build query for accounts with category names
     if ($show_archived) {
-        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.coa_number, a.archived, a.mutable_fund,
+        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.account_type, a.coa_number, a.archived, a.mutable_fund,
                                   a.natural_category_id, a.functional_category_id,
                                   COALESCE(nc.name, '') AS natural_name,
                                   COALESCE(fc.name, '') AS functional_name
@@ -174,7 +216,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                            LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
                            ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC, a.id ASC";
     } else {
-        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.coa_number, a.archived, a.mutable_fund,
+        $accounts_query = "SELECT a.id, a.name, a.description, a.normal_balance, a.account_type, a.coa_number, a.archived, a.mutable_fund,
                                   a.natural_category_id, a.functional_category_id,
                                   COALESCE(nc.name, '') AS natural_name,
                                   COALESCE(fc.name, '') AS functional_name
@@ -214,6 +256,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                     <th>CoA #</th>
                     <th>Name</th>
                     <th>Description</th>
+                    <th>Account Type</th>
                     <th>Normal Balance</th>
                     <th>Natural</th>
                     <th>Functional</th>
@@ -224,15 +267,31 @@ function setupAccountsParseCategoryId($raw): ?int {
             <tbody id="accountsTableBody">
                 <?php if ($accounts_result && $accounts_result->num_rows > 0): ?>
                     <?php while ($account = $accounts_result->fetch_assoc()): ?>
-                        <?php $coaDisplay = trim((string)($account['coa_number'] ?? '')); ?>
+                        <?php
+                            $coaDisplay = trim((string)($account['coa_number'] ?? ''));
+                            $acctType = (string)($account['account_type'] ?? '');
+                            $nbVal = (string)($account['normal_balance'] ?? '');
+                            $expectedNb = $acctType !== '' ? setupAccountsExpectedNormalBalance($acctType) : '';
+                            $nbDiverges = ($expectedNb !== '' && $nbVal !== '' && $nbVal !== $expectedNb);
+                        ?>
                         <tr data-id="<?= $account['id'] ?>"
                             data-coa-number="<?= htmlspecialchars($coaDisplay) ?>"
+                            data-account-type="<?= htmlspecialchars($acctType) ?>"
+                            data-normal-balance="<?= htmlspecialchars($nbVal) ?>"
                             data-natural-id="<?= $account['natural_category_id'] !== null ? (int)$account['natural_category_id'] : '' ?>"
-                            data-functional-id="<?= $account['functional_category_id'] !== null ? (int)$account['functional_category_id'] : '' ?>">
+                            data-functional-id="<?= $account['functional_category_id'] !== null ? (int)$account['functional_category_id'] : '' ?>"
+                            data-archived="<?= $account['archived'] ? '1' : '0' ?>"
+                            data-mutable-fund="<?= $account['mutable_fund'] ? '1' : '0' ?>">
                             <td class="font-monospace"><?= htmlspecialchars($coaDisplay !== '' ? $coaDisplay : '—') ?></td>
                             <td><?= htmlspecialchars($account['name']) ?></td>
                             <td><?= htmlspecialchars($account['description'] ?? '') ?></td>
-                            <td><?= htmlspecialchars($account['normal_balance']) ?></td>
+                            <td><?= htmlspecialchars(setupAccountsAccountTypeLabel($acctType)) ?></td>
+                            <td>
+                                <?= htmlspecialchars($nbVal) ?>
+                                <?php if ($nbDiverges): ?>
+                                    <span class="text-warning ms-1" title="Normal Balance differs from the usual <?= htmlspecialchars($expectedNb) ?> for <?= htmlspecialchars(setupAccountsAccountTypeLabel($acctType)) ?> accounts." aria-label="Caution: unusual normal balance">⚠</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($account['natural_name'] !== '' ? $account['natural_name'] : '—') ?></td>
                             <td><?= htmlspecialchars($account['functional_name'] !== '' ? $account['functional_name'] : '—') ?></td>
                             <td><?= $account['archived'] ? 'Yes' : 'No' ?></td>
@@ -241,7 +300,7 @@ function setupAccountsParseCategoryId($raw): ?int {
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="8" class="text-center">No accounts found.</td>
+                        <td colspan="9" class="text-center">No accounts found.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -271,13 +330,30 @@ function setupAccountsParseCategoryId($raw): ?int {
                 <label for="description" class="form-label">Description</label>
                 <textarea class="form-control" id="description" name="description" rows="3"></textarea>
             </div>
-            
-            <div class="mb-3">
-                <label for="normal_balance" class="form-label">Normal Balance</label>
-                <select class="form-select" id="normal_balance" name="normal_balance" required>
-                    <option value="debit">Debit</option>
-                    <option value="credit">Credit</option>
-                </select>
+
+            <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                    <label for="account_type" class="form-label">Account Type <span class="text-danger">*</span></label>
+                    <select class="form-select" id="account_type" name="account_type" required>
+                        <option value="">— Select —</option>
+                        <option value="asset">Asset</option>
+                        <option value="liability">Liability</option>
+                        <option value="equity">Equity</option>
+                        <option value="income">Income</option>
+                        <option value="expense">Expense</option>
+                    </select>
+                    <div class="form-text">Classic accounting element (required). Natural/Functional categories remain optional secondary labels.</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="normal_balance" class="form-label">Normal Balance</label>
+                    <select class="form-select" id="normal_balance" name="normal_balance" required>
+                        <option value="debit">Debit</option>
+                        <option value="credit">Credit</option>
+                    </select>
+                    <div id="normalBalanceCaution" class="form-text text-warning d-none" role="status">
+                        Caution: Normal Balance differs from the usual value for this Account Type. You can still save after confirming.
+                    </div>
+                </div>
             </div>
 
             <div class="row g-2 mb-3">
@@ -334,6 +410,60 @@ function setupAccountsParseCategoryId($raw): ?int {
     const accountId = document.getElementById('accountId');
     const formTitle = document.getElementById('formTitle');
     const cancelBtn = document.getElementById('cancelBtn');
+    const accountTypeEl = document.getElementById('account_type');
+    const normalBalanceEl = document.getElementById('normal_balance');
+    const normalBalanceCaution = document.getElementById('normalBalanceCaution');
+
+    const expectedNormalByType = {
+        asset: 'debit',
+        expense: 'debit',
+        liability: 'credit',
+        equity: 'credit',
+        income: 'credit'
+    };
+    const accountTypeLabels = {
+        asset: 'Asset',
+        liability: 'Liability',
+        equity: 'Equity',
+        income: 'Income',
+        expense: 'Expense'
+    };
+
+    /** When true, next account_type change should auto-fill normal balance (add flow). */
+    let autoPopulateNormalOnTypeChange = false;
+
+    function expectedNormalBalance(accountType) {
+        return expectedNormalByType[accountType] || null;
+    }
+
+    function updateNormalBalanceCaution() {
+        if (!accountTypeEl || !normalBalanceEl || !normalBalanceCaution) return;
+        const type = accountTypeEl.value;
+        const nb = normalBalanceEl.value;
+        const expected = expectedNormalBalance(type);
+        const diverges = !!(type && expected && nb && nb !== expected);
+        normalBalanceCaution.classList.toggle('d-none', !diverges);
+        if (diverges) {
+            const typeLabel = accountTypeLabels[type] || type;
+            normalBalanceCaution.textContent =
+                'Caution: Normal Balance is “' + nb + '” but ' + typeLabel +
+                ' accounts usually use “' + expected + '”. You can still save after confirming.';
+            normalBalanceEl.classList.add('border-warning');
+            normalBalanceEl.title = normalBalanceCaution.textContent;
+        } else {
+            normalBalanceEl.classList.remove('border-warning');
+            normalBalanceEl.removeAttribute('title');
+        }
+    }
+
+    function applyExpectedNormalFromAccountType() {
+        const type = accountTypeEl ? accountTypeEl.value : '';
+        const expected = expectedNormalBalance(type);
+        if (expected && normalBalanceEl) {
+            normalBalanceEl.value = expected;
+        }
+        updateNormalBalanceCaution();
+    }
     
     let selectedRow = null;
     
@@ -357,6 +487,19 @@ function setupAccountsParseCategoryId($raw): ?int {
             }
         }
     });
+
+    if (accountTypeEl) {
+        accountTypeEl.addEventListener('change', function() {
+            if (autoPopulateNormalOnTypeChange) {
+                applyExpectedNormalFromAccountType();
+            } else {
+                updateNormalBalanceCaution();
+            }
+        });
+    }
+    if (normalBalanceEl) {
+        normalBalanceEl.addEventListener('change', updateNormalBalanceCaution);
+    }
     
     // Add button
     addBtn.addEventListener('click', function() {
@@ -366,6 +509,10 @@ function setupAccountsParseCategoryId($raw): ?int {
         formAction.value = 'add';
         formTitle.textContent = 'Add New Account';
         accountId.value = '';
+        autoPopulateNormalOnTypeChange = true;
+        // Default Account Type + matching Normal Balance
+        if (accountTypeEl) accountTypeEl.value = 'asset';
+        applyExpectedNormalFromAccountType();
         accountForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
         
@@ -381,25 +528,28 @@ function setupAccountsParseCategoryId($raw): ?int {
         if (!selectedRow) return;
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         
-        // Get account data from the row
-        // columns: 0 CoA, 1 Name, 2 Description, 3 Normal Balance, 4 Natural, 5 Functional, 6 Archived, 7 Mut. Fund
+        // Prefer data attributes (stable) over cell indices
         const id = selectedRow.getAttribute('data-id');
-        const name = selectedRow.cells[1].textContent;
-        const description = selectedRow.cells[2].textContent;
-        const normal_balance = selectedRow.cells[3].textContent;
-        const archived = selectedRow.cells[6].textContent === 'Yes';
-        const mutable_fund = selectedRow.cells[7].textContent === 'Yes';
+        const name = selectedRow.cells[1] ? selectedRow.cells[1].textContent : '';
+        const description = selectedRow.cells[2] ? selectedRow.cells[2].textContent : '';
+        const accountType = selectedRow.dataset.accountType || '';
+        const normalBalance = selectedRow.dataset.normalBalance || '';
+        const archived = selectedRow.dataset.archived === '1';
+        const mutableFund = selectedRow.dataset.mutableFund === '1';
         
-        // Fill form
+        // Fill form — do not auto-overwrite normal balance when loading edit
+        autoPopulateNormalOnTypeChange = false;
         accountId.value = id;
         document.getElementById('coa_number').value = selectedRow.dataset.coaNumber || '';
         document.getElementById('name').value = name;
         document.getElementById('description').value = description;
-        document.getElementById('normal_balance').value = normal_balance;
+        accountTypeEl.value = accountType;
+        normalBalanceEl.value = normalBalance;
         document.getElementById('natural_category_id').value = selectedRow.dataset.naturalId || '';
         document.getElementById('functional_category_id').value = selectedRow.dataset.functionalId || '';
         document.getElementById('archived').checked = archived;
-        document.getElementById('mutable_fund').checked = mutable_fund;
+        document.getElementById('mutable_fund').checked = mutableFund;
+        updateNormalBalanceCaution();
         
         formAction.value = 'edit';
         formTitle.textContent = 'Edit Account';
@@ -436,7 +586,8 @@ function setupAccountsParseCategoryId($raw): ?int {
         }
         
         const id = selectedRow.getAttribute('data-id');
-        const isCurrentlyArchived = selectedRow.cells[6].textContent.trim() === 'Yes';
+        const isCurrentlyArchived = selectedRow.dataset.archived === '1'
+            || (selectedRow.cells[7] && selectedRow.cells[7].textContent.trim() === 'Yes');
         const newArchivedState = !isCurrentlyArchived;
         
         if (confirm(`Are you sure you want to ${newArchivedState ? 'archive' : 'unarchive'} this account?`)) {
@@ -455,6 +606,8 @@ function setupAccountsParseCategoryId($raw): ?int {
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
         accountForm.classList.add('d-none');
+        autoPopulateNormalOnTypeChange = false;
+        updateNormalBalanceCaution();
         
         // Re-enable action buttons
         addBtn.disabled = false;
@@ -480,6 +633,24 @@ function setupAccountsParseCategoryId($raw): ?int {
     // Handle form submission via AJAX to stay in tab
     accountFormContent.addEventListener('submit', function(e) {
         e.preventDefault();
+
+        const action = formAction.value;
+        if (action === 'add' || action === 'edit') {
+            const type = accountTypeEl ? accountTypeEl.value : '';
+            const nb = normalBalanceEl ? normalBalanceEl.value : '';
+            const expected = expectedNormalBalance(type);
+            if (type && expected && nb && nb !== expected) {
+                const typeLabel = accountTypeLabels[type] || type;
+                const msg =
+                    'Normal Balance (“' + nb + '”) differs from the usual “' + expected +
+                    '” for ' + typeLabel + ' accounts.\n\n' +
+                    'This is allowed but uncommon. Do you want to save anyway?';
+                if (!confirm(msg)) {
+                    return;
+                }
+            }
+        }
+
         const qs = showArchived ? '?show_archived=1' : '';
         submitFormAndReload(`pages/${currentPage}.php`, new FormData(accountFormContent), `pages/${currentPage}.php${qs}`);
     });
