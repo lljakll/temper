@@ -13,13 +13,13 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             $code = $_POST['code'] ?? '';
             $type = $_POST['type'] ?? '';
             $description = $_POST['description'] ?? '';
-            $archived = isset($_POST['archived']) ? 1 : 0;
+            $archived = temperParsePostArchived();
 
             if (empty($name)) {
                 echo "Error: Fund name is required\n";
             } else {
-                $stmt = $db->prepare("INSERT INTO funds (name, code, type, description, archived) VALUES (?, ?, ?, ?, ?)");
-                $stmt->bind_param("sssss", $name, $code, $type, $description, $archived);
+                $stmt = $db->prepare("INSERT INTO funds (name, code, type, description, archived, archived_at) VALUES (?, ?, ?, ?, ?, IF(? = 1, NOW(), NULL))");
+                $stmt->bind_param("ssssii", $name, $code, $type, $description, $archived, $archived);
                 if ($stmt->execute() === TRUE) {
                     echo "Fund added successfully\n";
                 } else {
@@ -33,13 +33,13 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             $code = $_POST['code'] ?? '';
             $type = $_POST['type'] ?? '';
             $description = $_POST['description'] ?? '';
-            $archived = isset($_POST['archived']) ? 1 : 0;
+            $archived = temperParsePostArchived();
 
             if (empty($name) || $id <= 0) {
                 echo "Error: Invalid fund data\n";
             } else {
-                $stmt = $db->prepare("UPDATE funds SET name=?, code=?, type=?, description=?, archived=? WHERE id=?");
-                $stmt->bind_param("sssssi", $name, $code, $type, $description, $archived, $id);
+                $stmt = $db->prepare("UPDATE funds SET name=?, code=?, type=?, description=?, archived=?, archived_at=IF(? = 1, COALESCE(archived_at, NOW()), NULL) WHERE id=?");
+                $stmt->bind_param("ssssiii", $name, $code, $type, $description, $archived, $archived, $id);
                 if ($stmt->execute() === TRUE) {
                     echo "Fund updated successfully\n";
                 } else {
@@ -64,15 +64,17 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             }
         } elseif ($action === 'archive') {
             $id = (int)($_POST['id'] ?? 0);
-            $archived = (int)($_POST['archived'] ?? 0);
+            $archived = temperParsePostArchived();
 
             if ($id <= 0) {
                 echo "Error: Invalid fund ID\n";
             } else {
-                $stmt = $db->prepare("UPDATE funds SET archived=? WHERE id=?");
-                $stmt->bind_param("ii", $archived, $id);
+                $stmt = $db->prepare("UPDATE funds SET archived=?, archived_at=IF(? = 1, COALESCE(archived_at, NOW()), NULL) WHERE id=?");
+                $stmt->bind_param("iii", $archived, $archived, $id);
                 if ($stmt->execute() === TRUE) {
-                    echo "Fund archived status updated successfully\n";
+                    echo $archived
+                        ? "Fund archived successfully\n"
+                        : "Fund unarchived successfully\n";
                 } else {
                     echo "Error updating fund archived status: " . $db->error . "\n";
                 }
@@ -127,12 +129,14 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             <tbody id="fundsTableBody">
                 <?php if ($funds_result && $funds_result->num_rows > 0): ?>
                     <?php while ($fund = $funds_result->fetch_assoc()): ?>
-                        <tr data-id="<?= $fund['id'] ?>">
+                        <tr data-id="<?= (int)$fund['id'] ?>"
+                            data-archived="<?= !empty($fund['archived']) ? '1' : '0' ?>"
+                            class="<?= !empty($fund['archived']) ? 'table-secondary' : '' ?>">
                             <td><?= htmlspecialchars($fund['name']) ?></td>
                             <td><?= htmlspecialchars($fund['code'] ?? '') ?></td>
                             <td><?= htmlspecialchars($fund['type']) ?></td>
                             <td><?= htmlspecialchars($fund['description'] ?? '') ?></td>
-                            <td><?= $fund['archived'] ? 'Yes' : 'No' ?></td>
+                            <td><?= !empty($fund['archived']) ? 'Yes' : 'No' ?></td>
                         </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
@@ -144,44 +148,54 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         </table>
     </div>
     
-    <!-- Form for adding/editing -->
-    <div id="fundForm" class="mt-4 d-none">
-        <h4 id="formTitle">Add New Fund</h4>
-        <form id="fundFormContent" method="POST" data-dirty-track>
-            <input type="hidden" id="fundId" name="id">
-            <input type="hidden" name="action" id="formAction">
-            
-            <div class="mb-3">
-                <label for="name" class="form-label">Name</label>
-                <input type="text" class="form-control" id="name" name="name" required>
+    <!-- Add / Edit modal -->
+    <div class="modal fade" id="fundFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form id="fundFormContent" method="POST" data-dirty-track>
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="formTitle">Add New Fund</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" id="fundId" name="id">
+                        <input type="hidden" name="action" id="formAction">
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="name" name="name" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="code" class="form-label">Code</label>
+                            <input type="text" class="form-control" id="code" name="code">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="type" class="form-label">Type</label>
+                            <select class="form-select" id="type" name="type" required>
+                                <option value="WODR">WODR - Without Donor Restrictions</option>
+                                <option value="WDR">WDR - With Donor Restrictions</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                        </div>
+
+                        <div class="mb-0 form-check">
+                            <input type="checkbox" class="form-check-input" id="archived" name="archived" value="1">
+                            <label class="form-check-label" for="archived">Archived</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
             </div>
-            
-            <div class="mb-3">
-                <label for="code" class="form-label">Code</label>
-                <input type="text" class="form-control" id="code" name="code">
-            </div>
-            
-            <div class="mb-3">
-                <label for="type" class="form-label">Type</label>
-                <select class="form-select" id="type" name="type" required>
-                    <option value="WODR">WODR - Without Donor Restrictions</option>
-                    <option value="WDR">WDR - With Donor Restrictions</option>
-                </select>
-            </div>
-            
-            <div class="mb-3">
-                <label for="description" class="form-label">Description</label>
-                <textarea class="form-control" id="description" name="description" rows="3"></textarea>
-            </div>
-            
-            <div class="mb-3 form-check">
-                <input type="checkbox" class="form-check-input" id="archived" name="archived">
-                <label class="form-check-label" for="archived">Archived</label>
-            </div>
-            
-            <button type="submit" class="btn btn-primary">Save</button>
-            <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
-        </form>
+        </div>
     </div>
 </div>
 
@@ -195,116 +209,130 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     const archiveBtn = document.getElementById('archiveBtn');
     const showArchivedBtn = document.getElementById('showArchivedBtn');
     let showArchived = showArchivedBtn ? showArchivedBtn.dataset.showArchived === '1' : false;
-    const fundForm = document.getElementById('fundForm');
+    let fundFormModalEl = document.getElementById('fundFormModal');
+    if (fundFormModalEl && typeof window.mountModalOnBody === 'function') {
+        fundFormModalEl = window.mountModalOnBody(fundFormModalEl);
+    }
+    const fundFormModal = fundFormModalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal
+        ? bootstrap.Modal.getOrCreateInstance(fundFormModalEl)
+        : null;
     const fundFormContent = document.getElementById('fundFormContent');
     const formAction = document.getElementById('formAction');
     const fundId = document.getElementById('fundId');
     const formTitle = document.getElementById('formTitle');
-    const cancelBtn = document.getElementById('cancelBtn');
-    
+
     let selectedRow = null;
-    
+
+    function openFormModal() {
+        if (typeof window.showFragmentModal === 'function' && fundFormModalEl) {
+            window.showFragmentModal(fundFormModalEl);
+        } else if (fundFormModal) {
+            fundFormModal.show();
+        }
+    }
+
+    function rowIsArchived(row) {
+        if (!row) return false;
+        if (row.dataset && (row.dataset.archived === '1' || row.dataset.archived === 'true')) return true;
+        const cell = row.cells && row.cells[4] ? row.cells[4].textContent.trim() : '';
+        return cell === 'Yes';
+    }
+
+    function syncArchiveButton() {
+        if (!selectedRow) {
+            archiveBtn.disabled = true;
+            archiveBtn.textContent = 'Archive/Unarchive';
+            return;
+        }
+        archiveBtn.disabled = false;
+        archiveBtn.textContent = rowIsArchived(selectedRow) ? 'Unarchive' : 'Archive';
+    }
+
     // Enable/disable buttons based on row selection
     tableBody.addEventListener('click', function(event) {
         const row = event.target.closest('tr');
-        if (row) {
-            // Deselect previous row
+        if (row && row.getAttribute('data-id')) {
             if (selectedRow) {
                 selectedRow.classList.remove('table-primary');
             }
-            
-            // Select new row
             selectedRow = row;
-            if (selectedRow) {
-                selectedRow.classList.add('table-primary');
-                // Enable action buttons
-                editBtn.disabled = false;
-                deleteBtn.disabled = false;
-                archiveBtn.disabled = false;
-            }
+            selectedRow.classList.add('table-primary');
+            editBtn.disabled = false;
+            deleteBtn.disabled = false;
+            syncArchiveButton();
         }
     });
-    
-    // Add button
+
+    // Add button — open modal with empty form
     addBtn.addEventListener('click', function() {
-        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        // Reset form
         fundFormContent.reset();
         formAction.value = 'add';
         formTitle.textContent = 'Add New Fund';
         fundId.value = '';
-        fundForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(fundFormContent);
-        
-        // Disable action buttons during editing
-        addBtn.disabled = true;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+        openFormModal();
     });
-    
-    // Edit button
+
+    // Edit button — populate form from selected row and open modal
     editBtn.addEventListener('click', function() {
         if (!selectedRow) return;
-        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        
-        // Get fund data from the row
+
         const id = selectedRow.getAttribute('data-id');
         const name = selectedRow.cells[0].textContent;
         const code = selectedRow.cells[1].textContent;
         const type = selectedRow.cells[2].textContent;
         const description = selectedRow.cells[3].textContent;
-        const archived = selectedRow.cells[4].textContent === 'Yes';
-        
-        // Fill form
+        const archived = rowIsArchived(selectedRow);
+
         fundId.value = id;
         document.getElementById('name').value = name;
         document.getElementById('code').value = code;
         document.getElementById('type').value = type;
         document.getElementById('description').value = description;
         document.getElementById('archived').checked = archived;
-        
+
         formAction.value = 'edit';
         formTitle.textContent = 'Edit Fund';
-        fundForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(fundFormContent);
-        
-        // Disable action buttons during editing
-        addBtn.disabled = true;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+        openFormModal();
     });
-    
+
     // Delete button
     deleteBtn.addEventListener('click', function() {
         if (!selectedRow) return;
-        
+
         const id = selectedRow.getAttribute('data-id');
         if (confirm('Are you sure you want to delete this fund?')) {
-            // Set action to delete
             formAction.value = 'delete';
             fundId.value = id;
-            
-            // Submit form
             fundFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         }
     });
-    
-    // Cancel button
-    cancelBtn.addEventListener('click', function() {
+
+    // Archive / Unarchive — explicit FormData (do not rely on the edit-form checkbox alone)
+    archiveBtn.addEventListener('click', function() {
+        if (!selectedRow) {
+            if (typeof showToast === 'function') showToast('Please select a fund first.', 'warning');
+            return;
+        }
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(fundFormContent);
-        fundForm.classList.add('d-none');
-        
-        // Re-enable action buttons
-        addBtn.disabled = false;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+
+        const id = selectedRow.getAttribute('data-id');
+        const isCurrentlyArchived = rowIsArchived(selectedRow);
+        const newArchivedState = !isCurrentlyArchived;
+        const verb = newArchivedState ? 'archive' : 'unarchive';
+
+        if (!confirm('Are you sure you want to ' + verb + ' this fund?')) return;
+
+        const fd = new FormData();
+        fd.append('action', 'archive');
+        fd.append('id', id);
+        fd.append('archived', newArchivedState ? '1' : '0');
+        const qs = showArchived ? '?show_archived=1' : '';
+        submitFormAndReload('pages/' + currentPage + '.php', fd, 'pages/' + currentPage + '.php' + qs);
     });
-    
-    // Toggle archived via fetch (no full reload)
+
+    // Toggle show-archived list via fetch (no full reload)
     showArchivedBtn.addEventListener('click', function() {
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         showArchived = !showArchived;
@@ -317,8 +345,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             })
             .catch(e => console.error('Toggle error:', e));
     });
-    
-    // Handle form submission via AJAX to stay in tab
+
+    // Handle form submission via AJAX to stay in tab (list refresh closes modal)
     fundFormContent.addEventListener('submit', function(e) {
         e.preventDefault();
         const qs = showArchived ? '?show_archived=1' : '';

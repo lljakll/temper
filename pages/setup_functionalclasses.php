@@ -11,35 +11,53 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         if ($action === 'add') {
             $name = $_POST['name'] ?? '';
             $description = $_POST['description'] ?? '';
-            $archived = isset($_POST['archived']) ? 1 : 0;
+            $archived = temperParsePostArchived();
             
-            $stmt = $db->prepare("INSERT INTO functional_categories (name, description, archived) VALUES (?, ?, ?)");
-            $stmt->bind_param("ssi", $name, $description, $archived);
-            $stmt->execute();
+            $stmt = $db->prepare("INSERT INTO functional_categories (name, description, archived, archived_at) VALUES (?, ?, ?, IF(? = 1, NOW(), NULL))");
+            $stmt->bind_param("ssii", $name, $description, $archived, $archived);
+            if ($stmt->execute() === TRUE) {
+                echo "Functional class added successfully\n";
+            } else {
+                echo "Error adding functional class: " . $db->error . "\n";
+            }
             $stmt->close();
         } elseif ($action === 'edit') {
-            $id = $_POST['id'] ?? 0;
+            $id = (int)($_POST['id'] ?? 0);
             $name = $_POST['name'] ?? '';
             $description = $_POST['description'] ?? '';
-            $archived = isset($_POST['archived']) ? 1 : 0;
+            $archived = temperParsePostArchived();
             
-            $stmt = $db->prepare("UPDATE functional_categories SET name=?, description=?, archived=? WHERE id=?");
-            $stmt->bind_param("ssii", $name, $description, $archived, $id);
-            $stmt->execute();
+            $stmt = $db->prepare("UPDATE functional_categories SET name=?, description=?, archived=?, archived_at=IF(? = 1, COALESCE(archived_at, NOW()), NULL) WHERE id=?");
+            $stmt->bind_param("ssiii", $name, $description, $archived, $archived, $id);
+            if ($stmt->execute() === TRUE) {
+                echo "Functional class updated successfully\n";
+            } else {
+                echo "Error updating functional class: " . $db->error . "\n";
+            }
             $stmt->close();
         } elseif ($action === 'delete') {
-            $id = $_POST['id'] ?? 0;
+            $id = (int)($_POST['id'] ?? 0);
             $stmt = $db->prepare("DELETE FROM functional_categories WHERE id=?");
             $stmt->bind_param("i", $id);
-            $stmt->execute();
+            if ($stmt->execute() === TRUE) {
+                echo "Functional class deleted successfully\n";
+            } else {
+                echo "Error deleting functional class: " . $db->error . "\n";
+            }
             $stmt->close();
         } elseif ($action === 'archive') {
-            $id = $_POST['id'] ?? 0;
-            $archived = isset($_POST['archived']) ? 1 : 0;
+            $id = (int)($_POST['id'] ?? 0);
+            $archived = temperParsePostArchived();
             
-            $stmt = $db->prepare("UPDATE functional_categories SET archived=? WHERE id=?");
-            $stmt->bind_param("ii", $archived, $id);
-            $stmt->execute();
+            $stmt = $db->prepare("UPDATE functional_categories SET archived=?, archived_at=IF(? = 1, COALESCE(archived_at, NOW()), NULL) WHERE id=?");
+            $stmt->bind_param("iii", $archived, $archived, $id);
+            if ($stmt->execute() === TRUE) {
+                echo $archived
+                    ? "Functional class archived successfully\n"
+                    : "Functional class unarchived successfully\n";
+            } else {
+                echo "Error updating functional class archived status: " . $db->error . "\n";
+            }
             $stmt->close();
         }
     }
@@ -88,10 +106,12 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             <tbody id="functionalTableBody">
                 <?php if ($functional_result && $functional_result->num_rows > 0): ?>
                     <?php while ($fc = $functional_result->fetch_assoc()): ?>
-                        <tr data-id="<?= $fc['id'] ?>">
+                        <tr data-id="<?= (int)$fc['id'] ?>"
+                            data-archived="<?= !empty($fc['archived']) ? '1' : '0' ?>"
+                            class="<?= !empty($fc['archived']) ? 'table-secondary' : '' ?>">
                             <td><?= htmlspecialchars($fc['name']) ?></td>
                             <td><?= htmlspecialchars($fc['description'] ?? '') ?></td>
-                            <td><?= $fc['archived'] ? 'Yes' : 'No' ?></td>
+                            <td><?= !empty($fc['archived']) ? 'Yes' : 'No' ?></td>
                         </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
@@ -103,31 +123,41 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         </table>
     </div>
     
-    <!-- Form for adding/editing -->
-    <div id="functionalForm" class="mt-4 d-none">
-        <h4 id="formTitle">Add New Functional Class</h4>
-        <form id="functionalFormContent" method="POST" data-dirty-track>
-            <input type="hidden" id="functionalId" name="id">
-            <input type="hidden" name="action" id="formAction">
-            
-            <div class="mb-3">
-                <label for="name" class="form-label">Name</label>
-                <input type="text" class="form-control" id="name" name="name" required>
+    <!-- Add / Edit modal -->
+    <div class="modal fade" id="functionalFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form id="functionalFormContent" method="POST" data-dirty-track>
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="formTitle">Add New Functional Class</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" id="functionalId" name="id">
+                        <input type="hidden" name="action" id="formAction">
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="name" name="name" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                        </div>
+
+                        <div class="mb-0 form-check">
+                            <input type="checkbox" class="form-check-input" id="archived" name="archived" value="1">
+                            <label class="form-check-label" for="archived">Archived</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
             </div>
-            
-            <div class="mb-3">
-                <label for="description" class="form-label">Description</label>
-                <textarea class="form-control" id="description" name="description" rows="3"></textarea>
-            </div>
-            
-            <div class="mb-3 form-check">
-                <input type="checkbox" class="form-check-input" id="archived" name="archived">
-                <label class="form-check-label" for="archived">Archived</label>
-            </div>
-            
-            <button type="submit" class="btn btn-primary">Save</button>
-            <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
-        </form>
+        </div>
     </div>
 </div>
 
@@ -141,134 +171,126 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     const archiveBtn = document.getElementById('archiveBtn');
     const showArchivedBtn = document.getElementById('showArchivedBtn');
     let showArchived = showArchivedBtn ? showArchivedBtn.dataset.showArchived === '1' : false;
-    const functionalForm = document.getElementById('functionalForm');
+    let functionalFormModalEl = document.getElementById('functionalFormModal');
+    if (functionalFormModalEl && typeof window.mountModalOnBody === 'function') {
+        functionalFormModalEl = window.mountModalOnBody(functionalFormModalEl);
+    }
+    const functionalFormModal = functionalFormModalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal
+        ? bootstrap.Modal.getOrCreateInstance(functionalFormModalEl)
+        : null;
     const functionalFormContent = document.getElementById('functionalFormContent');
     const formAction = document.getElementById('formAction');
     const functionalId = document.getElementById('functionalId');
     const formTitle = document.getElementById('formTitle');
-    const cancelBtn = document.getElementById('cancelBtn');
-    
+
     let selectedRow = null;
-    
+
+    function openFormModal() {
+        if (typeof window.showFragmentModal === 'function' && functionalFormModalEl) {
+            window.showFragmentModal(functionalFormModalEl);
+        } else if (functionalFormModal) {
+            functionalFormModal.show();
+        }
+    }
+
+    function rowIsArchived(row) {
+        if (!row) return false;
+        if (row.dataset && (row.dataset.archived === '1' || row.dataset.archived === 'true')) return true;
+        const cell = row.cells && row.cells[2] ? row.cells[2].textContent.trim() : '';
+        return cell === 'Yes';
+    }
+
+    function syncArchiveButton() {
+        if (!selectedRow) {
+            archiveBtn.disabled = true;
+            archiveBtn.textContent = 'Archive/Unarchive';
+            return;
+        }
+        archiveBtn.disabled = false;
+        archiveBtn.textContent = rowIsArchived(selectedRow) ? 'Unarchive' : 'Archive';
+    }
+
     // Enable/disable buttons based on row selection
     tableBody.addEventListener('click', function(event) {
         const row = event.target.closest('tr');
-        if (row) {
-            // Deselect previous row
+        if (row && row.getAttribute('data-id')) {
             if (selectedRow) {
                 selectedRow.classList.remove('table-primary');
             }
-            
-            // Select new row
             selectedRow = row;
-            if (selectedRow) {
-                selectedRow.classList.add('table-primary');
-                // Enable action buttons
-                editBtn.disabled = false;
-                deleteBtn.disabled = false;
-                archiveBtn.disabled = false;
-            }
+            selectedRow.classList.add('table-primary');
+            editBtn.disabled = false;
+            deleteBtn.disabled = false;
+            syncArchiveButton();
         }
     });
-    
-    // Add button
+
+    // Add button — open modal with empty form
     addBtn.addEventListener('click', function() {
-        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        // Reset form
         functionalFormContent.reset();
         formAction.value = 'add';
         formTitle.textContent = 'Add New Functional Class';
         functionalId.value = '';
-        functionalForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(functionalFormContent);
-        
-        // Disable action buttons during editing
-        addBtn.disabled = true;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+        openFormModal();
     });
-    
-    // Edit button
+
+    // Edit button — populate form from selected row and open modal
     editBtn.addEventListener('click', function() {
         if (!selectedRow) return;
-        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        
-        // Get data from the row
+
         const id = selectedRow.getAttribute('data-id');
         const name = selectedRow.cells[0].textContent;
         const description = selectedRow.cells[1].textContent;
-        const archived = selectedRow.cells[2].textContent === 'Yes';
-        
-        // Fill form
+        const archived = rowIsArchived(selectedRow);
+
         functionalId.value = id;
         document.getElementById('name').value = name;
         document.getElementById('description').value = description;
         document.getElementById('archived').checked = archived;
-        
+
         formAction.value = 'edit';
         formTitle.textContent = 'Edit Functional Class';
-        functionalForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(functionalFormContent);
-        
-        // Disable action buttons during editing
-        addBtn.disabled = true;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+        openFormModal();
     });
-    
+
     // Delete button
     deleteBtn.addEventListener('click', function() {
         if (!selectedRow) return;
-        
+
         const id = selectedRow.getAttribute('data-id');
         if (confirm('Are you sure you want to delete this functional class?')) {
-            // Set action to delete
             formAction.value = 'delete';
             functionalId.value = id;
-            
-            // Submit form
             functionalFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         }
     });
-    
-    // Archive/Unarchive button
+
+    // Archive / Unarchive — explicit FormData so archived=0|1 is always sent correctly
     archiveBtn.addEventListener('click', function() {
         if (!selectedRow) {
-            showToast('Please select a functional class first.', 'warning');
+            if (typeof showToast === 'function') showToast('Please select a functional class first.', 'warning');
             return;
         }
-        
-        const id = selectedRow.getAttribute('data-id');
-        const isCurrentlyArchived = selectedRow.cells[2].textContent.trim() === 'Yes';
-        const newArchivedState = !isCurrentlyArchived;
-        
-        if (confirm(`Are you sure you want to ${newArchivedState ? 'archive' : 'unarchive'} this functional class?`)) {
-            // Set form values for archive action
-            formAction.value = 'archive';
-            functionalId.value = id;
-            document.getElementById('archived').checked = newArchivedState;
-            
-            // Submit the form
-            functionalFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-        }
-    });
-    
-    // Cancel button
-    cancelBtn.addEventListener('click', function() {
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(functionalFormContent);
-        functionalForm.classList.add('d-none');
-        
-        // Re-enable action buttons
-        addBtn.disabled = false;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+
+        const id = selectedRow.getAttribute('data-id');
+        const isCurrentlyArchived = rowIsArchived(selectedRow);
+        const newArchivedState = !isCurrentlyArchived;
+        const verb = newArchivedState ? 'archive' : 'unarchive';
+
+        if (!confirm('Are you sure you want to ' + verb + ' this functional class?')) return;
+
+        const fd = new FormData();
+        fd.append('action', 'archive');
+        fd.append('id', id);
+        fd.append('archived', newArchivedState ? '1' : '0');
+        const qs = showArchived ? '?show_archived=1' : '';
+        submitFormAndReload('pages/' + currentPage + '.php', fd, 'pages/' + currentPage + '.php' + qs);
     });
-    
-    // Toggle archived via fetch (no full reload)
+
+    // Toggle show-archived list via fetch (no full reload)
     showArchivedBtn.addEventListener('click', function() {
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         showArchived = !showArchived;
@@ -281,8 +303,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
             })
             .catch(e => console.error('Toggle error:', e));
     });
-    
-    // Handle form submission via AJAX to stay in tab
+
+    // Handle form submission via AJAX to stay in tab (list refresh closes modal)
     functionalFormContent.addEventListener('submit', function(e) {
         e.preventDefault();
         const qs = showArchived ? '?show_archived=1' : '';

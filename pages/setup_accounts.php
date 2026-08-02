@@ -82,8 +82,8 @@ if ($fr) {
                 }
                 $natural_category_id = setupAccountsParseCategoryId($_POST['natural_category_id'] ?? null);
                 $functional_category_id = setupAccountsParseCategoryId($_POST['functional_category_id'] ?? null);
-                $archived = isset($_POST['archived']) ? 1 : 0;
-                $mutable_fund = isset($_POST['mutable_fund']) ? 1 : 0;
+                $archived = temperParsePostArchived();
+                $mutable_fund = temperParsePostArchived($_POST, 'mutable_fund');
                 
                 // Validate required fields
                 if (empty($name)) {
@@ -93,8 +93,8 @@ if ($fr) {
                 } elseif ($normal_balance === null) {
                     echo "Error: Normal Balance must be debit or credit\n";
                 } else {
-                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, account_type, coa_number, natural_category_id, functional_category_id, archived, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("sssssiiii", $name, $description, $normal_balance, $account_type, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund);
+                    $stmt = $db->prepare("INSERT INTO accounts (name, description, normal_balance, account_type, coa_number, natural_category_id, functional_category_id, archived, archived_at, mutable_fund) VALUES (?, ?, ?, ?, ?, ?, ?, ?, IF(? = 1, NOW(), NULL), ?)");
+                    $stmt->bind_param("sssssiiiii", $name, $description, $normal_balance, $account_type, $coa_number, $natural_category_id, $functional_category_id, $archived, $archived, $mutable_fund);
                     if ($stmt->execute() === TRUE) {
                         echo "Account added successfully\n";
                     } else {
@@ -105,7 +105,7 @@ if ($fr) {
             }
             elseif ($action === 'edit') {
                 // Update existing account record
-                $id = $_POST['id'] ?? 0;
+                $id = (int)($_POST['id'] ?? 0);
                 $name = $_POST['name'] ?? '';
                 $description = $_POST['description'] ?? '';
                 $account_type = setupAccountsParseAccountType($_POST['account_type'] ?? null);
@@ -118,8 +118,8 @@ if ($fr) {
                 }
                 $natural_category_id = setupAccountsParseCategoryId($_POST['natural_category_id'] ?? null);
                 $functional_category_id = setupAccountsParseCategoryId($_POST['functional_category_id'] ?? null);
-                $archived = isset($_POST['archived']) ? 1 : 0;
-                $mutable_fund = isset($_POST['mutable_fund']) ? 1 : 0;
+                $archived = temperParsePostArchived();
+                $mutable_fund = temperParsePostArchived($_POST, 'mutable_fund');
                 
                 // Validate required fields and account exists
                 if (empty($name) || $id <= 0) {
@@ -136,8 +136,8 @@ if ($fr) {
                     $result = $check_stmt->get_result();
                     
                     if ($result->num_rows > 0) {
-                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, account_type=?, coa_number=?, natural_category_id=?, functional_category_id=?, archived=?, mutable_fund=? WHERE id=?");
-                        $stmt->bind_param("sssssiiiii", $name, $description, $normal_balance, $account_type, $coa_number, $natural_category_id, $functional_category_id, $archived, $mutable_fund, $id);
+                        $stmt = $db->prepare("UPDATE accounts SET name=?, description=?, normal_balance=?, account_type=?, coa_number=?, natural_category_id=?, functional_category_id=?, archived=?, archived_at=IF(? = 1, COALESCE(archived_at, NOW()), NULL), mutable_fund=? WHERE id=?");
+                        $stmt->bind_param("sssssiiiiii", $name, $description, $normal_balance, $account_type, $coa_number, $natural_category_id, $functional_category_id, $archived, $archived, $mutable_fund, $id);
                         if ($stmt->execute() === TRUE) {
                             echo "Account updated successfully\n";
                         } else {
@@ -152,7 +152,7 @@ if ($fr) {
             }
             elseif ($action === 'delete') {
                 // Delete account record
-                $id = $_POST['id'] ?? 0;
+                $id = (int)($_POST['id'] ?? 0);
                 
                 if ($id <= 0) {
                     echo "Error: Invalid account ID\n";
@@ -169,8 +169,8 @@ if ($fr) {
             }
             elseif ($action === 'archive') {
                 // Archive/unarchive account record
-                $id = $_POST['id'] ?? 0;
-                $archived = $_POST['archived'] ?? 0;
+                $id = (int)($_POST['id'] ?? 0);
+                $archived = temperParsePostArchived();
                 
                 // Validate ID
                 if ($id <= 0) {
@@ -183,10 +183,12 @@ if ($fr) {
                     $result = $check_stmt->get_result();
                     
                     if ($result->num_rows > 0) {
-                        $stmt = $db->prepare("UPDATE accounts SET archived=? WHERE id=?");
-                        $stmt->bind_param("ii", $archived, $id);
+                        $stmt = $db->prepare("UPDATE accounts SET archived=?, archived_at=IF(? = 1, COALESCE(archived_at, NOW()), NULL) WHERE id=?");
+                        $stmt->bind_param("iii", $archived, $archived, $id);
                         if ($stmt->execute() === TRUE) {
-                            echo "Account archived status updated successfully\n";
+                            echo $archived
+                                ? "Account archived successfully\n"
+                                : "Account unarchived successfully\n";
                         } else {
                             echo "Error updating account archived status: " . $db->error . "\n";
                         }
@@ -274,14 +276,15 @@ if ($fr) {
                             $expectedNb = $acctType !== '' ? setupAccountsExpectedNormalBalance($acctType) : '';
                             $nbDiverges = ($expectedNb !== '' && $nbVal !== '' && $nbVal !== $expectedNb);
                         ?>
-                        <tr data-id="<?= $account['id'] ?>"
+                        <tr data-id="<?= (int)$account['id'] ?>"
                             data-coa-number="<?= htmlspecialchars($coaDisplay) ?>"
                             data-account-type="<?= htmlspecialchars($acctType) ?>"
                             data-normal-balance="<?= htmlspecialchars($nbVal) ?>"
                             data-natural-id="<?= $account['natural_category_id'] !== null ? (int)$account['natural_category_id'] : '' ?>"
                             data-functional-id="<?= $account['functional_category_id'] !== null ? (int)$account['functional_category_id'] : '' ?>"
-                            data-archived="<?= $account['archived'] ? '1' : '0' ?>"
-                            data-mutable-fund="<?= $account['mutable_fund'] ? '1' : '0' ?>">
+                            data-archived="<?= !empty($account['archived']) ? '1' : '0' ?>"
+                            data-mutable-fund="<?= !empty($account['mutable_fund']) ? '1' : '0' ?>"
+                            class="<?= !empty($account['archived']) ? 'table-secondary' : '' ?>">
                             <td class="font-monospace"><?= htmlspecialchars($coaDisplay !== '' ? $coaDisplay : '—') ?></td>
                             <td><?= htmlspecialchars($account['name']) ?></td>
                             <td><?= htmlspecialchars($account['description'] ?? '') ?></td>
@@ -294,8 +297,8 @@ if ($fr) {
                             </td>
                             <td><?= htmlspecialchars($account['natural_name'] !== '' ? $account['natural_name'] : '—') ?></td>
                             <td><?= htmlspecialchars($account['functional_name'] !== '' ? $account['functional_name'] : '—') ?></td>
-                            <td><?= $account['archived'] ? 'Yes' : 'No' ?></td>
-                            <td><?= $account['mutable_fund'] ? 'Yes' : 'No' ?></td>
+                            <td><?= !empty($account['archived']) ? 'Yes' : 'No' ?></td>
+                            <td><?= !empty($account['mutable_fund']) ? 'Yes' : 'No' ?></td>
                         </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
@@ -307,90 +310,100 @@ if ($fr) {
         </table>
     </div>
     
-    <!-- Form for adding/editing -->
-    <div id="accountForm" class="mt-4 d-none">
-        <h4 id="formTitle">Add New Account</h4>
-        <form id="accountFormContent" method="POST" data-dirty-track>
-            <input type="hidden" id="accountId" name="id">
-            <input type="hidden" name="action" id="formAction">
-            
-            <div class="row g-2 mb-3">
-                <div class="col-md-4">
-                    <label for="coa_number" class="form-label">CoA Number</label>
-                    <input type="text" class="form-control font-monospace" id="coa_number" name="coa_number" maxlength="50" placeholder="e.g. 1000">
-                    <div class="form-text">Internal Chart of Accounts reference only.</div>
-                </div>
-                <div class="col-md-8">
-                    <label for="name" class="form-label">Name</label>
-                    <input type="text" class="form-control" id="name" name="name" required>
-                </div>
-            </div>
-            
-            <div class="mb-3">
-                <label for="description" class="form-label">Description</label>
-                <textarea class="form-control" id="description" name="description" rows="3"></textarea>
-            </div>
-
-            <div class="row g-2 mb-3">
-                <div class="col-md-6">
-                    <label for="account_type" class="form-label">Account Type <span class="text-danger">*</span></label>
-                    <select class="form-select" id="account_type" name="account_type" required>
-                        <option value="">— Select —</option>
-                        <option value="asset">Asset</option>
-                        <option value="liability">Liability</option>
-                        <option value="equity">Equity</option>
-                        <option value="income">Income</option>
-                        <option value="expense">Expense</option>
-                    </select>
-                    <div class="form-text">Classic accounting element (required). Natural/Functional categories remain optional secondary labels.</div>
-                </div>
-                <div class="col-md-6">
-                    <label for="normal_balance" class="form-label">Normal Balance</label>
-                    <select class="form-select" id="normal_balance" name="normal_balance" required>
-                        <option value="debit">Debit</option>
-                        <option value="credit">Credit</option>
-                    </select>
-                    <div id="normalBalanceCaution" class="form-text text-warning d-none" role="status">
-                        Caution: Normal Balance differs from the usual value for this Account Type. You can still save after confirming.
+    <!-- Add / Edit modal -->
+    <div class="modal fade" id="accountFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <form id="accountFormContent" method="POST" data-dirty-track>
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="formTitle">Add New Account</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                </div>
-            </div>
+                    <div class="modal-body">
+                        <input type="hidden" id="accountId" name="id">
+                        <input type="hidden" name="action" id="formAction">
 
-            <div class="row g-2 mb-3">
-                <div class="col-md-6">
-                    <label for="natural_category_id" class="form-label">Natural Category</label>
-                    <select class="form-select" id="natural_category_id" name="natural_category_id">
-                        <option value="">— Optional —</option>
-                        <?php foreach ($naturalOpts as $opt): ?>
-                            <option value="<?= (int)$opt['id'] ?>"><?= htmlspecialchars($opt['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div class="form-text">Shown as a read-only label on budget lines.</div>
-                </div>
-                <div class="col-md-6">
-                    <label for="functional_category_id" class="form-label">Functional Category</label>
-                    <select class="form-select" id="functional_category_id" name="functional_category_id">
-                        <option value="">— Optional —</option>
-                        <?php foreach ($functionalOpts as $opt): ?>
-                            <option value="<?= (int)$opt['id'] ?>"><?= htmlspecialchars($opt['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-4">
+                                <label for="coa_number" class="form-label">CoA Number</label>
+                                <input type="text" class="form-control font-monospace" id="coa_number" name="coa_number" maxlength="50" placeholder="e.g. 1000">
+                                <div class="form-text">Internal Chart of Accounts reference only.</div>
+                            </div>
+                            <div class="col-md-8">
+                                <label for="name" class="form-label">Name</label>
+                                <input type="text" class="form-control" id="name" name="name" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-6">
+                                <label for="account_type" class="form-label">Account Type <span class="text-danger">*</span></label>
+                                <select class="form-select" id="account_type" name="account_type" required>
+                                    <option value="">— Select —</option>
+                                    <option value="asset">Asset</option>
+                                    <option value="liability">Liability</option>
+                                    <option value="equity">Equity</option>
+                                    <option value="income">Income</option>
+                                    <option value="expense">Expense</option>
+                                </select>
+                                <div class="form-text">Classic accounting element (required). Natural/Functional categories remain optional secondary labels.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="normal_balance" class="form-label">Normal Balance</label>
+                                <select class="form-select" id="normal_balance" name="normal_balance" required>
+                                    <option value="debit">Debit</option>
+                                    <option value="credit">Credit</option>
+                                </select>
+                                <div id="normalBalanceCaution" class="form-text text-warning d-none" role="status">
+                                    Caution: Normal Balance differs from the usual value for this Account Type. You can still save after confirming.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-6">
+                                <label for="natural_category_id" class="form-label">Natural Category</label>
+                                <select class="form-select" id="natural_category_id" name="natural_category_id">
+                                    <option value="">— Optional —</option>
+                                    <?php foreach ($naturalOpts as $opt): ?>
+                                        <option value="<?= (int)$opt['id'] ?>"><?= htmlspecialchars($opt['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text">Shown as a read-only label on budget lines.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="functional_category_id" class="form-label">Functional Category</label>
+                                <select class="form-select" id="functional_category_id" name="functional_category_id">
+                                    <option value="">— Optional —</option>
+                                    <?php foreach ($functionalOpts as $opt): ?>
+                                        <option value="<?= (int)$opt['id'] ?>"><?= htmlspecialchars($opt['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="archived" name="archived" value="1">
+                            <label class="form-check-label" for="archived">Archived</label>
+                        </div>
+
+                        <div class="mb-0 form-check">
+                            <input type="checkbox" class="form-check-input" id="mutable_fund" name="mutable_fund" value="1">
+                            <label class="form-check-label" for="mutable_fund">Mutable Fund</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
             </div>
-            
-            <div class="mb-3 form-check">
-                <input type="checkbox" class="form-check-input" id="archived" name="archived">
-                <label class="form-check-label" for="archived">Archived</label>
-            </div>
-            
-            <div class="mb-3 form-check">
-                <input type="checkbox" class="form-check-input" id="mutable_fund" name="mutable_fund">
-                <label class="form-check-label" for="mutable_fund">Mutable Fund</label>
-            </div>
-            
-            <button type="submit" class="btn btn-primary">Save</button>
-            <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
-        </form>
+        </div>
     </div>
 </div>
 
@@ -404,12 +417,17 @@ if ($fr) {
     const archiveBtn = document.getElementById('archiveBtn');
     const showArchivedBtn = document.getElementById('showArchivedBtn');
     let showArchived = showArchivedBtn ? showArchivedBtn.dataset.showArchived === '1' : false;
-    const accountForm = document.getElementById('accountForm');
+    let accountFormModalEl = document.getElementById('accountFormModal');
+    if (accountFormModalEl && typeof window.mountModalOnBody === 'function') {
+        accountFormModalEl = window.mountModalOnBody(accountFormModalEl);
+    }
+    const accountFormModal = accountFormModalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal
+        ? bootstrap.Modal.getOrCreateInstance(accountFormModalEl)
+        : null;
     const accountFormContent = document.getElementById('accountFormContent');
     const formAction = document.getElementById('formAction');
     const accountId = document.getElementById('accountId');
     const formTitle = document.getElementById('formTitle');
-    const cancelBtn = document.getElementById('cancelBtn');
     const accountTypeEl = document.getElementById('account_type');
     const normalBalanceEl = document.getElementById('normal_balance');
     const normalBalanceCaution = document.getElementById('normalBalanceCaution');
@@ -431,6 +449,14 @@ if ($fr) {
 
     /** When true, next account_type change should auto-fill normal balance (add flow). */
     let autoPopulateNormalOnTypeChange = false;
+
+    function openFormModal() {
+        if (typeof window.showFragmentModal === 'function' && accountFormModalEl) {
+            window.showFragmentModal(accountFormModalEl);
+        } else if (accountFormModal) {
+            accountFormModal.show();
+        }
+    }
 
     function expectedNormalBalance(accountType) {
         return expectedNormalByType[accountType] || null;
@@ -464,27 +490,38 @@ if ($fr) {
         }
         updateNormalBalanceCaution();
     }
-    
+
     let selectedRow = null;
-    
+
+    function rowIsArchived(row) {
+        if (!row) return false;
+        if (row.dataset && (row.dataset.archived === '1' || row.dataset.archived === 'true')) return true;
+        const cell = row.cells && row.cells[7] ? row.cells[7].textContent.trim() : '';
+        return cell === 'Yes';
+    }
+
+    function syncArchiveButton() {
+        if (!selectedRow) {
+            archiveBtn.disabled = true;
+            archiveBtn.textContent = 'Archive/Unarchive';
+            return;
+        }
+        archiveBtn.disabled = false;
+        archiveBtn.textContent = rowIsArchived(selectedRow) ? 'Unarchive' : 'Archive';
+    }
+
     // Enable/disable buttons based on row selection
     tableBody.addEventListener('click', function(event) {
         const row = event.target.closest('tr');
         if (row && row.dataset.id) {
-            // Deselect previous row
             if (selectedRow) {
                 selectedRow.classList.remove('table-primary');
             }
-            
-            // Select new row
             selectedRow = row;
-            if (selectedRow) {
-                selectedRow.classList.add('table-primary');
-                // Enable action buttons
-                editBtn.disabled = false;
-                deleteBtn.disabled = false;
-                archiveBtn.disabled = false;
-            }
+            selectedRow.classList.add('table-primary');
+            editBtn.disabled = false;
+            deleteBtn.disabled = false;
+            syncArchiveButton();
         }
     });
 
@@ -500,11 +537,17 @@ if ($fr) {
     if (normalBalanceEl) {
         normalBalanceEl.addEventListener('change', updateNormalBalanceCaution);
     }
-    
-    // Add button
+
+    // Reset auto-populate when modal closes (cancel / backdrop / Escape)
+    if (accountFormModalEl) {
+        accountFormModalEl.addEventListener('hidden.bs.modal', function() {
+            autoPopulateNormalOnTypeChange = false;
+            updateNormalBalanceCaution();
+        });
+    }
+
+    // Add button — open modal with empty form
     addBtn.addEventListener('click', function() {
-        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        // Reset form
         accountFormContent.reset();
         formAction.value = 'add';
         formTitle.textContent = 'Add New Account';
@@ -513,30 +556,23 @@ if ($fr) {
         // Default Account Type + matching Normal Balance
         if (accountTypeEl) accountTypeEl.value = 'asset';
         applyExpectedNormalFromAccountType();
-        accountForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
-        
-        // Disable action buttons during editing
-        addBtn.disabled = true;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+        openFormModal();
     });
-    
-    // Edit button
+
+    // Edit button — populate form from selected row and open modal
     editBtn.addEventListener('click', function() {
         if (!selectedRow) return;
-        if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        
+
         // Prefer data attributes (stable) over cell indices
         const id = selectedRow.getAttribute('data-id');
         const name = selectedRow.cells[1] ? selectedRow.cells[1].textContent : '';
         const description = selectedRow.cells[2] ? selectedRow.cells[2].textContent : '';
         const accountType = selectedRow.dataset.accountType || '';
         const normalBalance = selectedRow.dataset.normalBalance || '';
-        const archived = selectedRow.dataset.archived === '1';
+        const archived = rowIsArchived(selectedRow);
         const mutableFund = selectedRow.dataset.mutableFund === '1';
-        
+
         // Fill form — do not auto-overwrite normal balance when loading edit
         autoPopulateNormalOnTypeChange = false;
         accountId.value = id;
@@ -550,73 +586,49 @@ if ($fr) {
         document.getElementById('archived').checked = archived;
         document.getElementById('mutable_fund').checked = mutableFund;
         updateNormalBalanceCaution();
-        
+
         formAction.value = 'edit';
         formTitle.textContent = 'Edit Account';
-        accountForm.classList.remove('d-none');
         if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
-        
-        // Disable action buttons during editing
-        addBtn.disabled = true;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+        openFormModal();
     });
-    
+
     // Delete button
     deleteBtn.addEventListener('click', function() {
         if (!selectedRow) return;
-        
+
         const id = selectedRow.getAttribute('data-id');
         if (confirm('Are you sure you want to delete this account?')) {
-            // Set action to delete
             formAction.value = 'delete';
             accountId.value = id;
-            
-            // Submit form
             accountFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         }
     });
-    
-    // Archive/Unarchive button
+
+    // Archive / Unarchive — explicit FormData so archived=0|1 is always sent correctly
     archiveBtn.addEventListener('click', function() {
         if (!selectedRow) {
-            showToast('Please select an account first.', 'warning');
+            if (typeof showToast === 'function') showToast('Please select an account first.', 'warning');
             return;
         }
-        
-        const id = selectedRow.getAttribute('data-id');
-        const isCurrentlyArchived = selectedRow.dataset.archived === '1'
-            || (selectedRow.cells[7] && selectedRow.cells[7].textContent.trim() === 'Yes');
-        const newArchivedState = !isCurrentlyArchived;
-        
-        if (confirm(`Are you sure you want to ${newArchivedState ? 'archive' : 'unarchive'} this account?`)) {
-            // Set form values for archive action
-            formAction.value = 'archive';
-            accountId.value = id;
-            document.getElementById('archived').checked = newArchivedState;
-            
-            // Submit the form
-            accountFormContent.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-        }
-    });
-    
-    // Cancel button
-    cancelBtn.addEventListener('click', function() {
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
-        if (typeof window.TemperDirtyForms !== 'undefined') window.TemperDirtyForms.markClean(accountFormContent);
-        accountForm.classList.add('d-none');
-        autoPopulateNormalOnTypeChange = false;
-        updateNormalBalanceCaution();
-        
-        // Re-enable action buttons
-        addBtn.disabled = false;
-        editBtn.disabled = true;
-        deleteBtn.disabled = true;
-        archiveBtn.disabled = true;
+
+        const id = selectedRow.getAttribute('data-id');
+        const isCurrentlyArchived = rowIsArchived(selectedRow);
+        const newArchivedState = !isCurrentlyArchived;
+        const verb = newArchivedState ? 'archive' : 'unarchive';
+
+        if (!confirm('Are you sure you want to ' + verb + ' this account?')) return;
+
+        const fd = new FormData();
+        fd.append('action', 'archive');
+        fd.append('id', id);
+        fd.append('archived', newArchivedState ? '1' : '0');
+        const qs = showArchived ? '?show_archived=1' : '';
+        submitFormAndReload('pages/' + currentPage + '.php', fd, 'pages/' + currentPage + '.php' + qs);
     });
-    
-    // Toggle archived via fetch (no full reload)
+
+    // Toggle show-archived list via fetch (no full reload)
     showArchivedBtn.addEventListener('click', function() {
         if (typeof window.confirmLeaveIfDirty === 'function' && !window.confirmLeaveIfDirty()) return;
         showArchived = !showArchived;
@@ -629,8 +641,8 @@ if ($fr) {
             })
             .catch(e => console.error('Toggle error:', e));
     });
-    
-    // Handle form submission via AJAX to stay in tab
+
+    // Handle form submission via AJAX to stay in tab (list refresh closes modal)
     accountFormContent.addEventListener('submit', function(e) {
         e.preventDefault();
 

@@ -115,6 +115,8 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         :root {
             --temper-sidebar-expanded: 15.5rem;
             --temper-sidebar-collapsed: 4.25rem;
+            /* Matches container-fluid p-2 so the fixed panel aligns with the shell */
+            --temper-shell-pad: 0.5rem;
             --temper-sidebar-transition: width 0.25s ease, max-width 0.25s ease,
                 flex-basis 0.25s ease, box-shadow 0.25s ease, padding 0.2s ease;
         }
@@ -234,7 +236,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             text-align: center;
         }
 
-        /* Offcanvas-md: sticky column on desktop */
+        /* Offcanvas-md: floating (fixed) panel on desktop; true offcanvas on mobile */
         #appSidebar.offcanvas {
             --bs-offcanvas-width: min(18rem, 85vw);
             --bs-offcanvas-bg: var(--bs-tertiary-bg);
@@ -243,11 +245,11 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         @media (min-width: 768px) {
             /*
              * Desktop shell layout:
-             * - Sidebar column owns a fixed width (expanded or collapsed rail).
-             * - Main content flexes to fill the rest and must never be covered after hover ends.
-             * - Hover peek overlays via position:absolute only while .sidebar-hover-expand is set;
-             *   all offcanvas insets (top/left/bottom) are reset when not peeking so Bootstrap's
-             *   .offcanvas-start bottom:0 / left:0 cannot leave a full-height panel over content.
+             * - #temperSidebarCol is an in-flow width spacer only (expanded / collapsed rail)
+             *   so #main-content-col never sits under the panel.
+             * - #appSidebar is position:fixed (floating): stays on screen while page content scrolls.
+             * - Hover peek while collapsed widens the fixed panel over content (no spacer reflow).
+             * - Mobile (< md) keeps Bootstrap offcanvas; these rules do not apply.
              */
             #temperSidebarCol {
                 flex: 0 0 var(--temper-sidebar-expanded);
@@ -255,30 +257,30 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 width: var(--temper-sidebar-expanded);
                 position: relative;
                 z-index: 2;
-                align-self: flex-start;
-                min-height: calc(100vh - 1rem);
+                /* Horizontal reservation only — panel is fixed to the viewport */
+                align-self: stretch;
+                min-height: 0;
                 overflow: visible;
                 transition: flex-basis 0.25s ease, max-width 0.25s ease, width 0.25s ease;
             }
             #appSidebar.offcanvas-md {
-                /* Override Bootstrap .offcanvas / .offcanvas-start fixed insets */
-                position: sticky !important;
-                top: 0.5rem !important;
-                left: auto !important;
+                /* Override Bootstrap .offcanvas / .offcanvas-start insets → floating rail */
+                position: fixed !important;
+                top: var(--temper-shell-pad) !important;
+                left: var(--temper-shell-pad) !important;
                 right: auto !important;
                 bottom: auto !important;
                 transform: none !important;
                 visibility: visible !important;
-                height: calc(100vh - 1rem);
-                max-height: calc(100vh - 1rem);
-                width: 100% !important;
-                max-width: 100% !important;
-                z-index: auto !important;
+                height: calc(100vh - (2 * var(--temper-shell-pad)));
+                max-height: calc(100vh - (2 * var(--temper-shell-pad)));
+                width: var(--temper-sidebar-expanded) !important;
+                max-width: var(--temper-sidebar-expanded) !important;
+                z-index: 1020 !important;
                 background: transparent !important;
                 border: 0 !important;
                 box-shadow: none !important;
-                /* Avoid width/position transitions fighting absolute↔sticky (covers main content) */
-                transition: box-shadow 0.2s ease;
+                transition: width 0.25s ease, max-width 0.25s ease, box-shadow 0.2s ease;
             }
             #appSidebar .offcanvas-body {
                 height: 100%;
@@ -288,7 +290,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 transition: padding 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
             }
             #main-content-col {
-                /* Take all remaining row space; stay under hover overlay only while peeking */
+                /* Take all remaining row space after the sidebar spacer */
                 flex: 1 1 0% !important;
                 max-width: none !important;
                 width: auto !important;
@@ -302,20 +304,20 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 flex: 0 0 var(--temper-sidebar-collapsed);
                 max-width: var(--temper-sidebar-collapsed);
                 width: var(--temper-sidebar-collapsed);
-                /* Rail stays a stable flex item; peek paints outside it */
+                /* Rail spacer stays collapsed; peek paints outside it */
                 overflow: visible;
                 z-index: 2;
             }
-            /* Explicit non-hover reset (must win over Bootstrap + any residual absolute state) */
+            /* Explicit non-hover reset (must win over Bootstrap + any residual expand state) */
             body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar {
-                position: sticky !important;
-                top: 0.5rem !important;
-                left: auto !important;
+                position: fixed !important;
+                top: var(--temper-shell-pad) !important;
+                left: var(--temper-shell-pad) !important;
                 right: auto !important;
                 bottom: auto !important;
-                width: 100% !important;
-                max-width: 100% !important;
-                z-index: auto !important;
+                width: var(--temper-sidebar-collapsed) !important;
+                max-width: var(--temper-sidebar-collapsed) !important;
+                z-index: 1020 !important;
                 box-shadow: none !important;
             }
             body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar .offcanvas-body {
@@ -383,21 +385,21 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 margin-left: 0 !important;
             }
 
-            /* ── Hover peek while collapsed (overlay expand) ─────────────── */
+            /* ── Hover peek while collapsed (overlay expand, still fixed) ── */
             body.sidebar-collapsed.sidebar-hover-expand #temperSidebarCol {
                 /* Column width stays collapsed so main content does not reflow */
                 z-index: 1040;
             }
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar {
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
+                position: fixed !important;
+                left: var(--temper-shell-pad) !important;
+                top: var(--temper-shell-pad) !important;
                 right: auto !important;
                 bottom: auto !important;
                 width: var(--temper-sidebar-expanded) !important;
                 max-width: var(--temper-sidebar-expanded) !important;
-                height: calc(100vh - 1rem);
-                max-height: calc(100vh - 1rem);
+                height: calc(100vh - (2 * var(--temper-shell-pad)));
+                max-height: calc(100vh - (2 * var(--temper-shell-pad)));
                 z-index: 1050 !important;
                 box-shadow: 0 0.5rem 1.75rem rgba(0, 0, 0, 0.18);
             }
@@ -768,10 +770,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
 
         // ── Client idle login timeout ──────────────────────────────────────
-        // - Shows a 60s warning modal before logout (or half of timeout if < 60s total).
-        // - Dismiss / "Stay logged in" refreshes the server session and resets the timer.
-        // - If not dismissed, redirects to login immediately when the countdown hits 0.
-        // Re-reads window.__temperLoginTimeout so Configuration saves apply without full reload.
+        // Single authority: window.__temperLoginTimeout (System Configuration).
+        // When enabled=false ("Disable Login Timeout"), never show the warning modal
+        // and never redirect for idle time — timers are cleared and stay off.
+        // When enabled, shows a 60s warning before logout (or half of timeout if short);
+        // "Stay logged in" refreshes the server session and resets the timer.
+        // Re-reads config so Configuration saves apply without full reload.
         (function initIdleLoginTimeout() {
             const WARN_LEAD_SEC = 60;
             const PING_URL = 'pages/session_ping.php';
@@ -787,8 +791,17 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
 
             function currentCfg() {
                 const cfg = window.__temperLoginTimeout || {};
+                const raw = cfg.enabled;
+                // Explicit disable is authoritative (bool, 0/1, or common string forms).
+                // Missing/unknown defaults to enabled (fail-safe: keep idle timeout on).
+                let enabled = true;
+                if (raw === false || raw === 0 || raw === '0' || raw === 'false' || raw === 'off' || raw === 'no') {
+                    enabled = false;
+                } else if (raw === true || raw === 1 || raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes') {
+                    enabled = true;
+                }
                 return {
-                    enabled: cfg.enabled !== false && cfg.enabled !== 0 && cfg.enabled !== '0',
+                    enabled: enabled,
                     seconds: Math.max(30, parseInt(cfg.seconds, 10) || 300)
                 };
             }
@@ -848,8 +861,20 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 }
             }
 
+            /** Tear down all idle timers and hide the modal (disabled / reschedule path). */
+            function disarmIdleTimeout() {
+                clearSchedule();
+                hideWarning();
+                checking = false;
+            }
+
             function expireNow() {
                 if (checking || window.__temperAuthRedirecting) return;
+                // Disabled mid-flight or residual timer: never redirect for idle
+                if (!currentCfg().enabled) {
+                    disarmIdleTimeout();
+                    return;
+                }
                 checking = true;
                 hideWarning();
                 window.redirectToLoginExpired({ destroySession: true });
@@ -857,6 +882,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
 
             function showWarning() {
                 if (warningOpen || window.__temperAuthRedirecting) return;
+                if (!currentCfg().enabled) {
+                    disarmIdleTimeout();
+                    return;
+                }
                 const el = getModal();
                 if (!el) {
                     // Modal markup missing — fall through to hard expiry only
@@ -876,6 +905,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 countdownId = setInterval(function() {
                     if (window.__temperAuthRedirecting) {
                         stopCountdown();
+                        return;
+                    }
+                    if (!currentCfg().enabled) {
+                        disarmIdleTimeout();
                         return;
                     }
                     const left = remainingMs() / 1000;
@@ -898,8 +931,9 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 clearSchedule();
                 if (window.__temperAuthRedirecting || checking) return;
                 const cfg = currentCfg();
+                // Authoritative: when Login Timeout is disabled, no modal and no idle redirect
                 if (!cfg.enabled) {
-                    hideWarning();
+                    disarmIdleTimeout();
                     return;
                 }
 
@@ -918,6 +952,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                     if (!warningOpen) showWarning();
                     // Next hard deadline
                     timerId = setTimeout(function() {
+                        if (!currentCfg().enabled) {
+                            disarmIdleTimeout();
+                            return;
+                        }
                         if (remainingMs() <= 0) expireNow();
                         else schedule();
                     }, Math.max(50, rem));
@@ -935,6 +973,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             /**
              * Reset client idle clock. When fromUserActivity is false (explicit stay / server ping),
              * always apply. When true, ignore while the warning modal is open.
+             * When timeout is disabled, only keeps activity stamp; does not arm timers.
              */
             function ping(fromUserActivity) {
                 if (window.__temperAuthRedirecting) return;
@@ -945,7 +984,13 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
 
             window.__temperIdlePing = function() {
                 // Network activity from fetch wrapper — do not dismiss the warning silently
+                // When timeout is disabled, schedule() no-ops (disarms only).
                 ping(true);
+            };
+
+            /** Re-apply current config (e.g. after System Configuration save). */
+            window.__temperRescheduleLoginTimeout = function() {
+                schedule();
             };
 
             /** Explicit session refresh (Stay logged in). */
@@ -1047,14 +1092,18 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             activityEvents.forEach(function(ev) {
                 document.addEventListener(ev, onActivity, { capture: true, passive: true });
             });
-            window.addEventListener('focus', function() { ping(true); });
+            window.addEventListener('focus', function() {
+                if (!currentCfg().enabled) return;
+                ping(true);
+            });
             document.addEventListener('visibilitychange', function() {
                 if (!document.hidden) {
-                    // Tab visible again — re-evaluate idle (may open warning or expire)
+                    // Tab visible again — re-evaluate idle (no-op when timeout disabled)
                     schedule();
                 }
             });
 
+            // Arm only when enabled; when disabled, ensure any residual state is clear
             schedule();
         })();
     })();

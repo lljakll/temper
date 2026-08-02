@@ -38,6 +38,28 @@ if (!isset($db) || !($db instanceof mysqli)) {
 // Central session gate — redirects / 401 on expiration; enforces force-password
 requireLogin($db);
 
+/**
+ * Parse an "archived" (or similar) flag from POST/FormData.
+ *
+ * HTML checkboxes without value="1" submit as "on" when checked and are omitted when
+ * unchecked. Casting (int)"on" is 0 in PHP — that broke Archive on lookup pages.
+ *
+ * Accepts: true/1/"1"/"on"/"true"/"yes" → 1; missing/false/0/"0"/other → 0.
+ *
+ * @param array<string,mixed>|null $src Defaults to $_POST
+ */
+function temperParsePostArchived(?array $src = null, string $key = 'archived'): int {
+    $src = $src ?? $_POST;
+    if (!is_array($src) || !array_key_exists($key, $src)) {
+        return 0;
+    }
+    $v = $src[$key];
+    if ($v === true || $v === 1 || $v === '1' || $v === 'on' || $v === 'true' || $v === 'yes') {
+        return 1;
+    }
+    return 0;
+}
+
 // Page-level RBAC (unless caller opts out)
 if (empty($temperSkipPagePermission)) {
     $pageKey = null;

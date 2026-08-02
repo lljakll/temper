@@ -19,6 +19,12 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.907](#v0907)
+- [v0.906](#v0906)
+- [v0.905](#v0905)
+- [v0.904](#v0904)
+- [v0.903](#v0903)
+- [v0.902](#v0902)
 - [v0.901](#v0901)
 - [v0.900](#v0900)
 - [v0.811](#v0811)
@@ -107,6 +113,165 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.907
+
+**Login timeout fixed by Developer Mode (5m / 20m)** — 2026-08-02
+
+> No schema update required for this release (config / auth behavior only).  
+> **Patch file (history row):** `updates/20260802_0907_login_timeout_from_developer_mode.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.907
+
+- Removed user-facing Login Timeout controls (disable switch and free-form seconds) from System Configuration.
+- Idle timeout is always on and derived from **Developer Mode**:
+  - **Off** → **5 minutes** (`300` s)
+  - **On** → **20 minutes** (`1200` s)
+- Both values stay under the host ~24-minute PHP session file cleaner; app `session.gc_maxlifetime` is capped below 1440 s.
+- Status panel regrouped: **Developer** block lists Developer Mode, Hard delete users, Login timeout (read-only “5 minutes” / “20 minutes”), and Environment; other items remain under **Other**.
+- Saving Developer Mode updates the effective timeout for the app and the Status display (and reschedules the shell idle timer in the same tab). Warning modal before logout is preserved.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.907**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.906 | `updates/20260802_0907_login_timeout_from_developer_mode.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.906 patches, then this process patch |
+
+---
+
+## v0.906
+
+**Fixed / floating desktop sidebar** — 2026-08-01
+
+> No schema update required for this release (shell CSS only).  
+> **Patch file (history row):** `updates/20260801_0906_sidebar_fixed_float.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.906
+
+- Desktop navigation sidebar (`#appSidebar`, md+) is **`position: fixed`** so it stays on screen while main content scrolls.
+- **`#temperSidebarCol`** remains an in-flow width spacer (expanded / collapsed rail widths) so content is never hidden under the panel.
+- **Collapsed** rail and **hover-expand** peek still work; hover widen stays fixed (overlays content without reflowing the spacer).
+- **Mobile** offcanvas + bottom nav behavior unchanged.
+- Collapse toggle, localStorage preference, and hover delay config unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.906**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.905 | `updates/20260801_0906_sidebar_fixed_float.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.905 patches, then this process patch |
+
+---
+
+## v0.905
+
+**Lookup Add/Edit forms as modal dialogs** — 2026-08-01
+
+> No schema update required for this release (lookup UI only).  
+> **Patch file (history row):** `updates/20260801_0905_lookup_add_edit_modals.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.905
+
+- Converted Add/Edit on all Lookup maintenance pages from **inline** page sections to **Bootstrap modal dialogs**:
+  - **Funds** (`setup_funds.php`)
+  - **Accounts** (`setup_accounts.php` — `modal-lg` + scrollable for field density)
+  - **Natural Classes** (`setup_naturalclasses.php`)
+  - **Functional Classes** (`setup_functionalclasses.php`)
+- **Dirty-form protection** (shared `TemperDirtyForms` + `hide.bs.modal`): if the form has unsaved changes, Confirm before discard on backdrop click, Escape, Cancel/close, SPA navigation, or browser leave.
+- After a **successful save**, existing `submitFormAndReload` marks the form clean and reloads the list fragment (modal closes with content refresh). Validation errors keep the modal open with form state.
+- Preserved server-side validation, archive/delete actions, permissions (`admin.lookups`), account-type / normal-balance caution, and field behavior.
+- Modals reparented via `mountModalOnBody` / `showFragmentModal` for correct SPA stacking and autofocus.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.905**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.904 | `updates/20260801_0905_lookup_add_edit_modals.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.904 patches, then this process patch |
+
+---
+
+## v0.904
+
+**Lookup Archive/Unarchive toggle fix** — 2026-08-01
+
+> No schema update required for this release (lookup UI/behavior only).  
+> **Patch file (history row):** `updates/20260801_0904_lookup_archive_toggle_fix.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.904
+
+- Fixed Archive/Unarchive on all Lookup maintenance pages: **Funds**, **Accounts**, **Natural Classes**, **Functional Classes**.
+- **Root cause:** HTML checkboxes without `value="1"` submit as `"on"`; server used `(int)$_POST['archived']`, and `(int)"on"` is `0` in PHP, so archive never set `archived=1`.
+- **Funds** was also missing the Archive button click handler entirely.
+- Client now posts explicit `archived=0|1` FormData for the toggle; server uses shared `temperParsePostArchived()` (accepts `1`/`on`/`true`).
+- After a successful toggle the list reloads (row drops when archiving with Show Archived off; Archived column / button label update when shown). Button label becomes **Archive** or **Unarchive** from the selected row. Confirmation dialogs preserved.
+- Also sets/clears `archived_at` on toggle. Checkboxes for Archived (and Mutable Fund on accounts) use `value="1"`.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.904**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.903 | `updates/20260801_0904_lookup_archive_toggle_fix.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.903 patches, then this process patch |
+
+---
+
+## v0.903
+
+**Login Timeout disabled state is fully authoritative** — 2026-08-01
+
+> No schema update required for this release (auth / session behavior only).  
+> **Patch file (history row):** `updates/20260801_0903_login_timeout_disabled_authoritative.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.903
+
+- When **Disable Login Timeout** is on in System Configuration:
+  - Server never idle-expires the session (`isSessionWithinIdleLimit` short-circuits).
+  - Client never shows the timeout warning modal and never redirects for idle time.
+  - PHP `session.gc_maxlifetime` is extended so residual session GC cannot force logout while the app idle check is off.
+- When timeout is **enabled**, existing behavior remains: warning modal near the end of the idle window, then redirect after the configured duration; GC lifetime tracks the configured seconds (plus headroom).
+- Single control plane: System Config only. Shell idle timer in `includes/header.php` is the only client enforcer; Configuration save re-arms or fully disarms without a full reload.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.903**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.902 | `updates/20260801_0903_login_timeout_disabled_authoritative.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.902 process/schema patches, then this process patch |
+
+---
+
+## v0.902
+
+**Modal form autofocus (first field; resist SPA focus steal)** — 2026-08-01
+
+> No schema update required for this release (process / UI only).  
+> **Patch file (history row):** `updates/20260801_0902_modal_form_autofocus.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.902
+
+- Shared `TemperModalFocus` in `includes/footer.php` (wired once for the SPA shell):
+  - On `shown.bs.modal`, if the modal contains a form / data-entry fields, focus the first logical field (skips hidden, disabled, readonly text, footer/header chrome, close button).
+  - Re-asserts focus over a short window and restores focus if SPA/AJAX/DOM activity moves it outside the open form modal.
+  - Opt-out: `data-no-autofocus` on the modal or a field; prefer a specific field with `data-autofocus`.
+- Covers Tasks (Add Task), Users/Roles, Budget activate/close, Ledger import text, backup unlock, and any other form-bearing Bootstrap modal without per-page layout changes.
+- Tasks page no longer uses a one-shot `setTimeout` focus (global handler is the single source of truth).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.902**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.901 | `updates/20260801_0902_modal_form_autofocus.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 schema patch, then this process patch |
 
 ---
 
