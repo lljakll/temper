@@ -973,3 +973,11 @@ Stack trace:
 [27-Jul-2026 03:16:19 UTC] [AUDIT] user=admin action=clear_all_financial_completed details={"transaction_documents":"truncated","transaction_events":"truncated","transaction_lines":"truncated","transaction_details":"truncated","budget_lines":"truncated","budgets":"truncated","tasks":"truncated","accounts":"truncated","funds":"truncated","functional_categories":"truncated","natural_categories":"truncated","repopulated":{"natural_categories":13,"functional_categories":10}} ip=::1
 [27-Jul-2026 03:16:40 UTC] [AUDIT] user=admin action=reset_users details=Starting user reset to default admin account. ip=::1
 [27-Jul-2026 03:16:40 UTC] [AUDIT] user=admin action=reset_users_repopulate_categories details={"natural_categories":13,"functional_categories":10} ip=::1
+[01-Aug-2026 13:20:59 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Data truncated for column 'account_type' at row 1 in Command line code:28
+Stack trace:
+#0 Command line code(28): mysqli->query()
+#1 {main}
+  thrown in Command line code on line 28
+[01-Aug-2026 13:21:06 UTC] PHP Fatal error:  Cannot redeclare function temperSystemConfigCatalog() (previously declared in /var/www/temper/includes/system_config.php:30) in /var/www/temper/includes/system_config.php on line 30
+Stack trace:
+#0 {main}

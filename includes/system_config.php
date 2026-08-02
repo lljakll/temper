@@ -34,6 +34,8 @@ function temperSystemConfigCatalog(): array {
             'type' => 'bool',
             'label' => 'Developer Mode',
             'description' => 'Enables development-only tools such as permanent user delete. '
+                . 'Also sets idle login timeout: Off → 5 minutes, On → 20 minutes '
+                . '(always under the host ~24-minute session cleaner). '
                 . 'Keep off in production. Environment variables APP_ENV / ALLOW_HARD_DELETE still apply as hard limits.',
             'group' => 'development',
         ],
@@ -57,26 +59,9 @@ function temperSystemConfigCatalog(): array {
             'min' => 1,
             'max' => 8760, // 1 year
         ],
-        'login_timeout_disabled' => [
-            'default' => false,
-            'type' => 'bool',
-            'label' => 'Disable Login Timeout',
-            'description' => 'When enabled, idle login timeout is turned off (sessions do not expire from inactivity). '
-                . 'The timeout seconds field is ignored while this is on.',
-            'group' => 'security',
-            'min' => null,
-            'max' => null,
-        ],
-        'login_timeout_seconds' => [
-            'default' => 300,
-            'type' => 'int',
-            'label' => 'Login Timeout (seconds)',
-            'description' => 'Seconds of inactivity before the session expires and the user is sent to the login page. '
-                . 'Default 300 (5 minutes). Enforced on the server and in the browser while a page is open.',
-            'group' => 'security',
-            'min' => 30,
-            'max' => 86400, // 24 hours
-        ],
+        // Login timeout is not a free-form setting: duration is derived from Developer Mode
+        // (see TEMPER_LOGIN_TIMEOUT_*_SECONDS and getLoginTimeoutSeconds()). Legacy keys may
+        // still exist in system.json from older releases and are ignored for enforcement.
         'sidebar_hover_expand_delay_seconds' => [
             'default' => 0.5,
             'type' => 'float',
@@ -256,6 +241,24 @@ function isDeveloperModeEnabled(): bool {
 }
 
 /**
+ * Idle login timeout when Developer Mode is off (5 minutes).
+ * Kept well under the host ~24-minute PHP session file cleaner.
+ */
+const TEMPER_LOGIN_TIMEOUT_NORMAL_SECONDS = 300;
+
+/**
+ * Idle login timeout when Developer Mode is on (20 minutes).
+ * Kept under the host ~24-minute PHP session file cleaner.
+ */
+const TEMPER_LOGIN_TIMEOUT_DEV_SECONDS = 1200;
+
+/**
+ * Host sessionclean / php.ini gc_maxlifetime floor (seconds). Timeouts and app GC
+ * must stay below this so the OS cleaner does not kill sessions before app idle logic.
+ */
+const TEMPER_HOST_SESSION_CLEANER_SECONDS = 1440;
+
+/**
  * Whether force-password auto-archive is active (not disabled in config).
  */
 function isAutoArchiveEnabled(): bool {
@@ -275,26 +278,32 @@ function getAutoArchiveTimerHours(): int {
 }
 
 /**
- * Whether idle login timeout is active (not disabled in System Configuration).
+ * Whether idle login timeout is active.
+ * Always true: timeout cannot be disabled; duration follows Developer Mode.
  */
 function isLoginTimeoutEnabled(): bool {
-    return !(bool)getSystemConfig('login_timeout_disabled', false);
+    return true;
 }
 
 /**
- * Configured login idle timeout in whole seconds (default 300).
- * Clamped to catalog min/max. Still returns the configured value when timeout is disabled
- * (callers should check isLoginTimeoutEnabled() first).
+ * Effective idle login timeout in whole seconds.
+ * Developer Mode off → 5 minutes; on → 20 minutes. Not a free-form config value.
  */
 function getLoginTimeoutSeconds(): int {
-    $seconds = (int)getSystemConfig('login_timeout_seconds', 300);
-    if ($seconds < 30) {
-        $seconds = 30;
+    return isDeveloperModeEnabled()
+        ? TEMPER_LOGIN_TIMEOUT_DEV_SECONDS
+        : TEMPER_LOGIN_TIMEOUT_NORMAL_SECONDS;
+}
+
+/**
+ * Human-readable label for Status panel / UI (e.g. "5 minutes", "20 minutes").
+ */
+function getLoginTimeoutDisplayLabel(): string {
+    $minutes = (int)round(getLoginTimeoutSeconds() / 60);
+    if ($minutes < 1) {
+        $minutes = 1;
     }
-    if ($seconds > 86400) {
-        $seconds = 86400;
-    }
-    return $seconds;
+    return $minutes . ' minute' . ($minutes === 1 ? '' : 's');
 }
 
 /**

@@ -426,6 +426,7 @@ $footerDb->close();
 
         /**
          * Reparent + show a fragment modal with optional Bootstrap Modal options.
+         * Form-bearing modals auto-focus the first data field via TemperModalFocus.
          */
         window.showFragmentModal = function(modalEl, options) {
             if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) {
@@ -436,6 +437,246 @@ $footerDb->close();
             modal.show();
             return modal;
         };
+
+        /**
+         * Global form-modal autofocus: first logical data-entry field on open,
+         * and re-assert focus if SPA/AJAX/DOM updates steal it while the modal is open.
+         *
+         * Opt-out: data-no-autofocus on the .modal root, or data-no-autofocus on a field.
+         * Opt-in target: data-autofocus on a specific field inside the modal.
+         * No visual/layout changes.
+         */
+        window.TemperModalFocus = (function() {
+            const FIELD_SEL = [
+                'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="file"])',
+                'select',
+                'textarea',
+                '[contenteditable="true"]'
+            ].join(',');
+
+            let activeModal = null;
+            let preferredField = null;
+            let lastInModal = null;
+            let guardTimers = [];
+            let focusGuardWired = false;
+
+            function isShown(modal) {
+                return !!(modal && modal.classList && modal.classList.contains('show'));
+            }
+
+            function isFieldVisible(el) {
+                if (!el || el.disabled) return false;
+                if (el.getAttribute('aria-hidden') === 'true') return false;
+                if (el.closest('[aria-hidden="true"]')) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                // zero-size hidden groups (e.g. display:none ancestors already handled by display)
+                if (el.offsetParent === null && style.position !== 'fixed' && style.position !== 'sticky') {
+                    // Still allow if inside a shown Bootstrap modal (fixed positioning chain)
+                    if (!el.closest('.modal.show')) return false;
+                }
+                return true;
+            }
+
+            function findFirstFormField(modal) {
+                if (!modal || !modal.querySelector) return null;
+                if (modal.hasAttribute('data-no-autofocus')) return null;
+
+                const explicit = modal.querySelector('[data-autofocus]');
+                if (explicit && isFieldVisible(explicit) && !explicit.disabled) {
+                    return explicit;
+                }
+
+                // Prefer a form body; fall back to modal-body / whole modal
+                const roots = [];
+                const form = modal.querySelector('form');
+                if (form) roots.push(form);
+                const body = modal.querySelector('.modal-body');
+                if (body && body !== form) roots.push(body);
+                roots.push(modal);
+
+                const seen = new Set();
+                for (let r = 0; r < roots.length; r++) {
+                    const list = roots[r].querySelectorAll(FIELD_SEL);
+                    for (let i = 0; i < list.length; i++) {
+                        const el = list[i];
+                        if (seen.has(el)) continue;
+                        seen.add(el);
+                        if (el.hasAttribute('data-no-autofocus')) continue;
+                        if (el.closest('[data-no-autofocus]')) continue;
+                        // Skip chrome controls
+                        if (el.closest('.modal-header') && el.matches('button, .btn-close')) continue;
+                        if (el.closest('.modal-footer')) continue;
+                        if (el.readOnly && el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'radio') {
+                            // Prefer first writable field for data entry
+                            continue;
+                        }
+                        if (!isFieldVisible(el)) continue;
+                        return el;
+                    }
+                }
+                return null;
+            }
+
+            function safeFocus(el) {
+                if (!el || typeof el.focus !== 'function') return false;
+                try {
+                    if (document.activeElement === el) return true;
+                    el.focus({ preventScroll: true });
+                    return document.activeElement === el;
+                } catch (err) {
+                    try {
+                        el.focus();
+                        return document.activeElement === el;
+                    } catch (err2) {
+                        return false;
+                    }
+                }
+            }
+
+            function clearGuardTimers() {
+                guardTimers.forEach(function(id) { clearTimeout(id); });
+                guardTimers = [];
+            }
+
+            function isDataEntryField(el) {
+                return !!(el && el.matches && el.matches(FIELD_SEL) && isFieldVisible(el));
+            }
+
+            /**
+             * @param {'initial'|'escape'} mode
+             *   initial — force a data field (override Bootstrap close-button focus)
+             *   escape  — only pull focus back if it left the modal entirely
+             */
+            function restoreFocus(mode) {
+                if (!isShown(activeModal)) return;
+                const active = document.activeElement;
+                const inside = !!(active && activeModal.contains(active));
+
+                if (mode === 'escape') {
+                    if (inside) {
+                        if (isDataEntryField(active) || (active.matches && active.matches('button, a, [href], [tabindex]:not([tabindex="-1"])'))) {
+                            lastInModal = active;
+                        }
+                        return;
+                    }
+                } else {
+                    // initial: accept only a real data-entry field as success
+                    if (inside && isDataEntryField(active)) {
+                        lastInModal = active;
+                        return;
+                    }
+                }
+
+                const target = (mode === 'escape' && lastInModal && activeModal.contains(lastInModal) && isFieldVisible(lastInModal))
+                    ? lastInModal
+                    : (preferredField && activeModal.contains(preferredField) && isFieldVisible(preferredField)
+                        ? preferredField
+                        : findFirstFormField(activeModal));
+                if (target) {
+                    safeFocus(target);
+                    lastInModal = target;
+                }
+            }
+
+            function armFocusGuard(modal, field) {
+                clearGuardTimers();
+                activeModal = modal;
+                preferredField = field;
+                lastInModal = field;
+                // Early ticks: override Bootstrap focusing .btn-close / .modal
+                [0, 16, 50, 100, 200, 350].forEach(function(ms) {
+                    guardTimers.push(setTimeout(function() {
+                        if (activeModal !== modal || !isShown(modal)) return;
+                        restoreFocus('initial');
+                    }, ms));
+                });
+                // Later ticks: only recover from external focus steal (SPA/AJAX)
+                [500, 800, 1200].forEach(function(ms) {
+                    guardTimers.push(setTimeout(function() {
+                        if (activeModal !== modal || !isShown(modal)) return;
+                        restoreFocus('escape');
+                    }, ms));
+                });
+            }
+
+            function release(modal) {
+                if (modal && activeModal && modal !== activeModal) return;
+                clearGuardTimers();
+                activeModal = null;
+                preferredField = null;
+                lastInModal = null;
+            }
+
+            function onModalShown(e) {
+                const modal = e.target;
+                if (!modal || !modal.classList || !modal.classList.contains('modal')) return;
+                const field = findFirstFormField(modal);
+                if (!field) {
+                    // No data-entry fields (confirm-only / session warning) — leave Bootstrap default
+                    return;
+                }
+                safeFocus(field);
+                armFocusGuard(modal, field);
+            }
+
+            function onModalHidden(e) {
+                // Only release after the modal has fully closed. Do not use hide.bs.modal:
+                // dirty-form handlers may preventDefault on hide, and the modal stays open.
+                if (e.target === activeModal || (activeModal && !isShown(activeModal))) {
+                    release(e.target === activeModal ? e.target : activeModal);
+                }
+            }
+
+            function onFocusIn(e) {
+                if (!isShown(activeModal)) return;
+                const t = e.target;
+                if (t && activeModal.contains(t)) {
+                    // Remember last intentional control inside the modal
+                    if (isDataEntryField(t) || (t.matches && t.matches('button, a, [href], [tabindex]:not([tabindex="-1"])'))) {
+                        lastInModal = t;
+                    }
+                    return;
+                }
+                // Focus escaped the open form modal (AJAX/DOM/toast/etc.) — pull it back
+                // Use rAF so we run after the thief's focus settles
+                requestAnimationFrame(function() {
+                    if (!isShown(activeModal)) return;
+                    const cur = document.activeElement;
+                    if (cur && activeModal.contains(cur)) {
+                        if (isDataEntryField(cur) || (cur.matches && cur.matches('button, a, [href], [tabindex]:not([tabindex="-1"])'))) {
+                            lastInModal = cur;
+                        }
+                        return;
+                    }
+                    restoreFocus('escape');
+                });
+            }
+
+            function wire() {
+                if (focusGuardWired) return;
+                focusGuardWired = true;
+                document.addEventListener('shown.bs.modal', onModalShown);
+                document.addEventListener('hidden.bs.modal', onModalHidden);
+                document.addEventListener('focusin', onFocusIn, true);
+            }
+
+            return {
+                wire: wire,
+                findFirstFormField: findFirstFormField,
+                focusFirstField: function(modal) {
+                    const field = findFirstFormField(modal);
+                    if (field) {
+                        safeFocus(field);
+                        armFocusGuard(modal, field);
+                    }
+                    return field;
+                },
+                restore: restoreFocus,
+                release: release
+            };
+        })();
+        window.TemperModalFocus.wire();
 
         /**
          * Reparent every .modal still under #main-content (or a given root) onto body.

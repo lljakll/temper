@@ -296,7 +296,7 @@ function temper_render_nav_links(
 
 <div class="row g-2">
     <?php if (!$mustChangePassword): ?>
-    <!-- Sidebar: offcanvas below md, sticky collapsible column at md+ -->
+    <!-- Sidebar: offcanvas below md; fixed floating collapsible rail at md+ -->
     <div class="col-md-2 temper-sidebar-col" id="temperSidebarCol">
         <div class="offcanvas-md offcanvas-start rounded-3 shadow-sm border sidebar-panel"
              tabindex="-1" id="appSidebar" aria-labelledby="appSidebarLabel">

@@ -1,10 +1,15 @@
 {
     "version": 1,
-    "updated_at": "2026-07-22T11:04:08+00:00",
+    "updated_at": "2026-08-02T12:49:40+00:00",
     "settings": {
         "developer_mode": true,
         "auto_archive_disabled": false,
         "auto_archive_timer_hours": 24,
+        "sidebar_hover_expand_delay_seconds": 0.5,
+        "sidebar_hover_collapse_delay_seconds": 2,
+        "auto_backup_enabled": false,
+        "auto_backup_frequency": "daily",
+        "auto_backup_format": "sql",
         "login_timeout_disabled": true,
         "login_timeout_seconds": 600
     }

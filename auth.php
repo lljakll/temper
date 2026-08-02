@@ -1,8 +1,4 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
 // Security: Prevent direct access to this helper file
 if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
     header('Location: login.php');
@@ -13,9 +9,69 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 const AUTH_SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please log in again.';
 
 /**
+ * Ensure System Configuration helpers are available (for Login Timeout).
+ */
+function temperEnsureSystemConfigLoaded(): void {
+    static $loaded = false;
+    if ($loaded) {
+        return;
+    }
+    $sysCfg = __DIR__ . '/includes/system_config.php';
+    if (is_file($sysCfg)) {
+        require_once $sysCfg;
+    }
+    $loaded = true;
+}
+
+/**
+ * Align PHP session GC lifetime with the effective Login Timeout (from Developer Mode).
+ * Must run before session_start() so gc_maxlifetime applies to this request's session.
+ *
+ * Timeout is always on (5 min normal / 20 min with Developer Mode). GC is set slightly
+ * above the idle window but kept under the host ~24-minute sessioncleaner (php.ini 1440).
+ */
+function configureAuthSessionLifetimeParams(): void {
+    if (session_status() !== PHP_SESSION_NONE) {
+        return;
+    }
+
+    temperEnsureSystemConfigLoaded();
+
+    $hostCap = defined('TEMPER_HOST_SESSION_CLEANER_SECONDS')
+        ? (int)TEMPER_HOST_SESSION_CLEANER_SECONDS
+        : 1440;
+    // Stay strictly under host cleaner so OS purge does not race the app idle window
+    $maxGc = max(60, $hostCap - 1);
+
+    $sec = function_exists('getLoginTimeoutSeconds')
+        ? (int)getLoginTimeoutSeconds()
+        : 300;
+    if ($sec < 30) {
+        $sec = 300;
+    }
+    // Headroom past app timeout; never claim a lifetime the host cleaner will ignore
+    $gc = max(60, min($sec + 120, $maxGc));
+
+    @ini_set('session.gc_maxlifetime', (string)$gc);
+}
+
+/**
+ * Start the PHP session after applying Login Timeout–aware lifetime settings.
+ */
+function temperStartAuthSession(): void {
+    if (session_status() !== PHP_SESSION_NONE) {
+        return;
+    }
+    configureAuthSessionLifetimeParams();
+    session_start();
+}
+
+// Bootstrap session immediately (lifetime params applied first)
+temperStartAuthSession();
+
+/**
  * Max idle seconds for application-level session expiry.
- * Reads System Configuration (Login Timeout); falls back to PHP session.gc_maxlifetime.
- * Returns PHP_INT_MAX when "Disable Login Timeout" is enabled.
+ * Always the effective Login Timeout (5 or 20 minutes from Developer Mode).
  */
 function getSessionMaxIdleSeconds(): int {
     static $resolved = null;
@@ -23,48 +79,32 @@ function getSessionMaxIdleSeconds(): int {
         return $resolved;
     }
 
-    // Prefer System Configuration when available
-    $sysCfg = __DIR__ . '/includes/system_config.php';
-    if (is_file($sysCfg)) {
-        require_once $sysCfg;
-        if (function_exists('isLoginTimeoutEnabled') && !isLoginTimeoutEnabled()) {
-            $resolved = PHP_INT_MAX;
+    temperEnsureSystemConfigLoaded();
+    if (function_exists('getLoginTimeoutSeconds')) {
+        $sec = (int)getLoginTimeoutSeconds();
+        if ($sec >= 30) {
+            $resolved = $sec;
             return $resolved;
-        }
-        if (function_exists('getLoginTimeoutSeconds')) {
-            $sec = (int)getLoginTimeoutSeconds();
-            if ($sec >= 30) {
-                $resolved = $sec;
-                return $resolved;
-            }
         }
     }
 
-    $gc = (int)ini_get('session.gc_maxlifetime');
-    $resolved = $gc > 60 ? $gc : 1440;
+    $resolved = 300;
     return $resolved;
 }
 
 /**
  * Client-facing idle timeout config for the SPA shell (seconds + enabled flag).
+ * Timeout is always enabled; duration follows Developer Mode.
  *
  * @return array{enabled:bool,seconds:int}
  */
 function getClientLoginTimeoutConfig(): array {
-    $sysCfg = __DIR__ . '/includes/system_config.php';
-    if (is_file($sysCfg)) {
-        require_once $sysCfg;
-        if (function_exists('isLoginTimeoutEnabled') && function_exists('getLoginTimeoutSeconds')) {
-            return [
-                'enabled' => isLoginTimeoutEnabled(),
-                'seconds' => getLoginTimeoutSeconds(),
-            ];
-        }
-    }
-    $gc = (int)ini_get('session.gc_maxlifetime');
+    temperEnsureSystemConfigLoaded();
     return [
         'enabled' => true,
-        'seconds' => $gc > 60 ? $gc : 1440,
+        'seconds' => function_exists('getLoginTimeoutSeconds')
+            ? (int)getLoginTimeoutSeconds()
+            : 300,
     ];
 }
 
@@ -84,9 +124,7 @@ function getLoginUrl(string $query = ''): string {
  * Consumed by login.php so ?expired=1 alone (bookmark / fresh visit) does not show a message.
  */
 function markAuthSessionExpiredFlash(): void {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    temperStartAuthSession();
     $_SESSION['auth_flash_expired'] = 1;
 }
 
@@ -94,9 +132,7 @@ function markAuthSessionExpiredFlash(): void {
  * Consume and return whether the login page should show the session-expired alert.
  */
 function consumeAuthSessionExpiredFlash(): bool {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    temperStartAuthSession();
     if (empty($_SESSION['auth_flash_expired'])) {
         return false;
     }
@@ -233,6 +269,7 @@ function isLoggedIn(): bool {
 
 /**
  * Whether the session is still within the idle timeout window.
+ * Idle timeout is always enforced (duration from Developer Mode).
  */
 function isSessionWithinIdleLimit(): bool {
     if (!isset($_SESSION['last_activity'])) {
@@ -259,9 +296,7 @@ function touchAuthSession(): void {
  * @return array{id:int,name:string,username:string} Minimal session user
  */
 function requireLogin(?mysqli $db = null): array {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    temperStartAuthSession();
 
     if (!isLoggedIn() || !isSessionWithinIdleLimit()) {
         denyUnauthenticatedAccess();
@@ -424,9 +459,7 @@ function isForcePasswordExemptPage(): bool {
  * Does not block the application shell (index.php / includes).
  */
 function enforceMustChangePasswordGate(): void {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    temperStartAuthSession();
     if (empty($_SESSION['must_change_password'])) {
         return;
     }

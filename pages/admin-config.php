@@ -1,8 +1,10 @@
 <?php
 /**
  * System — Configuration.
- * Administrator-only settings: Developer Mode, auto-archive timer, login timeout, and future preferences.
+ * Administrator-only settings: Developer Mode (also drives fixed login timeout),
+ * auto-archive timer, and future preferences.
  * Settings persist under storage/config/system.json.
+ * Login idle timeout is not user-configurable: 5 min (Developer Mode off) or 20 min (on).
  */
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/audit.php';
@@ -39,9 +41,11 @@ function configPayload(): array {
         'auto_archive_disabled' => !isAutoArchiveEnabled(),
         'auto_archive_timer_hours' => getAutoArchiveTimerHours(),
         'auto_archive_enabled' => isAutoArchiveEnabled(),
-        'login_timeout_disabled' => !isLoginTimeoutEnabled(),
+        // Login timeout: always enabled; duration derived from Developer Mode only
+        'login_timeout_disabled' => false,
+        'login_timeout_enabled' => true,
         'login_timeout_seconds' => getLoginTimeoutSeconds(),
-        'login_timeout_enabled' => isLoginTimeoutEnabled(),
+        'login_timeout_label' => getLoginTimeoutDisplayLabel(),
         'sidebar_hover_expand_delay_seconds' => getSidebarHoverExpandDelaySeconds(),
         'sidebar_hover_collapse_delay_seconds' => getSidebarHoverCollapseDelaySeconds(),
         'auto_backup_enabled' => isAutoBackupConfigEnabled(),
@@ -98,26 +102,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updates['auto_archive_timer_hours'] = $hours;
         }
 
-        if (array_key_exists('login_timeout_disabled', $_POST)) {
-            $updates['login_timeout_disabled'] = configParseBool($_POST['login_timeout_disabled']);
-        }
-
-        if (array_key_exists('login_timeout_seconds', $_POST)) {
-            $seconds = (int)$_POST['login_timeout_seconds'];
-            if ($seconds < 30) {
-                configSendJson([
-                    'success' => false,
-                    'error' => 'Login Timeout must be at least 30 seconds.',
-                ], $db);
-            }
-            if ($seconds > 86400) {
-                configSendJson([
-                    'success' => false,
-                    'error' => 'Login Timeout cannot exceed 86400 seconds (24 hours).',
-                ], $db);
-            }
-            $updates['login_timeout_seconds'] = $seconds;
-        }
+        // Login timeout is not user-editable. Ignore any posted disable/seconds keys.
+        // Effective duration is derived from Developer Mode after save.
 
         if (array_key_exists('sidebar_hover_expand_delay_seconds', $_POST)) {
             $expandSec = (float)$_POST['sidebar_hover_expand_delay_seconds'];
@@ -235,8 +221,8 @@ $payload = configPayload();
 $developerMode = (bool)$payload['developer_mode'];
 $autoArchiveDisabled = (bool)$payload['auto_archive_disabled'];
 $autoArchiveHours = (int)$payload['auto_archive_timer_hours'];
-$loginTimeoutDisabled = (bool)$payload['login_timeout_disabled'];
 $loginTimeoutSeconds = (int)$payload['login_timeout_seconds'];
+$loginTimeoutLabel = (string)$payload['login_timeout_label'];
 $sidebarHoverExpandSec = (float)$payload['sidebar_hover_expand_delay_seconds'];
 $sidebarHoverCollapseSec = (float)$payload['sidebar_hover_collapse_delay_seconds'];
 $autoBackupEnabled = (bool)$payload['auto_backup_enabled'];
@@ -282,8 +268,9 @@ $isDevEnv = (bool)$payload['is_development_env'];
                         <div class="flex-grow-1">
                             <label class="form-label fw-semibold mb-1" for="cfgDeveloperMode">Developer Mode</label>
                             <p class="small text-muted mb-0">
-                                When <strong>On</strong>, enables development-only tools (for example, permanent user delete on Users &amp; Roles).
-                                Keep <strong>Off</strong> for normal production use.
+                                When <strong>On</strong>, enables development-only tools (for example, permanent user delete on Users &amp; Roles)
+                                and sets idle login timeout to <strong>20 minutes</strong>.
+                                When <strong>Off</strong>, login timeout is <strong>5 minutes</strong>. Keep Off for normal production use.
                             </p>
                             <?php if ($developerMode && !$isDevEnv): ?>
                             <p class="small text-warning mb-0 mt-2" id="cfgDeveloperModeEnvWarn">
@@ -354,58 +341,6 @@ $isDevEnv = (bool)$payload['is_development_env'];
                                 </div>
                                 <div class="col-auto small text-muted" id="cfgAutoArchiveHoursHint">
                                     hour<?= $autoArchiveHours === 1 ? '' : 's' ?>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Security / session group -->
-                    <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: 0.75rem;">
-                        Security
-                    </h3>
-
-                    <div class="p-3 rounded border mb-4">
-                        <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
-                            <div class="flex-grow-1">
-                                <label class="form-label fw-semibold mb-1" for="cfgLoginTimeoutDisabled">Disable Login Timeout</label>
-                                <p class="small text-muted mb-0">
-                                    When on, idle sessions do not expire automatically.
-                                    The timeout field below is ignored while this is enabled.
-                                </p>
-                            </div>
-                            <div class="form-check form-switch m-0 pt-1">
-                                <input class="form-check-input" type="checkbox" role="switch"
-                                       id="cfgLoginTimeoutDisabled" <?= $loginTimeoutDisabled ? 'checked' : '' ?>>
-                                <label class="form-check-label small" for="cfgLoginTimeoutDisabled" id="cfgLoginTimeoutDisabledLabel">
-                                    <?= $loginTimeoutDisabled ? 'On' : 'Off' ?>
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="border-top pt-3" id="cfgLoginTimeoutWrap">
-                            <label class="form-label fw-semibold mb-1" for="cfgLoginTimeoutSeconds">
-                                Login Timeout (seconds)
-                            </label>
-                            <p class="small text-muted mb-2">
-                                Seconds of inactivity before the session ends and the browser redirects to the login page.
-                                Enforced on the server and while any app page is open. Default 300 (5 minutes). Minimum 30.
-                            </p>
-                            <div class="row g-2 align-items-center">
-                                <div class="col-auto">
-                                    <input type="number" class="form-control form-control-sm"
-                                           id="cfgLoginTimeoutSeconds" name="login_timeout_seconds"
-                                           min="30" max="86400" step="1"
-                                           value="<?= (int)$loginTimeoutSeconds ?>"
-                                           style="width: 8rem;"
-                                           <?= $loginTimeoutDisabled ? 'disabled' : '' ?>>
-                                </div>
-                                <div class="col-auto small text-muted" id="cfgLoginTimeoutSecondsHint">
-                                    second<?= $loginTimeoutSeconds === 1 ? '' : 's' ?>
-                                    <?php if (!$loginTimeoutDisabled && $loginTimeoutSeconds >= 60): ?>
-                                        (≈ <?= $loginTimeoutSeconds >= 3600
-                                            ? (round($loginTimeoutSeconds / 3600, 1) . ' h')
-                                            : (round($loginTimeoutSeconds / 60, 1) . ' min') ?>)
-                                    <?php endif; ?>
                                 </div>
                             </div>
                         </div>
@@ -543,7 +478,8 @@ $isDevEnv = (bool)$payload['is_development_env'];
                 <span class="fw-semibold small"><i class="bi bi-info-circle me-1"></i> Status</span>
             </div>
             <div class="card-body small">
-                <dl class="row mb-0">
+                <p class="text-uppercase text-muted mb-2" style="letter-spacing: 0.04em; font-size: 0.7rem;">Developer</p>
+                <dl class="row mb-3">
                     <dt class="col-6 text-muted">Developer Mode</dt>
                     <dd class="col-6" id="cfgStatusDevMode">
                         <?php if ($developerMode): ?>
@@ -560,20 +496,21 @@ $isDevEnv = (bool)$payload['is_development_env'];
                             <span class="badge text-bg-secondary">Blocked</span>
                         <?php endif; ?>
                     </dd>
+                    <dt class="col-6 text-muted">Login timeout</dt>
+                    <dd class="col-6" id="cfgStatusLoginTimeout">
+                        <span class="badge text-bg-success" title="<?= (int)$loginTimeoutSeconds ?> seconds"><?= htmlspecialchars($loginTimeoutLabel) ?></span>
+                    </dd>
+                    <dt class="col-6 text-muted">Environment</dt>
+                    <dd class="col-6" id="cfgStatusEnvironment"><code><?= htmlspecialchars($appEnv) ?></code></dd>
+                </dl>
+                <p class="text-uppercase text-muted mb-2" style="letter-spacing: 0.04em; font-size: 0.7rem;">Other</p>
+                <dl class="row mb-0">
                     <dt class="col-6 text-muted">Auto-archive</dt>
                     <dd class="col-6" id="cfgStatusAutoArchive">
                         <?php if ($autoArchiveDisabled): ?>
                             <span class="badge text-bg-secondary">Disabled</span>
                         <?php else: ?>
                             <span class="badge text-bg-success"><?= (int)$autoArchiveHours ?>h</span>
-                        <?php endif; ?>
-                    </dd>
-                    <dt class="col-6 text-muted">Login timeout</dt>
-                    <dd class="col-6" id="cfgStatusLoginTimeout">
-                        <?php if ($loginTimeoutDisabled): ?>
-                            <span class="badge text-bg-secondary">Disabled</span>
-                        <?php else: ?>
-                            <span class="badge text-bg-success"><?= (int)$loginTimeoutSeconds ?>s</span>
                         <?php endif; ?>
                     </dd>
                     <dt class="col-6 text-muted">Sidebar hover</dt>
@@ -592,8 +529,6 @@ $isDevEnv = (bool)$payload['is_development_env'];
                             <span class="badge text-bg-secondary">Off</span>
                         <?php endif; ?>
                     </dd>
-                    <dt class="col-6 text-muted">Environment</dt>
-                    <dd class="col-6"><code><?= htmlspecialchars($appEnv) ?></code></dd>
                 </dl>
                 <hr>
                 <p class="text-muted mb-1" style="font-size: 0.75rem;">
@@ -615,10 +550,6 @@ $isDevEnv = (bool)$payload['is_development_env'];
     const disableArchiveLabel = document.getElementById('cfgAutoArchiveDisabledLabel');
     const hoursInput = document.getElementById('cfgAutoArchiveHours');
     const hoursHint = document.getElementById('cfgAutoArchiveHoursHint');
-    const disableLoginTimeout = document.getElementById('cfgLoginTimeoutDisabled');
-    const disableLoginTimeoutLabel = document.getElementById('cfgLoginTimeoutDisabledLabel');
-    const timeoutSecondsInput = document.getElementById('cfgLoginTimeoutSeconds');
-    const timeoutSecondsHint = document.getElementById('cfgLoginTimeoutSecondsHint');
     const sidebarExpandInput = document.getElementById('cfgSidebarHoverExpand');
     const sidebarCollapseInput = document.getElementById('cfgSidebarHoverCollapse');
     const autoBackupToggle = document.getElementById('cfgAutoBackupEnabled');
@@ -657,20 +588,6 @@ $isDevEnv = (bool)$payload['is_development_env'];
         }
     }
 
-    function formatTimeoutHint(seconds, disabled) {
-        const s = parseInt(seconds, 10) || 0;
-        let text = 'second' + (s === 1 ? '' : 's');
-        if (!disabled && s >= 60) {
-            if (s >= 3600) {
-                text += ' (≈ ' + (Math.round((s / 3600) * 10) / 10) + ' h)';
-            } else {
-                text += ' (≈ ' + (Math.round((s / 60) * 10) / 10) + ' min)';
-            }
-        }
-        if (disabled) text += ' (disabled)';
-        return text;
-    }
-
     function syncAutoArchiveUi() {
         const disabled = !!(disableArchive && disableArchive.checked);
         setOnOffLabel(disableArchiveLabel, disabled);
@@ -683,22 +600,22 @@ $isDevEnv = (bool)$payload['is_development_env'];
         }
     }
 
-    function syncLoginTimeoutUi() {
-        const disabled = !!(disableLoginTimeout && disableLoginTimeout.checked);
-        setOnOffLabel(disableLoginTimeoutLabel, disabled);
-        if (timeoutSecondsInput) {
-            timeoutSecondsInput.disabled = disabled;
-        }
-        if (timeoutSecondsHint && timeoutSecondsInput) {
-            timeoutSecondsHint.textContent = formatTimeoutHint(timeoutSecondsInput.value, disabled);
-        }
-    }
-
     function syncAutoBackupUi() {
         const on = !!(autoBackupToggle && autoBackupToggle.checked);
         setOnOffLabel(autoBackupToggleLabel, on);
         if (autoBackupFrequency) autoBackupFrequency.disabled = !on;
         if (autoBackupFormat) autoBackupFormat.disabled = !on;
+    }
+
+    /** Status badge for fixed login timeout (from Developer Mode). */
+    function formatLoginTimeoutStatus(res) {
+        const label = res.login_timeout_label
+            || (res.login_timeout_seconds != null
+                ? (Math.round(Number(res.login_timeout_seconds) / 60) + ' minutes')
+                : '5 minutes');
+        const sec = res.login_timeout_seconds != null ? Number(res.login_timeout_seconds) : 300;
+        return '<span class="badge text-bg-success" title="' + String(sec) + ' seconds">'
+            + String(label) + '</span>';
     }
 
     function applyPayload(res) {
@@ -714,12 +631,6 @@ $isDevEnv = (bool)$payload['is_development_env'];
         }
         if (typeof res.auto_archive_timer_hours === 'number' && hoursInput) {
             hoursInput.value = String(res.auto_archive_timer_hours);
-        }
-        if (typeof res.login_timeout_disabled === 'boolean' && disableLoginTimeout) {
-            disableLoginTimeout.checked = res.login_timeout_disabled;
-        }
-        if (typeof res.login_timeout_seconds === 'number' && timeoutSecondsInput) {
-            timeoutSecondsInput.value = String(res.login_timeout_seconds);
         }
         if (res.sidebar_hover_expand_delay_seconds != null && sidebarExpandInput) {
             sidebarExpandInput.value = String(res.sidebar_hover_expand_delay_seconds);
@@ -737,16 +648,17 @@ $isDevEnv = (bool)$payload['is_development_env'];
             autoBackupFormat.value = String(res.auto_backup_format);
         }
         syncAutoArchiveUi();
-        syncLoginTimeoutUi();
         syncAutoBackupUi();
 
-        // Live client timer picks up new values after save (same browser tab)
+        // Live client idle timer: always enabled; seconds follow Developer Mode
         if (window.__temperLoginTimeout) {
-            window.__temperLoginTimeout.enabled = !res.login_timeout_disabled;
-            window.__temperLoginTimeout.seconds = res.login_timeout_seconds != null
-                ? res.login_timeout_seconds
-                : 300;
-            if (typeof window.__temperIdlePing === 'function') {
+            window.__temperLoginTimeout.enabled = true;
+            if (res.login_timeout_seconds != null) {
+                window.__temperLoginTimeout.seconds = res.login_timeout_seconds;
+            }
+            if (typeof window.__temperRescheduleLoginTimeout === 'function') {
+                try { window.__temperRescheduleLoginTimeout(); } catch (e) { /* ignore */ }
+            } else if (typeof window.__temperIdlePing === 'function') {
                 try { window.__temperIdlePing(); } catch (e) { /* ignore */ }
             }
         }
@@ -772,20 +684,15 @@ $isDevEnv = (bool)$payload['is_development_env'];
                 ? '<span class="badge text-bg-danger">Allowed</span>'
                 : '<span class="badge text-bg-secondary">Blocked</span>';
         }
+        if (statusLoginTimeout) {
+            statusLoginTimeout.innerHTML = formatLoginTimeoutStatus(res);
+        }
         if (statusAuto) {
             if (res.auto_archive_disabled) {
                 statusAuto.innerHTML = '<span class="badge text-bg-secondary">Disabled</span>';
             } else {
                 const h = res.auto_archive_timer_hours != null ? res.auto_archive_timer_hours : 24;
                 statusAuto.innerHTML = '<span class="badge text-bg-success">' + String(h) + 'h</span>';
-            }
-        }
-        if (statusLoginTimeout) {
-            if (res.login_timeout_disabled) {
-                statusLoginTimeout.innerHTML = '<span class="badge text-bg-secondary">Disabled</span>';
-            } else {
-                const s = res.login_timeout_seconds != null ? res.login_timeout_seconds : 300;
-                statusLoginTimeout.innerHTML = '<span class="badge text-bg-success">' + String(s) + 's</span>';
             }
         }
         if (statusSidebarHover) {
@@ -829,17 +736,10 @@ $isDevEnv = (bool)$payload['is_development_env'];
     if (hoursInput) {
         hoursInput.addEventListener('input', syncAutoArchiveUi);
     }
-    if (disableLoginTimeout) {
-        disableLoginTimeout.addEventListener('change', syncLoginTimeoutUi);
-    }
-    if (timeoutSecondsInput) {
-        timeoutSecondsInput.addEventListener('input', syncLoginTimeoutUi);
-    }
     if (autoBackupToggle) {
         autoBackupToggle.addEventListener('change', syncAutoBackupUi);
     }
     syncAutoArchiveUi();
-    syncLoginTimeoutUi();
     syncAutoBackupUi();
 
     if (form) {
@@ -849,17 +749,6 @@ $isDevEnv = (bool)$payload['is_development_env'];
             if (!disableArchive || !disableArchive.checked) {
                 if (!hours || hours < 1) {
                     toast('Auto-Archive Timer must be at least 1 hour.', 'warning');
-                    return;
-                }
-            }
-            const timeoutSec = timeoutSecondsInput ? parseInt(timeoutSecondsInput.value, 10) : 300;
-            if (!disableLoginTimeout || !disableLoginTimeout.checked) {
-                if (!timeoutSec || timeoutSec < 30) {
-                    toast('Login Timeout must be at least 30 seconds.', 'warning');
-                    return;
-                }
-                if (timeoutSec > 86400) {
-                    toast('Login Timeout cannot exceed 86400 seconds (24 hours).', 'warning');
                     return;
                 }
             }
@@ -883,12 +772,10 @@ $isDevEnv = (bool)$payload['is_development_env'];
             }
             const fd = new FormData();
             fd.append('action', 'save_config');
-            // Explicit 1/0: checked switch = Developer Mode On (enabled)
+            // Explicit 1/0: checked switch = Developer Mode On (enables 20 min login timeout)
             fd.append('developer_mode', (toggle && toggle.checked) ? '1' : '0');
             fd.append('auto_archive_disabled', disableArchive && disableArchive.checked ? '1' : '0');
             fd.append('auto_archive_timer_hours', String(hours > 0 ? hours : 24));
-            fd.append('login_timeout_disabled', disableLoginTimeout && disableLoginTimeout.checked ? '1' : '0');
-            fd.append('login_timeout_seconds', String(timeoutSec >= 30 ? timeoutSec : 300));
             fd.append('sidebar_hover_expand_delay_seconds', String(expandSec));
             fd.append('sidebar_hover_collapse_delay_seconds', String(collapseSec));
             fd.append('auto_backup_enabled', autoBackupToggle && autoBackupToggle.checked ? '1' : '0');

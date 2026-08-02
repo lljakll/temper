@@ -1002,8 +1002,8 @@ if ($tasksTable) {
         if (addTaskModalEl && typeof window.mountModalOnBody === 'function') {
             addTaskModalEl = window.mountModalOnBody(addTaskModalEl);
         }
+        // First field focus + anti-steal handled globally by TemperModalFocus (shown.bs.modal)
         addTaskModal.show();
-        setTimeout(() => fieldMap.title && fieldMap.title.focus(), 200);
     });
 
     Object.keys(fieldMap).forEach(key => {

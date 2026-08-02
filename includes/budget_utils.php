@@ -30,7 +30,7 @@ function budgetCheckSimplifiedSchema(mysqli $db): array {
         return $issues;
     }
 
-    foreach (['natural_category_id', 'functional_category_id', 'coa_number'] as $col) {
+    foreach (['natural_category_id', 'functional_category_id', 'coa_number', 'account_type'] as $col) {
         $c = $db->query("SHOW COLUMNS FROM accounts LIKE '" . $db->real_escape_string($col) . "'");
         if (!$c || $c->num_rows === 0) {
             $issues[] = "column accounts.{$col} is missing";
