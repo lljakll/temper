@@ -1,8 +1,8 @@
 {
     "version": 1,
-    "updated_at": "2026-08-02T12:49:40+00:00",
+    "updated_at": "2026-08-03T10:23:02+00:00",
     "settings": {
-        "developer_mode": true,
+        "developer_mode": false,
         "auto_archive_disabled": false,
         "auto_archive_timer_hours": 24,
         "sidebar_hover_expand_delay_seconds": 0.5,
