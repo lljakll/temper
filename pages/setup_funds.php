@@ -96,27 +96,44 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     $funds_result = $db->query($funds_query);
 ?>
 
-<div class="container-fluid mt-2 mt-md-4 px-0 px-sm-2">
-    <h2 class="mb-3 mb-md-4 h3">Funds Setup</h2>
-    
-    <!-- Controls -->
-    <div class="row mb-3 g-2">
-        <div class="col-12 col-md-4">
-            <button id="showArchivedBtn" class="btn btn-outline-secondary" data-show-archived="<?= $show_archived ? '1' : '0' ?>">
+<div class="container-fluid mt-2 px-0 px-sm-2 temper-lookup-page" data-lookup-entity="funds">
+    <!-- Title + filter + font + actions on one compact row -->
+    <div class="temper-lookup-toolbar d-flex flex-wrap align-items-center column-gap-2 row-gap-1 mb-2">
+        <h2 class="h5 mb-0 temper-lookup-title text-nowrap">Funds Setup</h2>
+
+        <div class="input-group input-group-sm temper-lookup-filter-wrap">
+            <span class="input-group-text" id="fundsFilterIcon"><i class="bi bi-search" aria-hidden="true"></i></span>
+            <input type="search" class="form-control" id="fundsTableFilter"
+                   placeholder="Filter…" aria-label="Filter funds"
+                   aria-describedby="fundsFilterIcon" autocomplete="off" data-dirty-ignore>
+        </div>
+
+        <div class="btn-group btn-group-sm" role="group" aria-label="Table text size">
+            <button type="button" class="btn btn-outline-secondary" data-lookup-font-delta="-1"
+                    title="Smaller table text (; then -)">A−</button>
+            <button type="button" class="btn btn-outline-secondary" data-lookup-font-delta="1"
+                    title="Larger table text (; then +)">A+</button>
+        </div>
+
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-lookup-hotkey-help
+                title="Keyboard shortcuts (; then ?)" aria-label="Keyboard shortcuts">
+            <i class="bi bi-keyboard" aria-hidden="true"></i>
+        </button>
+
+        <div class="d-flex flex-wrap gap-1 ms-md-auto temper-lookup-actions">
+            <button type="button" id="showArchivedBtn" class="btn btn-outline-secondary btn-sm" data-show-archived="<?= $show_archived ? '1' : '0' ?>">
                 <?= $show_archived ? 'Hide' : 'Show' ?> Archived
             </button>
-        </div>
-        <div class="col-12 col-md-8 d-flex flex-wrap gap-2 justify-content-md-end">
-            <button id="addBtn" class="btn btn-primary">Add</button>
-            <button id="editBtn" class="btn btn-secondary" disabled>Edit</button>
-            <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
-            <button id="archiveBtn" class="btn btn-warning" disabled>Archive/Unarchive</button>
+            <button type="button" id="addBtn" class="btn btn-primary btn-sm">Add</button>
+            <button type="button" id="editBtn" class="btn btn-secondary btn-sm" disabled>Edit</button>
+            <button type="button" id="deleteBtn" class="btn btn-danger btn-sm" disabled>Delete</button>
+            <button type="button" id="archiveBtn" class="btn btn-warning btn-sm" disabled>Archive/Unarchive</button>
         </div>
     </div>
-    
+
     <!-- Fund Table -->
     <div class="table-responsive">
-        <table class="table table-striped table-hover">
+        <table class="table table-striped table-hover temper-lookup-table" id="fundsTable">
             <thead class="table-dark">
                 <tr>
                     <th>Name</th>
@@ -352,6 +369,29 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
         const qs = showArchived ? '?show_archived=1' : '';
         submitFormAndReload(`pages/${currentPage}.php`, new FormData(fundFormContent), `pages/${currentPage}.php${qs}`);
     });
+
+    // Filter, sort, table font size, and leader-key hotkeys
+    if (typeof window.TemperLookupPage !== 'undefined') {
+        window.TemperLookupPage.init({
+            root: document.querySelector('.temper-lookup-page'),
+            table: document.getElementById('fundsTable') || tableBody.closest('table'),
+            filterInput: document.getElementById('fundsTableFilter'),
+            emptyMessage: 'No matching funds.',
+            actions: {
+                add: addBtn,
+                edit: editBtn,
+                delete: deleteBtn,
+                archive: archiveBtn,
+                toggleArchived: showArchivedBtn
+            }
+        });
+    } else if (typeof window.TemperLookupTable !== 'undefined') {
+        window.TemperLookupTable.enhance({
+            table: document.getElementById('fundsTable') || tableBody.closest('table'),
+            filterInput: document.getElementById('fundsTableFilter'),
+            emptyMessage: 'No matching funds.'
+        });
+    }
 })();
 </script>
 <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-funds-script');if(s){(new Function(s.textContent))();}this.remove();">

@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.909](#v0909)
+- [v0.908](#v0908)
 - [v0.907](#v0907)
 - [v0.906](#v0906)
 - [v0.905](#v0905)
@@ -113,6 +115,60 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.909
+
+**Lookup compact toolbar, table font size, hotkeys** — 2026-08-03
+
+> No schema update required for this release (lookup UI only).  
+> **Patch file (history row):** `updates/20260803_0909_lookup_toolbar_hotkeys.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.909
+
+- **Compact layout** on all Lookup pages (Funds, Accounts, Natural Classes, Functional Classes): page title, filter, font controls, hotkey help, and action buttons share **one toolbar row** above the table (less vertical chrome).
+- **Table-only font size**: **A−** / **A+** adjust `--temper-lookup-font-size` on the data table only (preference stored in `localStorage`).
+- **Leader-key hotkeys**: press **`;`** (when not typing and no modal open), then a command within ~2.5s:
+  - `f` / `/` filter · `a` Add · `e` Edit · `d` Delete · `r` Archive · `s` Show/Hide archived · `+`/`-` font · `?`/`h` help · `Esc` cancel
+- Discoverability: keyboard icon opens a popover list; a temporary banner appears while hotkey mode is active.
+- Shared helper `TemperLookupPage.init()` (wraps filter/sort); live filter, column sort, modals, and row actions preserved.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.909**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.908 | `updates/20260803_0909_lookup_toolbar_hotkeys.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.908 patches, then this process patch |
+
+---
+
+## v0.908
+
+**Lookup table live filter + column sort** — 2026-08-03
+
+> No schema update required for this release (lookup UI only).  
+> **Patch file (history row):** `updates/20260803_0908_lookup_table_filter_sort.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.908
+
+- Added a **live search box** above every Lookup maintenance table (filters as you type; no search button):
+  - **Funds**, **Accounts**, **Natural Classes**, **Functional Classes**
+- Filter matches **all visible columns** (case-insensitive substring).
+- **Clickable column headers** sort the table:
+  - First click → ascending; second click on the same column → descending
+  - Visual indicator: caret up/down on the active column (`aria-sort` for accessibility)
+- Filter and sort work together: filter controls row visibility; sort reorders data rows in the DOM (selection / edit / archive actions preserved).
+- Shared client helper: `TemperLookupTable.enhance()` in `includes/footer.php`; light styles in `includes/header.php`.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.908**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.907 | `updates/20260803_0908_lookup_table_filter_sort.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.907 patches, then this process patch |
 
 ---
 

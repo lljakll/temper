@@ -392,6 +392,567 @@ $footerDb->close();
         })();
 
         /**
+         * Lookup maintenance tables: live text filter + clickable column sort.
+         *
+         * Usage:
+         *   TemperLookupTable.enhance({
+         *     table: document.querySelector('table'),
+         *     filterInput: document.getElementById('myFilter'),
+         *     emptyMessage: 'No matching rows.'
+         *   });
+         *
+         * Data rows must have data-id. Filter matches all visible cell text
+         * (case-insensitive). Sort toggles asc → desc on the same column.
+         * Filter and sort combine: visibility is filter; DOM order is sort.
+         */
+        (function initTemperLookupTable() {
+            function cellText(td) {
+                return (td && td.textContent ? td.textContent : '').replace(/\s+/g, ' ').trim();
+            }
+
+            function rowSearchText(tr) {
+                const parts = [];
+                const cells = tr.cells || [];
+                for (let i = 0; i < cells.length; i++) {
+                    parts.push(cellText(cells[i]));
+                }
+                return parts.join(' ').toLowerCase();
+            }
+
+            function isEmptySortValue(s) {
+                return s === '' || s === '—' || s === '–' || s === '-';
+            }
+
+            function compareValues(a, b) {
+                if (isEmptySortValue(a) && isEmptySortValue(b)) return 0;
+                if (isEmptySortValue(a)) return 1;
+                if (isEmptySortValue(b)) return -1;
+                return String(a).localeCompare(String(b), undefined, {
+                    numeric: true,
+                    sensitivity: 'base'
+                });
+            }
+
+            function resolveEl(ref) {
+                if (!ref) return null;
+                if (typeof ref === 'string') return document.querySelector(ref);
+                return ref;
+            }
+
+            window.TemperLookupTable = {
+                enhance: function(opts) {
+                    opts = opts || {};
+                    const table = resolveEl(opts.table);
+                    if (!table || !table.tBodies || !table.tBodies[0]) return null;
+                    const tbody = table.tBodies[0];
+                    const filterInput = resolveEl(opts.filterInput);
+                    const emptyMessage = opts.emptyMessage || 'No matching rows.';
+                    const ths = table.querySelectorAll('thead th');
+                    let sortCol = null;
+                    let sortDir = 1; // 1 = ascending, -1 = descending
+
+                    function dataRows() {
+                        return Array.from(tbody.querySelectorAll('tr[data-id]'));
+                    }
+
+                    function ensureNoMatchRow() {
+                        let el = tbody.querySelector('tr.temper-lookup-no-match');
+                        if (!el) {
+                            el = document.createElement('tr');
+                            el.className = 'temper-lookup-no-match';
+                            const td = document.createElement('td');
+                            td.colSpan = Math.max(ths.length, 1);
+                            td.className = 'text-center text-muted py-3';
+                            td.textContent = emptyMessage;
+                            el.appendChild(td);
+                            tbody.appendChild(el);
+                        } else {
+                            const td = el.querySelector('td');
+                            if (td) {
+                                td.colSpan = Math.max(ths.length, 1);
+                                td.textContent = emptyMessage;
+                            }
+                        }
+                        return el;
+                    }
+
+                    function updateHeaderIndicators() {
+                        ths.forEach(function(th, idx) {
+                            const icon = th.querySelector('.temper-sort-icon');
+                            if (sortCol === idx) {
+                                th.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');
+                                if (icon) {
+                                    icon.className = 'bi temper-sort-icon ' +
+                                        (sortDir > 0 ? 'bi-caret-up-fill' : 'bi-caret-down-fill');
+                                }
+                            } else {
+                                th.setAttribute('aria-sort', 'none');
+                                if (icon) {
+                                    icon.className = 'bi bi-arrow-down-up temper-sort-icon';
+                                }
+                            }
+                        });
+                    }
+
+                    function applyFilter() {
+                        const q = filterInput
+                            ? String(filterInput.value || '').trim().toLowerCase()
+                            : '';
+                        const rows = dataRows();
+                        let visible = 0;
+                        rows.forEach(function(tr) {
+                            const match = !q || rowSearchText(tr).indexOf(q) !== -1;
+                            tr.style.display = match ? '' : 'none';
+                            if (match) visible++;
+                        });
+                        // Hide static server empty-state rows when data rows exist
+                        tbody.querySelectorAll('tr:not([data-id]):not(.temper-lookup-no-match)').forEach(function(tr) {
+                            if (rows.length > 0) {
+                                tr.style.display = 'none';
+                            }
+                        });
+                        const noMatch = ensureNoMatchRow();
+                        noMatch.style.display = (rows.length > 0 && visible === 0) ? '' : 'none';
+                    }
+
+                    function applySort() {
+                        if (sortCol === null) return;
+                        const rows = dataRows();
+                        rows.sort(function(ra, rb) {
+                            const ta = cellText(ra.cells[sortCol]);
+                            const tb = cellText(rb.cells[sortCol]);
+                            return compareValues(ta, tb) * sortDir;
+                        });
+                        rows.forEach(function(r) {
+                            tbody.appendChild(r);
+                        });
+                        const nm = tbody.querySelector('tr.temper-lookup-no-match');
+                        if (nm) tbody.appendChild(nm);
+                    }
+
+                    function onSortColumn(idx) {
+                        if (sortCol === idx) {
+                            sortDir = -sortDir;
+                        } else {
+                            sortCol = idx;
+                            sortDir = 1;
+                        }
+                        applySort();
+                        updateHeaderIndicators();
+                    }
+
+                    ths.forEach(function(th, idx) {
+                        th.classList.add('temper-sortable');
+                        th.setAttribute('role', 'columnheader');
+                        th.setAttribute('tabindex', '0');
+                        th.setAttribute('aria-sort', 'none');
+                        if (!th.querySelector('.temper-sort-icon')) {
+                            th.appendChild(document.createTextNode(' '));
+                            const icon = document.createElement('i');
+                            icon.className = 'bi bi-arrow-down-up temper-sort-icon';
+                            icon.setAttribute('aria-hidden', 'true');
+                            th.appendChild(icon);
+                        }
+                        th.addEventListener('click', function() {
+                            onSortColumn(idx);
+                        });
+                        th.addEventListener('keydown', function(e) {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                onSortColumn(idx);
+                            }
+                        });
+                    });
+
+                    if (filterInput) {
+                        filterInput.setAttribute('autocomplete', 'off');
+                        filterInput.setAttribute('data-dirty-ignore', '1');
+                        filterInput.addEventListener('input', function() {
+                            applyFilter();
+                        });
+                    }
+
+                    applyFilter();
+
+                    return {
+                        reapply: function() {
+                            applyFilter();
+                            if (sortCol !== null) applySort();
+                        },
+                        clearSort: function() {
+                            sortCol = null;
+                            sortDir = 1;
+                            updateHeaderIndicators();
+                        },
+                        focusFilter: function() {
+                            if (!filterInput) return;
+                            filterInput.focus();
+                            if (typeof filterInput.select === 'function') {
+                                try { filterInput.select(); } catch (e) { /* ignore */ }
+                            }
+                        }
+                    };
+                }
+            };
+
+            /**
+             * Lookup page shell: compact toolbar wiring, table-only font size,
+             * and leader-key hotkeys (; then command). Extends TemperLookupTable.
+             *
+             *   TemperLookupPage.init({
+             *     root, table, filterInput, emptyMessage,
+             *     actions: { add, edit, delete, archive, toggleArchived } // elements
+             *   });
+             *
+             * Hotkey leader is ";" (when not typing in a field). Then:
+             *   f / = filter, a = Add, e = Edit, d = Delete, r = Archive,
+             *   s = Show/Hide archived, + / - = table font, ? = help list.
+             */
+            const FONT_STEPS = [0.75, 0.8125, 0.875, 0.9375, 1, 1.125, 1.25];
+            const FONT_DEFAULT_IDX = 2; // 0.875rem
+            const FONT_STORAGE_KEY = 'temper-lookup-table-font-idx';
+            const LEADER_KEY = ';';
+            const LEADER_TIMEOUT_MS = 2500;
+            let activeLookupPage = null;
+
+            function resolveEl(ref) {
+                if (!ref) return null;
+                if (typeof ref === 'string') return document.querySelector(ref);
+                return ref;
+            }
+
+            function isTypingTarget(el) {
+                if (!el || !el.tagName) return false;
+                const tag = el.tagName.toLowerCase();
+                if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+                if (el.isContentEditable) return true;
+                return !!(el.closest && el.closest('[contenteditable="true"]'));
+            }
+
+            function isModalOpen() {
+                return !!(document.querySelector('.modal.show'));
+            }
+
+            function clickIfEnabled(btn) {
+                if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+                    if (typeof showToast === 'function') {
+                        showToast('That action is not available right now.', 'warning', 2200);
+                    }
+                    return false;
+                }
+                btn.click();
+                return true;
+            }
+
+            function readFontIdx() {
+                try {
+                    const raw = localStorage.getItem(FONT_STORAGE_KEY);
+                    if (raw === null || raw === '') return FONT_DEFAULT_IDX;
+                    const n = parseInt(raw, 10);
+                    if (isNaN(n) || n < 0 || n >= FONT_STEPS.length) return FONT_DEFAULT_IDX;
+                    return n;
+                } catch (e) {
+                    return FONT_DEFAULT_IDX;
+                }
+            }
+
+            function writeFontIdx(idx) {
+                try {
+                    localStorage.setItem(FONT_STORAGE_KEY, String(idx));
+                } catch (e) { /* private mode */ }
+            }
+
+            function buildHelpHtml() {
+                return (
+                    '<p class="mb-2 small text-muted">Press <kbd>;</kbd> then a command ' +
+                    '(when not typing in a field):</p>' +
+                    '<ul class="temper-lookup-hotkey-help-list">' +
+                    '<li><kbd>;</kbd> <kbd>f</kbd> — Focus filter</li>' +
+                    '<li><kbd>;</kbd> <kbd>a</kbd> — Add</li>' +
+                    '<li><kbd>;</kbd> <kbd>e</kbd> — Edit selected</li>' +
+                    '<li><kbd>;</kbd> <kbd>d</kbd> — Delete selected</li>' +
+                    '<li><kbd>;</kbd> <kbd>r</kbd> — Archive / Unarchive</li>' +
+                    '<li><kbd>;</kbd> <kbd>s</kbd> — Show / Hide archived</li>' +
+                    '<li><kbd>;</kbd> <kbd>+</kbd> / <kbd>-</kbd> — Table text size</li>' +
+                    '<li><kbd>;</kbd> <kbd>?</kbd> or <kbd>h</kbd> — This help</li>' +
+                    '<li><kbd>Esc</kbd> — Cancel hotkey mode</li>' +
+                    '</ul>'
+                );
+            }
+
+            window.TemperLookupPage = {
+                LEADER_KEY: LEADER_KEY,
+                init: function(opts) {
+                    opts = opts || {};
+                    // Tear down previous page instance (SPA fragment swap)
+                    if (activeLookupPage && typeof activeLookupPage.dispose === 'function') {
+                        activeLookupPage.dispose();
+                        activeLookupPage = null;
+                    }
+
+                    const root = resolveEl(opts.root) || document.querySelector('.temper-lookup-page');
+                    const table = resolveEl(opts.table);
+                    const filterInput = resolveEl(opts.filterInput);
+                    const actions = opts.actions || {};
+                    const addBtn = resolveEl(actions.add);
+                    const editBtn = resolveEl(actions.edit);
+                    const deleteBtn = resolveEl(actions.delete);
+                    const archiveBtn = resolveEl(actions.archive);
+                    const toggleArchivedBtn = resolveEl(actions.toggleArchived);
+
+                    let tableApi = null;
+                    if (typeof window.TemperLookupTable !== 'undefined' && table) {
+                        tableApi = window.TemperLookupTable.enhance({
+                            table: table,
+                            filterInput: filterInput,
+                            emptyMessage: opts.emptyMessage || 'No matching rows.'
+                        });
+                    }
+
+                    // ── Table-only font size ───────────────────────────────
+                    let fontIdx = readFontIdx();
+
+                    function applyFontSize() {
+                        const rem = FONT_STEPS[fontIdx] || FONT_STEPS[FONT_DEFAULT_IDX];
+                        if (root) {
+                            root.style.setProperty('--temper-lookup-font-size', rem + 'rem');
+                        }
+                        if (table) {
+                            table.style.setProperty('--temper-lookup-font-size', rem + 'rem');
+                            table.style.fontSize = rem + 'rem';
+                        }
+                        writeFontIdx(fontIdx);
+                        const dec = root ? root.querySelector('[data-lookup-font-delta="-1"]') : null;
+                        const inc = root ? root.querySelector('[data-lookup-font-delta="1"]') : null;
+                        if (dec) dec.disabled = fontIdx <= 0;
+                        if (inc) inc.disabled = fontIdx >= FONT_STEPS.length - 1;
+                    }
+
+                    function bumpFont(delta) {
+                        const next = Math.max(0, Math.min(FONT_STEPS.length - 1, fontIdx + delta));
+                        if (next === fontIdx) return;
+                        fontIdx = next;
+                        applyFontSize();
+                    }
+
+                    applyFontSize();
+
+                    if (root) {
+                        root.querySelectorAll('[data-lookup-font-delta]').forEach(function(btn) {
+                            btn.addEventListener('click', function() {
+                                const d = parseInt(btn.getAttribute('data-lookup-font-delta'), 10);
+                                if (!isNaN(d)) bumpFont(d);
+                            });
+                        });
+                    }
+
+                    // ── Hotkey help popover ────────────────────────────────
+                    let helpPopover = null;
+                    const helpBtn = root
+                        ? root.querySelector('[data-lookup-hotkey-help]')
+                        : null;
+
+                    function disposeHelpPopover() {
+                        if (helpPopover) {
+                            try { helpPopover.dispose(); } catch (e) { /* ignore */ }
+                            helpPopover = null;
+                        }
+                    }
+
+                    function showHelp() {
+                        if (!helpBtn || typeof bootstrap === 'undefined' || !bootstrap.Popover) {
+                            if (typeof showToast === 'function') {
+                                showToast('Shortcuts: ; f filter · ; a add · ; e edit · ; ? help', 'info', 5000);
+                            }
+                            return;
+                        }
+                        disposeHelpPopover();
+                        helpPopover = bootstrap.Popover.getOrCreateInstance(helpBtn, {
+                            title: 'Lookup keyboard shortcuts',
+                            content: buildHelpHtml(),
+                            html: true,
+                            trigger: 'manual',
+                            placement: 'bottom',
+                            container: 'body',
+                            customClass: 'temper-lookup-hotkey-popover',
+                            sanitize: false
+                        });
+                        helpPopover.show();
+                        // Auto-hide after a few seconds or on outside click
+                        setTimeout(function() {
+                            try { if (helpPopover) helpPopover.hide(); } catch (e) { /* ignore */ }
+                        }, 8000);
+                    }
+
+                    if (helpBtn) {
+                        helpBtn.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            if (helpPopover && helpBtn.getAttribute('aria-describedby')) {
+                                try { helpPopover.hide(); } catch (err) { /* ignore */ }
+                            } else {
+                                showHelp();
+                            }
+                        });
+                    }
+
+                    // ── Leader-key hotkeys ─────────────────────────────────
+                    let leaderActive = false;
+                    let leaderTimer = null;
+                    let bannerEl = null;
+
+                    function hideBanner() {
+                        if (bannerEl && bannerEl.parentNode) {
+                            bannerEl.parentNode.removeChild(bannerEl);
+                        }
+                        bannerEl = null;
+                    }
+
+                    function showBanner() {
+                        hideBanner();
+                        bannerEl = document.createElement('div');
+                        bannerEl.className = 'temper-hotkey-banner';
+                        bannerEl.setAttribute('role', 'status');
+                        bannerEl.innerHTML =
+                            'Hotkey mode — press a command (<kbd>f</kbd> filter, <kbd>a</kbd> add, <kbd>?</kbd> help) or <kbd>Esc</kbd>';
+                        document.body.appendChild(bannerEl);
+                    }
+
+                    function endLeaderMode() {
+                        leaderActive = false;
+                        if (leaderTimer) {
+                            clearTimeout(leaderTimer);
+                            leaderTimer = null;
+                        }
+                        hideBanner();
+                    }
+
+                    function startLeaderMode() {
+                        leaderActive = true;
+                        if (leaderTimer) clearTimeout(leaderTimer);
+                        showBanner();
+                        leaderTimer = setTimeout(endLeaderMode, LEADER_TIMEOUT_MS);
+                    }
+
+                    function runCommand(key) {
+                        // Use e.key as provided: '?' stays '?', letters lowercased
+                        if (key === '?' || key === 'h') {
+                            showHelp();
+                            return true;
+                        }
+                        const k = String(key || '').toLowerCase();
+                        if (k === 'f' || k === '/') {
+                            if (tableApi && tableApi.focusFilter) tableApi.focusFilter();
+                            else if (filterInput) filterInput.focus();
+                            return true;
+                        }
+                        if (k === 'a') {
+                            clickIfEnabled(addBtn);
+                            return true;
+                        }
+                        if (k === 'e') {
+                            clickIfEnabled(editBtn);
+                            return true;
+                        }
+                        if (k === 'd') {
+                            clickIfEnabled(deleteBtn);
+                            return true;
+                        }
+                        if (k === 'r') {
+                            clickIfEnabled(archiveBtn);
+                            return true;
+                        }
+                        if (k === 's') {
+                            clickIfEnabled(toggleArchivedBtn);
+                            return true;
+                        }
+                        if (k === '+' || k === '=' || key === '+') {
+                            bumpFont(1);
+                            return true;
+                        }
+                        if (k === '-' || k === '_' || key === '-') {
+                            bumpFont(-1);
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    function onKeyDown(e) {
+                        if (!root || !root.isConnected) {
+                            dispose();
+                            return;
+                        }
+                        // Never steal keys while typing or when a modal is open
+                        if (isModalOpen()) {
+                            if (leaderActive) endLeaderMode();
+                            return;
+                        }
+                        if (isTypingTarget(e.target)) {
+                            if (leaderActive) endLeaderMode();
+                            return;
+                        }
+                        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+                        if (leaderActive) {
+                            if (e.key === 'Escape') {
+                                e.preventDefault();
+                                endLeaderMode();
+                                return;
+                            }
+                            // Consume printable command keys
+                            const raw = e.key;
+                            if (raw === 'Shift' || raw === 'Control' || raw === 'Alt' || raw === 'Meta') return;
+                            e.preventDefault();
+                            endLeaderMode();
+                            if (raw === '?') {
+                                showHelp();
+                                return;
+                            }
+                            runCommand(raw);
+                            return;
+                        }
+
+                        // Enter leader mode with ";"
+                        if (e.key === LEADER_KEY) {
+                            e.preventDefault();
+                            startLeaderMode();
+                        }
+                    }
+
+                    function dispose() {
+                        endLeaderMode();
+                        disposeHelpPopover();
+                        document.removeEventListener('keydown', onKeyDown, true);
+                        if (activeLookupPage && activeLookupPage._id === instanceId) {
+                            activeLookupPage = null;
+                        }
+                    }
+
+                    const instanceId = 'lookup-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+                    document.addEventListener('keydown', onKeyDown, true);
+
+                    const api = {
+                        _id: instanceId,
+                        tableApi: tableApi,
+                        bumpFont: bumpFont,
+                        showHelp: showHelp,
+                        dispose: dispose
+                    };
+                    activeLookupPage = api;
+                    return api;
+                },
+                disposeActive: function() {
+                    if (activeLookupPage && typeof activeLookupPage.dispose === 'function') {
+                        activeLookupPage.dispose();
+                    }
+                    activeLookupPage = null;
+                }
+            };
+
+            // SPA navigates away: key handler self-disposes when root is disconnected;
+            // re-init of another lookup page also disposes the previous instance.
+        })();
+
+        /**
          * Move a Bootstrap modal to document.body before show.
          * SPA fragments live under #main-content-col (z-index: 1). Bootstrap appends
          * .modal-backdrop to body at z-index 1050, so a modal that stays inside the
@@ -739,6 +1300,10 @@ $footerDb->close();
             // Drop dirty trackers bound to the outgoing fragment
             if (typeof window.TemperDirtyForms !== 'undefined') {
                 window.TemperDirtyForms.clearAll();
+            }
+            // Dispose lookup page hotkey listeners / banner before fragment swap
+            if (window.TemperLookupPage && typeof window.TemperLookupPage.disposeActive === 'function') {
+                window.TemperLookupPage.disposeActive();
             }
             // Tear down body-mounted page modals before replacing #main-content
             if (typeof window.cleanupFragmentModals === 'function') {

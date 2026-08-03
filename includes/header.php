@@ -472,6 +472,88 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             color: var(--bs-body-color);
         }
 
+        /* ── Lookup maintenance toolbar + table chrome ───────────────────── */
+        .temper-lookup-page {
+            --temper-lookup-font-size: 0.875rem;
+        }
+        .temper-lookup-toolbar {
+            /* Single compact row with title, filter, font, actions */
+        }
+        .temper-lookup-title {
+            line-height: 1.25;
+            margin-right: 0.25rem;
+        }
+        .temper-lookup-filter-wrap {
+            width: 100%;
+            max-width: 16rem;
+            min-width: 9rem;
+            flex: 1 1 10rem;
+        }
+        .temper-lookup-filter-wrap .input-group-text {
+            color: var(--bs-secondary-color);
+        }
+        .temper-lookup-actions {
+            flex: 0 1 auto;
+        }
+        /* Font size applies only to the data table (not page chrome) */
+        .temper-lookup-table {
+            font-size: var(--temper-lookup-font-size, 0.875rem);
+        }
+        .temper-lookup-table > :not(caption) > * > * {
+            font-size: inherit;
+        }
+        th.temper-sortable {
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        th.temper-sortable:hover,
+        th.temper-sortable:focus {
+            outline: none;
+            box-shadow: inset 0 0 0 9999px rgba(255, 255, 255, 0.08);
+        }
+        th.temper-sortable .temper-sort-icon {
+            font-size: 0.7em;
+            margin-left: 0.35rem;
+            opacity: 0.4;
+            vertical-align: 0.05em;
+        }
+        th.temper-sortable[aria-sort="ascending"] .temper-sort-icon,
+        th.temper-sortable[aria-sort="descending"] .temper-sort-icon {
+            opacity: 1;
+        }
+        /* Leader-key hotkey mode indicator (bottom of viewport) */
+        .temper-hotkey-banner {
+            position: fixed;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1080;
+            padding: 0.4rem 0.85rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            background: var(--bs-body-bg);
+            color: var(--bs-body-color);
+            border: 1px solid var(--bs-border-color);
+            box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.15);
+            pointer-events: none;
+        }
+        .temper-hotkey-banner kbd {
+            font-size: 0.8em;
+            padding: 0.1em 0.35em;
+            border-radius: 0.25rem;
+            border: 1px solid var(--bs-border-color);
+            background: var(--bs-tertiary-bg);
+        }
+        .temper-lookup-hotkey-help-list {
+            margin: 0;
+            padding-left: 1.1rem;
+            font-size: 0.8125rem;
+        }
+        .temper-lookup-hotkey-help-list li {
+            margin-bottom: 0.2rem;
+        }
+
         /* ── Mobile top bar (matches sidebar theme) ──────────────────────── */
         .mobile-topbar {
             z-index: 1020;
@@ -1157,6 +1239,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         // Drop body-mounted page modals from the previous fragment before the spinner
         if (typeof window.cleanupFragmentModals === 'function') {
             window.cleanupFragmentModals();
+        }
+        // Drop lookup page hotkey listeners / banner before tearing down fragment
+        if (window.TemperLookupPage && typeof window.TemperLookupPage.disposeActive === 'function') {
+            window.TemperLookupPage.disposeActive();
         }
 
         // Show loading indicator
