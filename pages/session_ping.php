@@ -15,7 +15,7 @@ header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate');
 
 $timeoutEnabled = function_exists('isLoginTimeoutEnabled') ? isLoginTimeoutEnabled() : true;
-$timeoutSeconds = function_exists('getLoginTimeoutSeconds') ? getLoginTimeoutSeconds() : 300;
+$timeoutSeconds = function_exists('getLoginTimeoutSeconds') ? getLoginTimeoutSeconds() : 600;
 
 echo json_encode([
     'success' => true,

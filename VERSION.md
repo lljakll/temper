@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.910](#v0910)
 - [v0.909](#v0909)
 - [v0.908](#v0908)
 - [v0.907](#v0907)
@@ -115,6 +116,36 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.910
+
+**Login timeout warning reliability + Developer Mode disables app timer** — 2026-08-07
+
+> No schema update required for this release (auth/config/UI only).  
+> **Patch file (history row):** `updates/20260807_0910_login_timeout_warning_and_devmode.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.910
+
+- **Warning modal reliability (highest priority):**
+  - Idle-timeout warning always appears when **60 seconds** remain on the application timer.
+  - Modal stacks **above every other UI layer** (open Bootstrap modals, forms, backdrops) via dedicated high z-index and backdrop marking; it is interactable (“Stay logged in”) without closing or destroying open forms or unsaved data.
+  - SPA fragment cleanup never removes the shell timeout modal or its backdrop while open.
+  - On full expiry, redirect to login remains authoritative (`logout.php?expired=1`).
+- **Developer Mode behavior (authoritative):**
+  - **Off** → application idle timeout **10 minutes** (client timer + server idle check).
+  - **On** → application idle timeout **fully disabled** (no warning modal, no client redirect, server `isSessionWithinIdleLimit` short-circuits). Host/system session cleaner **≈24 minutes** still applies.
+- **System Configuration Status panel:** when Developer Mode is On, shows a clear warning that the application timer is disabled and the host session timeout is in effect; Login timeout badge reflects disabled state.
+- Removed the prior “always-on 5m/20m by Developer Mode” model; single control plane remains Developer Mode + fixed 10-minute window.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.910**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.909 | `updates/20260807_0910_login_timeout_warning_and_devmode.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.909 patches, then this process patch |
 
 ---
 

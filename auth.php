@@ -24,11 +24,12 @@ function temperEnsureSystemConfigLoaded(): void {
 }
 
 /**
- * Align PHP session GC lifetime with the effective Login Timeout (from Developer Mode).
+ * Align PHP session GC lifetime with application Login Timeout / Developer Mode.
  * Must run before session_start() so gc_maxlifetime applies to this request's session.
  *
- * Timeout is always on (5 min normal / 20 min with Developer Mode). GC is set slightly
- * above the idle window but kept under the host ~24-minute sessioncleaner (php.ini 1440).
+ * Developer Mode OFF → app idle timeout 10 minutes; GC slightly above that window.
+ * Developer Mode ON  → app idle timeout disabled; GC uses host-capped lifetime (~24 min).
+ * Always stay at or under the host sessioncleaner (php.ini ~1440s).
  */
 function configureAuthSessionLifetimeParams(): void {
     if (session_status() !== PHP_SESSION_NONE) {
@@ -43,14 +44,20 @@ function configureAuthSessionLifetimeParams(): void {
     // Stay strictly under host cleaner so OS purge does not race the app idle window
     $maxGc = max(60, $hostCap - 1);
 
-    $sec = function_exists('getLoginTimeoutSeconds')
-        ? (int)getLoginTimeoutSeconds()
-        : 300;
-    if ($sec < 30) {
-        $sec = 300;
+    $timeoutOn = !function_exists('isLoginTimeoutEnabled') || isLoginTimeoutEnabled();
+    if (!$timeoutOn) {
+        // App idle check off: allow sessions for the full host window
+        $gc = $maxGc;
+    } else {
+        $sec = function_exists('getLoginTimeoutSeconds')
+            ? (int)getLoginTimeoutSeconds()
+            : 600;
+        if ($sec < 30) {
+            $sec = 600;
+        }
+        // Headroom past app timeout; never claim a lifetime the host cleaner will ignore
+        $gc = max(60, min($sec + 120, $maxGc));
     }
-    // Headroom past app timeout; never claim a lifetime the host cleaner will ignore
-    $gc = max(60, min($sec + 120, $maxGc));
 
     @ini_set('session.gc_maxlifetime', (string)$gc);
 }
@@ -70,8 +77,8 @@ function temperStartAuthSession(): void {
 temperStartAuthSession();
 
 /**
- * Max idle seconds for application-level session expiry.
- * Always the effective Login Timeout (5 or 20 minutes from Developer Mode).
+ * Max idle seconds for application-level session expiry when the app timer is on.
+ * Fixed 10 minutes (Developer Mode off). Unused for enforcement when Dev Mode is on.
  */
 function getSessionMaxIdleSeconds(): int {
     static $resolved = null;
@@ -88,23 +95,24 @@ function getSessionMaxIdleSeconds(): int {
         }
     }
 
-    $resolved = 300;
+    $resolved = 600;
     return $resolved;
 }
 
 /**
  * Client-facing idle timeout config for the SPA shell (seconds + enabled flag).
- * Timeout is always enabled; duration follows Developer Mode.
+ * Enabled only when Developer Mode is OFF; seconds are the fixed 10-minute window.
  *
  * @return array{enabled:bool,seconds:int}
  */
 function getClientLoginTimeoutConfig(): array {
     temperEnsureSystemConfigLoaded();
+    $enabled = !function_exists('isLoginTimeoutEnabled') || isLoginTimeoutEnabled();
     return [
-        'enabled' => true,
+        'enabled' => $enabled,
         'seconds' => function_exists('getLoginTimeoutSeconds')
             ? (int)getLoginTimeoutSeconds()
-            : 300,
+            : 600,
     ];
 }
 
@@ -269,9 +277,14 @@ function isLoggedIn(): bool {
 
 /**
  * Whether the session is still within the idle timeout window.
- * Idle timeout is always enforced (duration from Developer Mode).
+ * When Developer Mode is ON, application idle timeout is fully disabled (always true).
+ * When OFF, enforces the fixed 10-minute idle window.
  */
 function isSessionWithinIdleLimit(): bool {
+    temperEnsureSystemConfigLoaded();
+    if (function_exists('isLoginTimeoutEnabled') && !isLoginTimeoutEnabled()) {
+        return true;
+    }
     if (!isset($_SESSION['last_activity'])) {
         // Legacy sessions without activity stamp: accept once, then stamp.
         return true;

@@ -1269,6 +1269,7 @@ $footerDb->close();
         window.cleanupFragmentModals = function() {
             try {
                 document.querySelectorAll('body > .modal').forEach(function(el) {
+                    // Never remove or dispose the shell idle-timeout warning modal
                     if (el.id === 'sessionTimeoutModal') return;
                     try {
                         if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
@@ -1278,15 +1279,19 @@ $footerDb->close();
                     } catch (e) { /* ignore */ }
                     el.remove();
                 });
+                // Drop page modal backdrops only; keep the session-timeout overlay if open
                 document.querySelectorAll('body > .modal-backdrop').forEach(function(el) {
+                    if (el.classList.contains('session-timeout-backdrop')) return;
                     el.remove();
                 });
-                // Only clear modal-open if no shell modal remains open
+                // Keep body modal-open while the idle warning (or its backdrop) is still shown
                 const shellOpen = document.querySelector('#sessionTimeoutModal.show');
                 if (!shellOpen) {
                     document.body.classList.remove('modal-open');
                     document.body.style.removeProperty('overflow');
                     document.body.style.removeProperty('padding-right');
+                } else {
+                    document.body.classList.add('modal-open');
                 }
             } catch (e) { /* ignore */ }
         };

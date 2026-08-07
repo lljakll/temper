@@ -1,10 +1,11 @@
 <?php
 /**
  * System — Configuration.
- * Administrator-only settings: Developer Mode (also drives fixed login timeout),
+ * Administrator-only settings: Developer Mode (also controls application idle timeout),
  * auto-archive timer, and future preferences.
  * Settings persist under storage/config/system.json.
- * Login idle timeout is not user-configurable: 5 min (Developer Mode off) or 20 min (on).
+ * Login idle timeout: 10 min when Developer Mode is off; fully disabled when on
+ * (host/system session cleaner ≈24 minutes still applies).
  */
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/audit.php';
@@ -41,9 +42,9 @@ function configPayload(): array {
         'auto_archive_disabled' => !isAutoArchiveEnabled(),
         'auto_archive_timer_hours' => getAutoArchiveTimerHours(),
         'auto_archive_enabled' => isAutoArchiveEnabled(),
-        // Login timeout: always enabled; duration derived from Developer Mode only
-        'login_timeout_disabled' => false,
-        'login_timeout_enabled' => true,
+        // Login timeout: enabled only when Developer Mode is off (fixed 10 minutes)
+        'login_timeout_disabled' => !isLoginTimeoutEnabled(),
+        'login_timeout_enabled' => isLoginTimeoutEnabled(),
         'login_timeout_seconds' => getLoginTimeoutSeconds(),
         'login_timeout_label' => getLoginTimeoutDisplayLabel(),
         'sidebar_hover_expand_delay_seconds' => getSidebarHoverExpandDelaySeconds(),
@@ -269,8 +270,9 @@ $isDevEnv = (bool)$payload['is_development_env'];
                             <label class="form-label fw-semibold mb-1" for="cfgDeveloperMode">Developer Mode</label>
                             <p class="small text-muted mb-0">
                                 When <strong>On</strong>, enables development-only tools (for example, permanent user delete on Users &amp; Roles)
-                                and sets idle login timeout to <strong>20 minutes</strong>.
-                                When <strong>Off</strong>, login timeout is <strong>5 minutes</strong>. Keep Off for normal production use.
+                                and <strong>disables</strong> the application idle login timeout (host/system session timeout ≈24 minutes still applies).
+                                When <strong>Off</strong>, application login timeout is <strong>10 minutes</strong> with a 60-second warning.
+                                Keep Off for normal production use.
                             </p>
                             <?php if ($developerMode && !$isDevEnv): ?>
                             <p class="small text-warning mb-0 mt-2" id="cfgDeveloperModeEnvWarn">
@@ -498,11 +500,21 @@ $isDevEnv = (bool)$payload['is_development_env'];
                     </dd>
                     <dt class="col-6 text-muted">Login timeout</dt>
                     <dd class="col-6" id="cfgStatusLoginTimeout">
-                        <span class="badge text-bg-success" title="<?= (int)$loginTimeoutSeconds ?> seconds"><?= htmlspecialchars($loginTimeoutLabel) ?></span>
+                        <?php if ($developerMode): ?>
+                            <span class="badge text-bg-warning" title="Application idle timer off"><?= htmlspecialchars($loginTimeoutLabel) ?></span>
+                        <?php else: ?>
+                            <span class="badge text-bg-success" title="<?= (int)$loginTimeoutSeconds ?> seconds"><?= htmlspecialchars($loginTimeoutLabel) ?></span>
+                        <?php endif; ?>
                     </dd>
                     <dt class="col-6 text-muted">Environment</dt>
                     <dd class="col-6" id="cfgStatusEnvironment"><code><?= htmlspecialchars($appEnv) ?></code></dd>
                 </dl>
+                <div id="cfgStatusLoginTimeoutWarn" class="alert alert-warning py-2 px-2 small mb-3<?= $developerMode ? '' : ' d-none' ?>" role="status">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    <strong>Application timer disabled.</strong>
+                    With Developer Mode on, the app idle timeout and warning modal are off.
+                    The host/system session timeout (≈24 minutes) is still in effect and may end the session without the in-app warning.
+                </div>
                 <p class="text-uppercase text-muted mb-2" style="letter-spacing: 0.04em; font-size: 0.7rem;">Other</p>
                 <dl class="row mb-0">
                     <dt class="col-6 text-muted">Auto-archive</dt>
@@ -607,15 +619,32 @@ $isDevEnv = (bool)$payload['is_development_env'];
         if (autoBackupFormat) autoBackupFormat.disabled = !on;
     }
 
-    /** Status badge for fixed login timeout (from Developer Mode). */
+    /** Status badge for login timeout (Developer Mode off → 10 min; on → disabled). */
     function formatLoginTimeoutStatus(res) {
+        const dmOn = res.developer_mode === true || res.developer_mode === 1
+            || res.developer_mode === '1' || res.developer_mode === 'true';
+        const timeoutOff = res.login_timeout_enabled === false || res.login_timeout_disabled === true || dmOn;
+        if (timeoutOff) {
+            const label = res.login_timeout_label || 'Disabled (host ≈24 min)';
+            return '<span class="badge text-bg-warning" title="Application idle timer off">'
+                + String(label) + '</span>';
+        }
         const label = res.login_timeout_label
             || (res.login_timeout_seconds != null
                 ? (Math.round(Number(res.login_timeout_seconds) / 60) + ' minutes')
-                : '5 minutes');
-        const sec = res.login_timeout_seconds != null ? Number(res.login_timeout_seconds) : 300;
+                : '10 minutes');
+        const sec = res.login_timeout_seconds != null ? Number(res.login_timeout_seconds) : 600;
         return '<span class="badge text-bg-success" title="' + String(sec) + ' seconds">'
             + String(label) + '</span>';
+    }
+
+    function syncLoginTimeoutWarn(res) {
+        const warn = document.getElementById('cfgStatusLoginTimeoutWarn');
+        if (!warn) return;
+        const dmOn = res.developer_mode === true || res.developer_mode === 1
+            || res.developer_mode === '1' || res.developer_mode === 'true';
+        if (dmOn) warn.classList.remove('d-none');
+        else warn.classList.add('d-none');
     }
 
     function applyPayload(res) {
@@ -650,9 +679,18 @@ $isDevEnv = (bool)$payload['is_development_env'];
         syncAutoArchiveUi();
         syncAutoBackupUi();
 
-        // Live client idle timer: always enabled; seconds follow Developer Mode
+        // Live client idle timer: enabled only when Developer Mode is off (10 minutes)
         if (window.__temperLoginTimeout) {
-            window.__temperLoginTimeout.enabled = true;
+            const timeoutOn = res.login_timeout_enabled !== false
+                && res.login_timeout_disabled !== true
+                && !(res.developer_mode === true || res.developer_mode === 1
+                    || res.developer_mode === '1' || res.developer_mode === 'true');
+            // Prefer explicit server flag when present
+            if (typeof res.login_timeout_enabled === 'boolean') {
+                window.__temperLoginTimeout.enabled = res.login_timeout_enabled;
+            } else {
+                window.__temperLoginTimeout.enabled = timeoutOn;
+            }
             if (res.login_timeout_seconds != null) {
                 window.__temperLoginTimeout.seconds = res.login_timeout_seconds;
             }
@@ -687,6 +725,7 @@ $isDevEnv = (bool)$payload['is_development_env'];
         if (statusLoginTimeout) {
             statusLoginTimeout.innerHTML = formatLoginTimeoutStatus(res);
         }
+        syncLoginTimeoutWarn(res);
         if (statusAuto) {
             if (res.auto_archive_disabled) {
                 statusAuto.innerHTML = '<span class="badge text-bg-secondary">Disabled</span>';
@@ -772,7 +811,7 @@ $isDevEnv = (bool)$payload['is_development_env'];
             }
             const fd = new FormData();
             fd.append('action', 'save_config');
-            // Explicit 1/0: checked switch = Developer Mode On (enables 20 min login timeout)
+            // Explicit 1/0: checked switch = Developer Mode On (disables application idle timeout)
             fd.append('developer_mode', (toggle && toggle.checked) ? '1' : '0');
             fd.append('auto_archive_disabled', disableArchive && disableArchive.checked ? '1' : '0');
             fd.append('auto_archive_timer_hours', String(hours > 0 ? hours : 24));

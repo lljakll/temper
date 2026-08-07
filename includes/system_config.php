@@ -34,8 +34,8 @@ function temperSystemConfigCatalog(): array {
             'type' => 'bool',
             'label' => 'Developer Mode',
             'description' => 'Enables development-only tools such as permanent user delete. '
-                . 'Also sets idle login timeout: Off → 5 minutes, On → 20 minutes '
-                . '(always under the host ~24-minute session cleaner). '
+                . 'Also controls application idle login timeout: Off → 10 minutes (enforced); '
+                . 'On → application idle timeout fully disabled (host/system session cleaner ≈24 minutes remains). '
                 . 'Keep off in production. Environment variables APP_ENV / ALLOW_HARD_DELETE still apply as hard limits.',
             'group' => 'development',
         ],
@@ -59,9 +59,9 @@ function temperSystemConfigCatalog(): array {
             'min' => 1,
             'max' => 8760, // 1 year
         ],
-        // Login timeout is not a free-form setting: duration is derived from Developer Mode
-        // (see TEMPER_LOGIN_TIMEOUT_*_SECONDS and getLoginTimeoutSeconds()). Legacy keys may
-        // still exist in system.json from older releases and are ignored for enforcement.
+        // Login timeout is not a free-form setting: when Developer Mode is off the app uses a
+        // fixed 10-minute idle window; when on, the app timer is fully disabled (host ~24 min
+        // still applies). Legacy login_timeout_* keys in system.json are ignored.
         'sidebar_hover_expand_delay_seconds' => [
             'default' => 0.5,
             'type' => 'float',
@@ -241,20 +241,14 @@ function isDeveloperModeEnabled(): bool {
 }
 
 /**
- * Idle login timeout when Developer Mode is off (5 minutes).
+ * Application idle login timeout when Developer Mode is off (10 minutes).
  * Kept well under the host ~24-minute PHP session file cleaner.
  */
-const TEMPER_LOGIN_TIMEOUT_NORMAL_SECONDS = 300;
+const TEMPER_LOGIN_TIMEOUT_NORMAL_SECONDS = 600;
 
 /**
- * Idle login timeout when Developer Mode is on (20 minutes).
- * Kept under the host ~24-minute PHP session file cleaner.
- */
-const TEMPER_LOGIN_TIMEOUT_DEV_SECONDS = 1200;
-
-/**
- * Host sessionclean / php.ini gc_maxlifetime floor (seconds). Timeouts and app GC
- * must stay below this so the OS cleaner does not kill sessions before app idle logic.
+ * Host sessionclean / php.ini gc_maxlifetime floor (seconds). App timeouts and GC
+ * must stay at or below this so the OS cleaner does not kill sessions unexpectedly.
  */
 const TEMPER_HOST_SESSION_CLEANER_SECONDS = 1440;
 
@@ -278,27 +272,29 @@ function getAutoArchiveTimerHours(): int {
 }
 
 /**
- * Whether idle login timeout is active.
- * Always true: timeout cannot be disabled; duration follows Developer Mode.
+ * Whether application-level idle login timeout is active.
+ * Authoritative: disabled only when Developer Mode is ON; otherwise always on.
  */
 function isLoginTimeoutEnabled(): bool {
-    return true;
+    return !isDeveloperModeEnabled();
 }
 
 /**
- * Effective idle login timeout in whole seconds.
- * Developer Mode off → 5 minutes; on → 20 minutes. Not a free-form config value.
+ * Effective application idle login timeout in whole seconds when the timer is enabled.
+ * Fixed at 10 minutes (Developer Mode off). Not a free-form config value.
+ * When Developer Mode is on the timer is disabled — callers should check isLoginTimeoutEnabled().
  */
 function getLoginTimeoutSeconds(): int {
-    return isDeveloperModeEnabled()
-        ? TEMPER_LOGIN_TIMEOUT_DEV_SECONDS
-        : TEMPER_LOGIN_TIMEOUT_NORMAL_SECONDS;
+    return TEMPER_LOGIN_TIMEOUT_NORMAL_SECONDS;
 }
 
 /**
- * Human-readable label for Status panel / UI (e.g. "5 minutes", "20 minutes").
+ * Human-readable label for Status panel / UI.
  */
 function getLoginTimeoutDisplayLabel(): string {
+    if (!isLoginTimeoutEnabled()) {
+        return 'Disabled (host ≈24 min)';
+    }
     $minutes = (int)round(getLoginTimeoutSeconds() / 60);
     if ($minutes < 1) {
         $minutes = 1;

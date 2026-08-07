@@ -6,12 +6,12 @@ require_once __DIR__ . '/../auth.php';
 // Central session check (full-page shell)
 requireLogin();
 
-// Idle login timeout for client-side enforcement (System Configuration)
+// Idle login timeout for client-side enforcement (Developer Mode off → 10 min; on → disabled)
 $temperLoginTimeout = function_exists('getClientLoginTimeoutConfig')
     ? getClientLoginTimeoutConfig()
-    : ['enabled' => true, 'seconds' => 300];
+    : ['enabled' => true, 'seconds' => 600];
 $temperLoginTimeoutEnabled = !empty($temperLoginTimeout['enabled']);
-$temperLoginTimeoutSeconds = max(30, (int)($temperLoginTimeout['seconds'] ?? 300));
+$temperLoginTimeoutSeconds = max(30, (int)($temperLoginTimeout['seconds'] ?? 600));
 
 // Sidebar hover delays (System Configuration → Interface)
 $temperSidebarHoverExpandSec = function_exists('getSidebarHoverExpandDelaySeconds')
@@ -728,6 +728,18 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             z-index: 1050;
         }
 
+        /*
+         * Idle session-timeout warning must always sit above every other UI layer
+         * (open form modals, their backdrops, toasts, sidebar). Never closes other modals.
+         */
+        body > #sessionTimeoutModal.modal,
+        #sessionTimeoutModal.modal {
+            z-index: 20050 !important;
+        }
+        body > .modal-backdrop.session-timeout-backdrop {
+            z-index: 20040 !important;
+        }
+
         /* ── Utility: page titles that wrap cleanly ──────────────────────── */
         .page-title-row {
             gap: 0.5rem;
@@ -852,15 +864,17 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
 
         // ── Client idle login timeout ──────────────────────────────────────
-        // Single authority: window.__temperLoginTimeout (System Configuration).
-        // When enabled=false ("Disable Login Timeout"), never show the warning modal
-        // and never redirect for idle time — timers are cleared and stay off.
-        // When enabled, shows a 60s warning before logout (or half of timeout if short);
+        // Single authority: window.__temperLoginTimeout (Developer Mode).
+        // enabled=false when Developer Mode is ON → no warning modal, no idle redirect.
+        // enabled=true (Developer Mode OFF) → fixed 10-minute idle; 60s warning before logout;
         // "Stay logged in" refreshes the server session and resets the timer.
+        // Warning modal must appear above any open Bootstrap modals without closing them.
         // Re-reads config so Configuration saves apply without full reload.
         (function initIdleLoginTimeout() {
             const WARN_LEAD_SEC = 60;
             const PING_URL = 'pages/session_ping.php';
+            const MODAL_Z = '20050';
+            const BACKDROP_Z = '20040';
 
             let lastActivity = Date.now();
             let timerId = null;
@@ -884,7 +898,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 }
                 return {
                     enabled: enabled,
-                    seconds: Math.max(30, parseInt(cfg.seconds, 10) || 300)
+                    seconds: Math.max(30, parseInt(cfg.seconds, 10) || 600)
                 };
             }
 
@@ -902,19 +916,65 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 return document.getElementById('sessionTimeoutModal');
             }
 
-            function getModalInstance() {
+            /**
+             * Lift timeout modal above every other modal/backdrop without touching them.
+             * Marks the newest backdrop so SPA cleanup can preserve it.
+             */
+            function elevateTimeoutLayer(el) {
+                if (!el) return;
+                try {
+                    el.style.zIndex = MODAL_Z;
+                    el.classList.add('session-timeout-modal');
+                    // Mark the topmost backdrop that Bootstrap just (or previously) created
+                    const backs = document.querySelectorAll('body > .modal-backdrop');
+                    if (backs.length) {
+                        const last = backs[backs.length - 1];
+                        last.classList.add('session-timeout-backdrop');
+                        last.style.zIndex = BACKDROP_Z;
+                    }
+                    // Ensure we are the last modal in body so paint order also favors us
+                    if (el.parentElement === document.body && el.nextSibling) {
+                        document.body.appendChild(el);
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
+            function clearTimeoutBackdropMarks() {
+                try {
+                    document.querySelectorAll('.modal-backdrop.session-timeout-backdrop').forEach(function(b) {
+                        b.classList.remove('session-timeout-backdrop');
+                        b.style.removeProperty('z-index');
+                    });
+                } catch (e) { /* ignore */ }
+            }
+
+            function ensureModalOnBody() {
                 let el = getModal();
-                if (!el || typeof bootstrap === 'undefined' || !bootstrap.Modal) return null;
-                // Same stacking fix as fragment modals (shell modal starts under #main-content-col)
+                if (!el) return null;
                 if (typeof window.mountModalOnBody === 'function') {
                     el = window.mountModalOnBody(el) || el;
+                } else if (el.parentElement !== document.body) {
+                    document.body.appendChild(el);
                 }
-                if (!modalInst) {
-                    modalInst = bootstrap.Modal.getOrCreateInstance(el, {
-                        backdrop: 'static',
-                        keyboard: false
-                    });
-                }
+                return el;
+            }
+
+            function getModalInstance() {
+                const el = ensureModalOnBody();
+                if (!el || typeof bootstrap === 'undefined' || !bootstrap.Modal) return null;
+                // Re-bind if instance was disposed or element was recreated
+                try {
+                    const existing = bootstrap.Modal.getInstance(el);
+                    if (existing) {
+                        modalInst = existing;
+                        return modalInst;
+                    }
+                } catch (e) { /* fall through */ }
+                modalInst = bootstrap.Modal.getOrCreateInstance(el, {
+                    backdrop: 'static',
+                    keyboard: false,
+                    focus: true
+                });
                 return modalInst;
             }
 
@@ -937,10 +997,37 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 stopCountdown();
                 warningOpen = false;
                 ignoreActivity = false;
+                const el = getModal();
                 const inst = getModalInstance();
                 if (inst) {
                     try { inst.hide(); } catch (e) { /* ignore */ }
                 }
+                // Manual cleanup for fallback forced-show path (other open modals stay intact)
+                if (el) {
+                    try {
+                        el.classList.remove('show');
+                        el.style.display = '';
+                        el.setAttribute('aria-hidden', 'true');
+                        el.removeAttribute('aria-modal');
+                        el.style.removeProperty('z-index');
+                    } catch (e) { /* ignore */ }
+                }
+                // Remove marked timeout backdrops before unmarking (order matters)
+                try {
+                    document.querySelectorAll('body > .modal-backdrop.session-timeout-backdrop').forEach(function(b) {
+                        b.remove();
+                    });
+                } catch (e) { /* ignore */ }
+                clearTimeoutBackdropMarks();
+                // Restore body scroll lock if another modal is still open
+                try {
+                    const otherOpen = document.querySelector('body > .modal.show:not(#sessionTimeoutModal)');
+                    if (otherOpen) {
+                        document.body.classList.add('modal-open');
+                    } else if (!document.querySelector('body > .modal.show')) {
+                        document.body.classList.remove('modal-open');
+                    }
+                } catch (e) { /* ignore */ }
             }
 
             /** Tear down all idle timers and hide the modal (disabled / reschedule path). */
@@ -968,20 +1055,57 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                     disarmIdleTimeout();
                     return;
                 }
-                const el = getModal();
+                const el = ensureModalOnBody();
                 if (!el) {
-                    // Modal markup missing — fall through to hard expiry only
+                    // Modal markup missing — still schedule hard expiry via schedule()
                     return;
                 }
                 warningOpen = true;
                 ignoreActivity = true;
                 const rem = Math.max(0, remainingMs() / 1000);
                 setCountdownDisplay(rem);
+                wireStayButton();
 
+                // Do not hide/dispose any other open modals — only stack above them
                 const inst = getModalInstance();
+                let shown = false;
                 if (inst) {
-                    try { inst.show(); } catch (e) { /* ignore */ }
+                    try {
+                        inst.show();
+                        shown = true;
+                    } catch (e) { /* fallback below */ }
                 }
+                // Fallback if Bootstrap unavailable or show() failed: force visible overlay
+                if (!shown || !el.classList.contains('show')) {
+                    try {
+                        el.classList.add('show');
+                        el.style.display = 'block';
+                        el.removeAttribute('aria-hidden');
+                        el.setAttribute('aria-modal', 'true');
+                        el.setAttribute('role', 'dialog');
+                        document.body.classList.add('modal-open');
+                        if (!document.querySelector('.modal-backdrop.session-timeout-backdrop')) {
+                            const bd = document.createElement('div');
+                            bd.className = 'modal-backdrop fade show session-timeout-backdrop';
+                            bd.style.zIndex = BACKDROP_Z;
+                            document.body.appendChild(bd);
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+
+                elevateTimeoutLayer(el);
+                // Re-elevate after Bootstrap finishes animating (new backdrop created async)
+                const reelevate = function() {
+                    elevateTimeoutLayer(el);
+                    // Focus primary action so modal is interactable above focus traps
+                    const btn = document.getElementById('sessionTimeoutStayBtn');
+                    if (btn && typeof btn.focus === 'function') {
+                        try { btn.focus(); } catch (e) { /* ignore */ }
+                    }
+                };
+                el.addEventListener('shown.bs.modal', reelevate, { once: true });
+                setTimeout(reelevate, 50);
+                setTimeout(reelevate, 200);
 
                 stopCountdown();
                 countdownId = setInterval(function() {
@@ -993,6 +1117,8 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                         disarmIdleTimeout();
                         return;
                     }
+                    // Keep layer on top if another modal reopened underneath
+                    elevateTimeoutLayer(el);
                     const left = remainingMs() / 1000;
                     setCountdownDisplay(left);
                     if (left <= 0) {
@@ -1013,7 +1139,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 clearSchedule();
                 if (window.__temperAuthRedirecting || checking) return;
                 const cfg = currentCfg();
-                // Authoritative: when Login Timeout is disabled, no modal and no idle redirect
+                // Authoritative: when Login Timeout is disabled (Developer Mode ON), no modal / no idle redirect
                 if (!cfg.enabled) {
                     disarmIdleTimeout();
                     return;
@@ -1029,7 +1155,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                     return;
                 }
 
-                // Enter or stay in warning window
+                // Enter or stay in warning window (always at ≤60s remaining when total > 60s)
                 if (rem <= warnMs) {
                     if (!warningOpen) showWarning();
                     // Next hard deadline
@@ -1149,6 +1275,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                     btn.dataset.wired = '1';
                     btn.addEventListener('click', function(e) {
                         e.preventDefault();
+                        e.stopPropagation();
                         stayLoggedIn();
                     });
                 }
