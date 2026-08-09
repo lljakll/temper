@@ -29,7 +29,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.910';
+const TEMPER_DEFAULT_APP_VERSION = '0.911';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
@@ -428,6 +428,155 @@ function assessSetupBaselineVsDatabase(?mysqli $db): array
 }
 
 /**
+ * Discover updates/*.sql patches whose declared app version is above $dbVersion.
+ * Read-only filesystem scan — does not apply patches or change detection logic.
+ *
+ * @return list<array{file: string, basename: string, app_version: string, schema_version: string}>
+ */
+function temperListPendingUpdatePatches(string $dbVersion, ?string $updatesDir = null): array
+{
+    $dbVersion = temperNormalizeAppVersionString($dbVersion);
+    $dir = $updatesDir ?? (dirname(__DIR__) . '/updates');
+    if (!is_dir($dir) || $dbVersion === '') {
+        return [];
+    }
+
+    $files = glob(rtrim($dir, '/\\') . '/*.sql') ?: [];
+    $pending = [];
+
+    foreach ($files as $file) {
+        $base = basename($file);
+        if ($base === '' || $base[0] === '_') {
+            continue; // skip templates like _header_template.sql
+        }
+
+        $content = @file_get_contents($file);
+        if (!is_string($content) || $content === '') {
+            continue;
+        }
+
+        $appVer = '';
+        if (preg_match('/^\s*--\s*App version\s*:\s*v?(\d+(?:\.\d+)+)\b/mi', $content, $m)) {
+            $appVer = temperNormalizeAppVersionString((string)$m[1]);
+        } elseif (preg_match(
+            "/INSERT\\s+INTO\\s+app_version[\\s\\S]*?SELECT\\s+'(\\d+(?:\\.\\d+)+)'/i",
+            $content,
+            $m
+        )) {
+            $appVer = temperNormalizeAppVersionString((string)$m[1]);
+        }
+
+        if ($appVer === '' || version_compare($appVer, $dbVersion, '<=')) {
+            continue;
+        }
+
+        $schemaVer = '';
+        if (preg_match('/^\s*--\s*Schema ver\.?\s*:\s*(\S+)/mi', $content, $m)) {
+            $schemaVer = temperSchemaVersionId((string)$m[1]);
+        }
+        if ($schemaVer === '') {
+            $schemaVer = temperSchemaVersionId($base);
+        }
+
+        $pending[] = [
+            'file' => 'updates/' . $base,
+            'basename' => $base,
+            'app_version' => $appVer,
+            'schema_version' => $schemaVer,
+        ];
+    }
+
+    usort($pending, static function (array $a, array $b): int {
+        $cmp = version_compare($a['app_version'], $b['app_version']);
+        if ($cmp !== 0) {
+            return $cmp;
+        }
+        return strcmp($a['basename'], $b['basename']);
+    });
+
+    return $pending;
+}
+
+/**
+ * Print the pending schema-updates section for setup_db.php --check.
+ * Uses existing lag detection (getDatabaseVersionLagStatus); messaging only.
+ *
+ * @return bool true when no updates are pending (database not behind latest)
+ */
+function setupDbPrintPendingUpdatesReport(?mysqli $db): bool
+{
+    $lag = getDatabaseVersionLagStatus($db);
+    $info = getAppVersionInfo($db);
+    $dbVer = $lag['db_version'] !== '' ? $lag['db_version'] : '(none / unknown)';
+    $latestVer = $lag['latest_version'] !== '' ? $lag['latest_version'] : '(unknown)';
+    $dbSchema = $info['schema_version'] !== ''
+        ? $info['schema_version']
+        : '(none / unknown)';
+    $expectedSchema = TEMPER_EXPECTED_SCHEMA_VERSION;
+
+    echo "=== Pending Schema Updates ===\n\n";
+    echo "  Database app version         : {$dbVer}\n";
+    echo "  Latest available app version : {$latestVer}\n";
+    echo "  Database schema version      : {$dbSchema}\n";
+    echo "  Expected schema version      : {$expectedSchema}\n";
+    echo "\n";
+
+    if (!empty($lag['behind'])) {
+        $pending = temperListPendingUpdatePatches(
+            temperNormalizeAppVersionString($lag['db_version']) ?: $lag['db_version']
+        );
+
+        echo "  ************************************************************************\n";
+        echo "  ***  WARNING: SCHEMA UPDATES ARE REQUIRED                             ***\n";
+        echo "  ***  The database is behind the latest available patch(es).           ***\n";
+        echo "  ************************************************************************\n";
+        echo "\n";
+        echo "  Database is at app v{$dbVer}; latest known release is v{$latestVer}.\n";
+        echo "  Operators must apply the pending updates/*.sql patch file(s), then re-check.\n";
+        echo "\n";
+
+        if ($pending !== []) {
+            echo "  Pending patch file(s) in updates/ (apply in order after backup):\n";
+            foreach ($pending as $patch) {
+                echo "    • {$patch['file']}  (app v{$patch['app_version']})\n";
+            }
+            echo "\n";
+        } else {
+            echo "  Could not list individual patch files from updates/; see VERSION.md\n";
+            echo "  for the upgrade path from v{$dbVer} to v{$latestVer}.\n";
+            echo "\n";
+        }
+
+        echo "  ---------------------------------------------------------------------------\n";
+        echo "  Next steps:\n";
+        echo "    1. Back up the database\n";
+        echo "    2. Open VERSION.md and each pending .sql header (notes, min app version)\n";
+        echo "    3. Apply each pending patch with mysql, for example:\n";
+        if ($pending !== []) {
+            $first = $pending[0]['file'];
+            echo "         mysql -u " . DB_USER . " -p " . DB_NAME . " < {$first}\n";
+        } else {
+            echo "         mysql -u " . DB_USER . " -p " . DB_NAME . " < updates/<patch>.sql\n";
+        }
+        echo "    4. Re-run: php setup_db.php --check\n";
+        echo "  ---------------------------------------------------------------------------\n";
+        echo "\n";
+
+        return false;
+    }
+
+    echo "  No schema updates are pending.\n";
+    echo "  Database matches the latest available release (app v{$latestVer}).\n";
+    if ($dbSchema !== $expectedSchema && $dbSchema !== '(none / unknown)') {
+        echo "  Note: schema stem ({$dbSchema}) differs from codebase expected"
+            . " ({$expectedSchema}); structure validation above is authoritative.\n";
+    }
+    echo "\n";
+
+    return true;
+}
+
+/**
  * Print the setup baseline vs database report for setup_db.php --check.
  * Returns true when baseline status is acceptable (match or ahead).
  */
@@ -495,6 +644,10 @@ function setupDbPrintBaselineVersionReport(?mysqli $db): bool
     }
 
     echo "\n";
+
+    // Always report whether updates/*.sql patches are still pending (messaging only).
+    // When full setup is required first, still show lag so operators know work remains after baseline.
+    setupDbPrintPendingUpdatesReport($db);
 
     return $assessment['ok'];
 }

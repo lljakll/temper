@@ -135,8 +135,10 @@ if ($cli->check) {
     $structureExit = $validator->printReport($cli->verbose);
 
     // Baseline awareness: compare highest app_version to frozen setup ceiling (0.900).
+    // Also prints pending updates/*.sql status (messaging only).
     // Read-only — never runs destructive setup or applies patches.
     $baselineOk = setupDbPrintBaselineVersionReport($db);
+    $updatesCurrent = !getDatabaseVersionLagStatus($db)['behind'];
 
     $db->close();
 
@@ -149,6 +151,14 @@ if ($cli->check) {
         echo "Resolve the baseline warning before relying on this database for upgrades.\n";
         exit(1);
     }
+    if (!$updatesCurrent) {
+        echo "=== Overall ===\n";
+        echo "Structure validation and setup baseline checks passed.\n";
+        echo "SCHEMA UPDATES ARE PENDING — apply the listed updates/*.sql patch(es) and re-run --check.\n";
+        exit(0);
+    }
+    echo "=== Overall ===\n";
+    echo "Structure validation passed. Setup baseline OK. No schema updates are pending.\n";
     exit(0);
 }
 

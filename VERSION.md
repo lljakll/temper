@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.911](#v0911)
 - [v0.910](#v0910)
 - [v0.909](#v0909)
 - [v0.908](#v0908)
@@ -116,6 +117,32 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.911
+
+**setup_db.php --check: clear pending schema-update messaging** — 2026-08-09
+
+> No schema update required for this release (check messaging only).  
+> **Patch file (history row):** `updates/20260809_0911_check_pending_schema_updates.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.911
+
+- **`php setup_db.php --check` pending updates section:**
+  - Keeps existing structure summary and setup baseline comparison (DB vs frozen 0.900).
+  - When the database is **behind** the latest available `updates/*.sql` release(s), prints a **prominent WARNING: SCHEMA UPDATES ARE REQUIRED** block listing pending patch files and next steps (backup → apply patches → re-run `--check`).
+  - When fully current, explicitly states **No schema updates are pending**.
+  - Overall summary line reflects pending vs current status.
+- Detection still uses existing lag helpers (`getDatabaseVersionLagStatus` / patch header scan); no change to structure validation or baseline assessment logic.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.911**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.910 | `updates/20260809_0911_check_pending_schema_updates.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.910 patches, then this process patch |
 
 ---
 
