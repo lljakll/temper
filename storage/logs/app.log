@@ -992,3 +992,5 @@ Stack trace:
 Stack trace:
 #0 {main}
   thrown in Command line code on line 8
+[08-Aug-2026 03:10:18 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=true ip=::1
+[08-Aug-2026 03:10:38 UTC] [AUDIT] user=admin action=system_config_update details=Updated: developer_mode=false ip=::1
