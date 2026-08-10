@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.913](#v0913)
 - [v0.912](#v0912)
 - [v0.911](#v0911)
 - [v0.910](#v0910)
@@ -118,6 +119,34 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.913
+
+**Ledger Excel-style multi-select auto-filters** — 2026-08-09
+
+> No schema update required for this release (ledger UI/API only).  
+> **Patch file (history row):** `updates/20260809_0913_ledger_excel_multiselect_filters.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.913
+
+- Replaced simple column filter controls (contains text, From/To dates, single-select Account/Fund/Status) with **true Excel-style multi-select auto-filters** on Date, Ref #, Pay To, Description, Account, Fund, Amount, and Status.
+  - Search box live-filters the unique-value list.
+  - **(Select All)** checkbox plus per-value checkboxes (OR match when applied).
+  - Date column uses a hierarchical **year → month → day** tree (with search and Select All), not a From/To range picker.
+  - Unique values loaded server-side via `?filter_values=1&column=…` (respects other active filters; own column excluded).
+- **Clear all filters** toolbar button (separate from transaction **Clear** status action) clears every active column filter in one click; per-column **Clear** remains inside each dropdown.
+- Active filter columns keep the warning underline / filled funnel indicator.
+- Filters remain **server-side** against the full dataset; infinite scroll / lazy loading continues to honor active multi-select filters.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.913**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.912 | `updates/20260809_0913_ledger_excel_multiselect_filters.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.912 patches, then this process patch |
 
 ---
 

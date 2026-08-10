@@ -714,6 +714,54 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .ledger-filter-menu {
             z-index: 1080;
         }
+        /* Excel-style multi-select auto-filter panel */
+        .ledger-f-values {
+            max-height: 240px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+        .ledger-f-item {
+            padding: 0.15rem 0.25rem;
+            border-radius: 0.2rem;
+        }
+        .ledger-f-item:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.08);
+        }
+        .ledger-f-item .form-check-label {
+            cursor: pointer;
+            word-break: break-word;
+        }
+        .ledger-f-item .ledger-f-count {
+            opacity: 0.65;
+            font-size: 0.75em;
+        }
+        .ledger-date-tree .ledger-date-year,
+        .ledger-date-tree .ledger-date-month {
+            font-weight: 600;
+        }
+        .ledger-date-tree .ledger-date-month-wrap {
+            margin-left: 0.85rem;
+        }
+        .ledger-date-tree .ledger-date-day-wrap {
+            margin-left: 0.85rem;
+        }
+        .ledger-date-tree details > summary {
+            list-style: none;
+            cursor: pointer;
+            user-select: none;
+        }
+        .ledger-date-tree details > summary::-webkit-details-marker {
+            display: none;
+        }
+        .ledger-date-tree details > summary::before {
+            content: '▸';
+            display: inline-block;
+            width: 0.9em;
+            color: var(--bs-secondary-color);
+        }
+        .ledger-date-tree details[open] > summary::before {
+            content: '▾';
+        }
         .ledger-tx-table tbody tr {
             cursor: pointer;
         }

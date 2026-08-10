@@ -167,79 +167,227 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     /**
-     * Build ledger list WHERE clause + bind params from request filters.
-     * Used by HTML first paint and JSON infinite-scroll endpoint.
+     * Normalize multi-value request params into a string list.
+     * Accepts: key as array, key as comma/|| delimited string, or singular scalar.
+     * Empty strings are preserved (Excel "(Blanks)").
+     * Sentinel "__NONE__" means apply a no-match filter.
      *
-     * @return array{conditions: string[], bind_params: array, bind_types: string, filter_account_id: int, view_normal: string, filters: array}
+     * @return list<string>
      */
-    $ledgerBuildListFilters = static function (mysqli $db, array $src): array {
-        $date_from = trim((string)($src['date_from'] ?? ''));
-        $date_to = trim((string)($src['date_to'] ?? ''));
-        $reference = trim((string)($src['reference'] ?? $src['reference_number'] ?? ''));
-        $description = trim((string)($src['description'] ?? ''));
-        $pay_to = trim((string)($src['pay_to'] ?? ''));
+    $ledgerParseMultiStrings = static function (array $src, string $key, ?string $altKey = null): array {
+        $raw = $src[$key] ?? null;
+        if ($raw === null && $altKey !== null) {
+            $raw = $src[$altKey] ?? null;
+        }
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+        if (is_array($raw)) {
+            $out = [];
+            foreach ($raw as $v) {
+                $out[] = trim((string)$v);
+            }
+            return array_values(array_unique($out));
+        }
+        $s = trim((string)$raw);
+        if ($s === '') {
+            return [];
+        }
+        // Delimited multi: a||b or a,b when clearly multi
+        if (str_contains($s, '||')) {
+            return array_values(array_unique(array_map('trim', explode('||', $s))));
+        }
+        return [$s];
+    };
+
+    /**
+     * Normalize multi-value integer id lists (account_id / fund_id).
+     *
+     * @return list<int>
+     */
+    $ledgerParseMultiIds = static function (array $src, string $key, ?string $altKey = null): array {
+        $raw = $src[$key] ?? null;
+        if ($raw === null && $altKey !== null) {
+            $raw = $src[$altKey] ?? null;
+        }
+        if ($raw === null || $raw === '' || $raw === []) {
+            return [];
+        }
+        if (!is_array($raw)) {
+            $raw = [$raw];
+        }
+        $out = [];
+        foreach ($raw as $v) {
+            $i = (int)$v;
+            if ($i > 0) {
+                $out[] = $i;
+            }
+        }
+        return array_values(array_unique($out));
+    };
+
+    /**
+     * Append an equality/IN filter for a string column, supporting blanks and __NONE__.
+     *
+     * @param list<string> $values
+     * @param-out list<string> $conditions
+     * @param-out list<mixed> $bind_params
+     * @param-out string $bind_types
+     */
+    $ledgerAddStringMultiFilter = static function (
+        string $columnExpr,
+        array $values,
+        array &$conditions,
+        array &$bind_params,
+        string &$bind_types
+    ): void {
+        if ($values === []) {
+            return;
+        }
+        if (count($values) === 1 && $values[0] === '__NONE__') {
+            $conditions[] = '1=0';
+            return;
+        }
+        $hasBlank = false;
+        $nonBlank = [];
+        foreach ($values as $v) {
+            if ($v === '' || $v === '__BLANK__') {
+                $hasBlank = true;
+            } elseif ($v !== '__NONE__') {
+                $nonBlank[] = $v;
+            }
+        }
+        $parts = [];
+        if ($nonBlank !== []) {
+            $ph = implode(',', array_fill(0, count($nonBlank), '?'));
+            $parts[] = "$columnExpr IN ($ph)";
+            foreach ($nonBlank as $v) {
+                $bind_params[] = $v;
+                $bind_types .= 's';
+            }
+        }
+        if ($hasBlank) {
+            $parts[] = "($columnExpr IS NULL OR $columnExpr = '')";
+        }
+        if ($parts === []) {
+            $conditions[] = '1=0';
+            return;
+        }
+        $conditions[] = '(' . implode(' OR ', $parts) . ')';
+    };
+
+    /**
+     * Build ledger list WHERE clause + bind params from request filters.
+     * Multi-select Excel-style filters (dates[], pay_to[], status[], account_id[], …).
+     * Used by HTML first paint, JSON infinite-scroll, and filter-values endpoint.
+     *
+     * @param list<string>|null $excludeColumns Column keys to skip (when loading that column's unique values)
+     * @return array{conditions: string[], bind_params: array, bind_types: string, filter_account_id: int, filter_fund_id: int, view_normal: string, filters: array}
+     */
+    $ledgerBuildListFilters = static function (mysqli $db, array $src, ?array $excludeColumns = null) use (
+        $ledgerParseMultiStrings,
+        $ledgerParseMultiIds,
+        $ledgerAddStringMultiFilter
+    ): array {
+        $exclude = [];
+        if (is_array($excludeColumns)) {
+            foreach ($excludeColumns as $c) {
+                $exclude[strtolower((string)$c)] = true;
+            }
+        }
+        $skip = static function (string $col) use ($exclude): bool {
+            return isset($exclude[$col]);
+        };
+
+        // ── Multi-select lists ──────────────────────────────────────────────
+        $dates = $skip('date') ? [] : $ledgerParseMultiStrings($src, 'date', 'dates');
+        // Legacy date range still honored when multi dates not set
+        $date_from = $skip('date') ? '' : trim((string)($src['date_from'] ?? ''));
+        $date_to = $skip('date') ? '' : trim((string)($src['date_to'] ?? ''));
+
+        $references = $skip('reference') ? [] : $ledgerParseMultiStrings($src, 'reference', 'references');
+        if ($references === [] && !$skip('reference')) {
+            $legacyRef = trim((string)($src['reference_number'] ?? ''));
+            if ($legacyRef !== '') {
+                $references = [$legacyRef];
+            }
+        }
+        $descriptions = $skip('description') ? [] : $ledgerParseMultiStrings($src, 'description', 'descriptions');
+        $pay_tos = $skip('pay_to') ? [] : $ledgerParseMultiStrings($src, 'pay_to', 'pay_tos');
+        $statuses = $skip('status') ? [] : $ledgerParseMultiStrings($src, 'status', 'statuses');
+        $amounts = $skip('amount') ? [] : $ledgerParseMultiStrings($src, 'amount', 'amounts');
+
+        $account_ids = $skip('account') ? [] : $ledgerParseMultiIds($src, 'account_id', 'account_ids');
+        $fund_ids = $skip('fund') ? [] : $ledgerParseMultiIds($src, 'fund_id', 'fund_ids');
+
         $check_number = trim((string)($src['check_number'] ?? ''));
         $search = trim((string)($src['search'] ?? ''));
-        $status = strtolower(trim((string)($src['status'] ?? '')));
-        $amount = trim((string)($src['amount'] ?? ''));
-        $amount_min = trim((string)($src['amount_min'] ?? ''));
-        $amount_max = trim((string)($src['amount_max'] ?? ''));
-
-        $filter_account_id = isset($src['account_id']) ? (int)$src['account_id'] : 0;
-        if ($filter_account_id < 0) {
-            $filter_account_id = 0;
-        }
-        $filter_fund_id = isset($src['fund_id']) ? (int)$src['fund_id'] : 0;
-        if ($filter_fund_id < 0) {
-            $filter_fund_id = 0;
-        }
+        $amount_min = $skip('amount') ? '' : trim((string)($src['amount_min'] ?? ''));
+        $amount_max = $skip('amount') ? '' : trim((string)($src['amount_max'] ?? ''));
 
         $allowedStatus = ['pending', 'cleared', 'reconciled'];
-        if ($status !== '' && !in_array($status, $allowedStatus, true)) {
-            $status = '';
-        }
+        $statuses = array_values(array_filter(
+            $statuses,
+            static fn($s) => $s === '__NONE__' || $s === '' || $s === '__BLANK__' || in_array(strtolower($s), $allowedStatus, true)
+        ));
+        $statuses = array_map(static function ($s) {
+            if ($s === '' || $s === '__BLANK__' || $s === '__NONE__') {
+                return $s;
+            }
+            return strtolower($s);
+        }, $statuses);
+
+        // Validate ISO dates
+        $dates = array_values(array_filter($dates, static function ($d) {
+            if ($d === '__NONE__') {
+                return true;
+            }
+            return (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $d);
+        }));
 
         $conditions = [];
         $bind_params = [];
         $bind_types = '';
 
-        if ($date_from !== '') {
-            $conditions[] = 'td.transaction_date >= ?';
-            $bind_params[] = $date_from;
-            $bind_types .= 's';
+        // Dates: multi-select exact match, or legacy from/to range
+        if ($dates !== []) {
+            if (count($dates) === 1 && $dates[0] === '__NONE__') {
+                $conditions[] = '1=0';
+            } else {
+                $realDates = array_values(array_filter($dates, static fn($d) => $d !== '__NONE__'));
+                if ($realDates === []) {
+                    $conditions[] = '1=0';
+                } else {
+                    $ph = implode(',', array_fill(0, count($realDates), '?'));
+                    $conditions[] = "td.transaction_date IN ($ph)";
+                    foreach ($realDates as $d) {
+                        $bind_params[] = $d;
+                        $bind_types .= 's';
+                    }
+                }
+            }
+        } else {
+            if ($date_from !== '') {
+                $conditions[] = 'td.transaction_date >= ?';
+                $bind_params[] = $date_from;
+                $bind_types .= 's';
+            }
+            if ($date_to !== '') {
+                $conditions[] = 'td.transaction_date <= ?';
+                $bind_params[] = $date_to;
+                $bind_types .= 's';
+            }
         }
-        if ($date_to !== '') {
-            $conditions[] = 'td.transaction_date <= ?';
-            $bind_params[] = $date_to;
-            $bind_types .= 's';
-        }
-        if ($reference !== '') {
-            $like = '%' . $reference . '%';
-            $conditions[] = 'td.reference_number LIKE ?';
-            $bind_params[] = $like;
-            $bind_types .= 's';
-        }
-        if ($description !== '') {
-            $like = '%' . $description . '%';
-            $conditions[] = 'td.description LIKE ?';
-            $bind_params[] = $like;
-            $bind_types .= 's';
-        }
-        if ($pay_to !== '') {
-            $like = '%' . $pay_to . '%';
-            $conditions[] = 'td.pay_to LIKE ?';
-            $bind_params[] = $like;
-            $bind_types .= 's';
-        }
+
+        $ledgerAddStringMultiFilter('td.reference_number', $references, $conditions, $bind_params, $bind_types);
+        $ledgerAddStringMultiFilter('td.description', $descriptions, $conditions, $bind_params, $bind_types);
+        $ledgerAddStringMultiFilter('td.pay_to', $pay_tos, $conditions, $bind_params, $bind_types);
+        $ledgerAddStringMultiFilter('td.status', $statuses, $conditions, $bind_params, $bind_types);
+
         if ($check_number !== '') {
             $like = '%' . $check_number . '%';
             $conditions[] = 'td.check_number LIKE ?';
             $bind_params[] = $like;
-            $bind_types .= 's';
-        }
-        if ($status !== '') {
-            $conditions[] = 'td.status = ?';
-            $bind_params[] = $status;
             $bind_types .= 's';
         }
         if ($search !== '') {
@@ -248,27 +396,71 @@ require_once __DIR__ . '/../includes/permissions.php';
             $bind_params = array_merge($bind_params, [$like, $like, $like, $like, $like]);
             $bind_types .= str_repeat('s', 5);
         }
-        if ($filter_account_id > 0) {
-            $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.account_id = ?)';
-            $bind_params[] = $filter_account_id;
-            $bind_types .= 'i';
+
+        if ($account_ids !== []) {
+            if (count($account_ids) === 1) {
+                $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.account_id = ?)';
+                $bind_params[] = $account_ids[0];
+                $bind_types .= 'i';
+            } else {
+                $ph = implode(',', array_fill(0, count($account_ids), '?'));
+                $conditions[] = "EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.account_id IN ($ph))";
+                foreach ($account_ids as $aid) {
+                    $bind_params[] = $aid;
+                    $bind_types .= 'i';
+                }
+            }
         }
-        if ($filter_fund_id > 0) {
-            $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id = ?)';
-            $bind_params[] = $filter_fund_id;
-            $bind_types .= 'i';
+        if ($fund_ids !== []) {
+            if (count($fund_ids) === 1) {
+                $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id = ?)';
+                $bind_params[] = $fund_ids[0];
+                $bind_types .= 'i';
+            } else {
+                $ph = implode(',', array_fill(0, count($fund_ids), '?'));
+                $conditions[] = "EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id IN ($ph))";
+                foreach ($fund_ids as $fid) {
+                    $bind_params[] = $fid;
+                    $bind_types .= 'i';
+                }
+            }
         }
 
-        // Amount filters against total line amounts (absolute sum of lines) and debit/credit totals
         $totalExpr = 'COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0)';
         $debitExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0)";
         $creditExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0)";
 
-        if ($amount !== '') {
-            $like = '%' . $amount . '%';
-            $conditions[] = "(CAST($totalExpr AS CHAR) LIKE ? OR CAST($debitExpr AS CHAR) LIKE ? OR CAST($creditExpr AS CHAR) LIKE ?)";
-            $bind_params = array_merge($bind_params, [$like, $like, $like]);
-            $bind_types .= 'sss';
+        // Amount multi-select: match when rounded debit total OR credit total equals any selected amount
+        if ($amounts !== []) {
+            if (count($amounts) === 1 && $amounts[0] === '__NONE__') {
+                $conditions[] = '1=0';
+            } else {
+                $nums = [];
+                foreach ($amounts as $a) {
+                    if ($a === '__NONE__' || $a === '' || $a === '__BLANK__') {
+                        continue;
+                    }
+                    if (is_numeric($a)) {
+                        $nums[] = round((float)$a, 2);
+                    }
+                }
+                $nums = array_values(array_unique($nums));
+                if ($nums === []) {
+                    $conditions[] = '1=0';
+                } else {
+                    $ph = implode(',', array_fill(0, count($nums), '?'));
+                    $conditions[] = "(ROUND($debitExpr, 2) IN ($ph) OR ROUND($creditExpr, 2) IN ($ph))";
+                    // bind twice (debit IN + credit IN)
+                    foreach ($nums as $n) {
+                        $bind_params[] = $n;
+                        $bind_types .= 'd';
+                    }
+                    foreach ($nums as $n) {
+                        $bind_params[] = $n;
+                        $bind_types .= 'd';
+                    }
+                }
+            }
         }
         if ($amount_min !== '' && is_numeric($amount_min)) {
             $conditions[] = "$debitExpr >= ?";
@@ -280,6 +472,10 @@ require_once __DIR__ . '/../includes/permissions.php';
             $bind_params[] = (float)$amount_max;
             $bind_types .= 'd';
         }
+
+        // Single-account view mode only when exactly one account is filtered
+        $filter_account_id = count($account_ids) === 1 ? $account_ids[0] : 0;
+        $filter_fund_id = count($fund_ids) === 1 ? $fund_ids[0] : 0;
 
         $view_normal = '';
         if ($filter_account_id > 0) {
@@ -300,17 +496,21 @@ require_once __DIR__ . '/../includes/permissions.php';
             'filter_fund_id' => $filter_fund_id,
             'view_normal' => $view_normal,
             'filters' => [
+                'dates' => $dates,
                 'date_from' => $date_from,
                 'date_to' => $date_to,
-                'reference' => $reference,
-                'description' => $description,
-                'pay_to' => $pay_to,
+                'references' => $references,
+                'descriptions' => $descriptions,
+                'pay_tos' => $pay_tos,
+                'statuses' => $statuses,
+                'amounts' => $amounts,
+                'account_ids' => $account_ids,
+                'fund_ids' => $fund_ids,
                 'check_number' => $check_number,
                 'search' => $search,
-                'status' => $status,
-                'amount' => $amount,
                 'amount_min' => $amount_min,
                 'amount_max' => $amount_max,
+                // Back-compat single fields for older UI bits
                 'account_id' => $filter_account_id,
                 'fund_id' => $filter_fund_id,
             ],
@@ -506,6 +706,224 @@ require_once __DIR__ . '/../includes/permissions.php';
             'filters' => $page['filters'],
             'rows' => $page['rows'],
         ]);
+        exit;
+    }
+
+    // Unique values for Excel-style multi-select auto-filter dropdowns.
+    // Other-column filters apply; the opened column's own filter is excluded (Excel behavior).
+    if (isset($_GET['filter_values'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        $column = strtolower(trim((string)($_GET['column'] ?? '')));
+        $allowedCols = ['date', 'reference', 'pay_to', 'description', 'account', 'fund', 'amount', 'status'];
+        if (!in_array($column, $allowedCols, true)) {
+            echo json_encode(['success' => false, 'error' => 'Invalid filter column.']);
+            exit;
+        }
+
+        $built = $ledgerBuildListFilters($db, $_GET, [$column]);
+        $conditions = $built['conditions'];
+        $bind_params = $built['bind_params'];
+        $bind_types = $built['bind_types'];
+        $where_clause = $conditions ? (' WHERE ' . implode(' AND ', $conditions)) : '';
+
+        $values = [];
+        $tree = null;
+
+        if ($column === 'date') {
+            $sql = "SELECT td.transaction_date AS d, COUNT(*) AS cnt
+                    FROM transaction_details td
+                    $where_clause
+                    GROUP BY td.transaction_date
+                    ORDER BY td.transaction_date DESC
+                    LIMIT 2000";
+            $stmt = $db->prepare($sql);
+            if ($bind_types !== '') {
+                $stmt->bind_param($bind_types, ...$bind_params);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $byYear = [];
+            while ($row = $res->fetch_assoc()) {
+                $d = (string)$row['d'];
+                $cnt = (int)$row['cnt'];
+                if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $d, $m)) {
+                    continue;
+                }
+                $y = $m[1];
+                $mo = $m[2];
+                $day = $m[3];
+                if (!isset($byYear[$y])) {
+                    $byYear[$y] = ['year' => $y, 'count' => 0, 'months' => []];
+                }
+                if (!isset($byYear[$y]['months'][$mo])) {
+                    $monthNames = [1=>'January',2=>'February',3=>'March',4=>'April',5=>'May',6=>'June',
+                        7=>'July',8=>'August',9=>'September',10=>'October',11=>'November',12=>'December'];
+                    $byYear[$y]['months'][$mo] = [
+                        'month' => $mo,
+                        'label' => $monthNames[(int)$mo] ?? $mo,
+                        'count' => 0,
+                        'days' => [],
+                    ];
+                }
+                $byYear[$y]['count'] += $cnt;
+                $byYear[$y]['months'][$mo]['count'] += $cnt;
+                $byYear[$y]['months'][$mo]['days'][] = [
+                    'value' => $d,
+                    'label' => (string)((int)$day),
+                    'count' => $cnt,
+                ];
+                $values[] = ['value' => $d, 'label' => $d, 'count' => $cnt];
+            }
+            $stmt->close();
+            // Normalize months to list sorted desc
+            $tree = [];
+            foreach ($byYear as $yNode) {
+                $months = array_values($yNode['months']);
+                usort($months, static fn($a, $b) => strcmp($b['month'], $a['month']));
+                $yNode['months'] = $months;
+                $tree[] = $yNode;
+            }
+            usort($tree, static fn($a, $b) => strcmp($b['year'], $a['year']));
+        } elseif ($column === 'account') {
+            $sql = "SELECT a.id AS value, a.name AS label, a.coa_number, COUNT(DISTINCT td.id) AS cnt
+                    FROM transaction_details td
+                    INNER JOIN transaction_lines tl ON tl.transaction_detail_id = td.id
+                    INNER JOIN accounts a ON a.id = tl.account_id
+                    $where_clause
+                    GROUP BY a.id, a.name, a.coa_number
+                    ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC
+                    LIMIT 2000";
+            $stmt = $db->prepare($sql);
+            if ($bind_types !== '') {
+                $stmt->bind_param($bind_types, ...$bind_params);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $label = (string)$row['label'];
+                $coa = trim((string)($row['coa_number'] ?? ''));
+                if ($coa !== '') {
+                    $label = $coa . ' — ' . $label;
+                }
+                $values[] = [
+                    'value' => (string)(int)$row['value'],
+                    'label' => $label,
+                    'count' => (int)$row['cnt'],
+                ];
+            }
+            $stmt->close();
+        } elseif ($column === 'fund') {
+            $sql = "SELECT f.id AS value, f.name AS label, f.code, COUNT(DISTINCT td.id) AS cnt
+                    FROM transaction_details td
+                    INNER JOIN transaction_lines tl ON tl.transaction_detail_id = td.id
+                    INNER JOIN funds f ON f.id = tl.fund_id
+                    $where_clause
+                    GROUP BY f.id, f.name, f.code
+                    ORDER BY f.name ASC
+                    LIMIT 2000";
+            $stmt = $db->prepare($sql);
+            if ($bind_types !== '') {
+                $stmt->bind_param($bind_types, ...$bind_params);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $label = (string)$row['label'];
+                $code = trim((string)($row['code'] ?? ''));
+                if ($code !== '') {
+                    $label .= ' (' . $code . ')';
+                }
+                $values[] = [
+                    'value' => (string)(int)$row['value'],
+                    'label' => $label,
+                    'count' => (int)$row['cnt'],
+                ];
+            }
+            $stmt->close();
+        } elseif ($column === 'amount') {
+            $debitExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0)";
+            $creditExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0)";
+            $sql = "SELECT amt, SUM(cnt) AS cnt FROM (
+                        SELECT ROUND($debitExpr, 2) AS amt, COUNT(*) AS cnt
+                        FROM transaction_details td
+                        $where_clause
+                        GROUP BY ROUND($debitExpr, 2)
+                        UNION ALL
+                        SELECT ROUND($creditExpr, 2) AS amt, COUNT(*) AS cnt
+                        FROM transaction_details td
+                        $where_clause
+                        GROUP BY ROUND($creditExpr, 2)
+                    ) u
+                    WHERE amt IS NOT NULL AND amt > 0
+                    GROUP BY amt
+                    ORDER BY amt DESC
+                    LIMIT 2000";
+            // Bind params twice (two subqueries)
+            $stmt = $db->prepare($sql);
+            if ($bind_types !== '') {
+                $allTypes = $bind_types . $bind_types;
+                $allParams = array_merge($bind_params, $bind_params);
+                $stmt->bind_param($allTypes, ...$allParams);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $amt = round((float)$row['amt'], 2);
+                $label = '$' . number_format($amt, 2);
+                $values[] = [
+                    'value' => number_format($amt, 2, '.', ''),
+                    'label' => $label,
+                    'count' => (int)$row['cnt'],
+                ];
+            }
+            $stmt->close();
+        } else {
+            // Text categorical: pay_to, description, reference, status
+            $colMap = [
+                'pay_to' => 'td.pay_to',
+                'description' => 'td.description',
+                'reference' => 'td.reference_number',
+                'status' => 'td.status',
+            ];
+            $expr = $colMap[$column];
+            $sql = "SELECT COALESCE($expr, '') AS value, COUNT(*) AS cnt
+                    FROM transaction_details td
+                    $where_clause
+                    GROUP BY COALESCE($expr, '')
+                    ORDER BY (COALESCE($expr, '') = '') ASC, value ASC
+                    LIMIT 2000";
+            $stmt = $db->prepare($sql);
+            if ($bind_types !== '') {
+                $stmt->bind_param($bind_types, ...$bind_params);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $statusLabels = ['pending' => 'Pending', 'cleared' => 'Cleared', 'reconciled' => 'Reconciled'];
+            while ($row = $res->fetch_assoc()) {
+                $val = (string)$row['value'];
+                if ($val === '') {
+                    $label = '(Blanks)';
+                } elseif ($column === 'status') {
+                    $label = $statusLabels[strtolower($val)] ?? $val;
+                } else {
+                    $label = $val;
+                }
+                $values[] = [
+                    'value' => $val,
+                    'label' => $label,
+                    'count' => (int)$row['cnt'],
+                ];
+            }
+            $stmt->close();
+        }
+
+        echo json_encode([
+            'success' => true,
+            'column' => $column,
+            'values' => $values,
+            'tree' => $tree,
+            'filters' => $built['filters'],
+        ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
@@ -1171,30 +1589,6 @@ require_once __DIR__ . '/../includes/permissions.php';
     $list_sort = $list_page['sort'];
     $list_sort_dir = $list_page['sort_dir'];
     $active_filters = $list_page['filters'];
-    $filter_account_id = (int)$list_page['filter_account_id'];
-    $filter_fund_id = (int)($active_filters['fund_id'] ?? 0);
-    $dropdown_selected = $filter_account_id;
-
-    // Curated accounts for Account filter dropdown: exclude revenue accounts like Contributions.
-    // Ordered by CoA number ascending (null/empty CoA at end), then name, then id.
-    $view_accts = [];
-    $vaq = $db->query("SELECT id, name, normal_balance, coa_number FROM accounts WHERE archived=FALSE ORDER BY (coa_number IS NULL OR coa_number = '') ASC, coa_number ASC, name ASC, id ASC");
-    if ($vaq) {
-        while ($va = $vaq->fetch_assoc()) {
-            if (stripos($va['name'], 'contribution') !== false) continue;
-            $view_accts[] = $va;
-        }
-    }
-
-    // Funds for fund filter dropdown
-    $view_funds = [];
-    $vfq = $db->query("SELECT id, name, code FROM funds WHERE is_active=TRUE AND archived=FALSE ORDER BY name ASC, id ASC");
-    if ($vfq) {
-        while ($vf = $vfq->fetch_assoc()) {
-            $view_funds[] = $vf;
-        }
-    }
-
     /**
      * Format a ledger money cell: blank when zero, otherwise positive $x.xx (right-aligned by CSS).
      */
@@ -1208,9 +1602,17 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     $hasActiveFilters = false;
     foreach ($active_filters as $fk => $fv) {
-        if ($fk === 'account_id' || $fk === 'fund_id') {
-            if ((int)$fv > 0) { $hasActiveFilters = true; break; }
-        } elseif ($fv !== '' && $fv !== null) {
+        if (in_array($fk, ['dates', 'references', 'descriptions', 'pay_tos', 'statuses', 'amounts', 'account_ids', 'fund_ids'], true)) {
+            if (is_array($fv) && count($fv) > 0) {
+                $hasActiveFilters = true;
+                break;
+            }
+        } elseif ($fk === 'account_id' || $fk === 'fund_id') {
+            if ((int)$fv > 0) {
+                $hasActiveFilters = true;
+                break;
+            }
+        } elseif ($fv !== '' && $fv !== null && !(is_array($fv) && $fv === [])) {
             $hasActiveFilters = true;
             break;
         }
@@ -1255,7 +1657,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         <?php else: ?>
         <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
         <?php endif; ?>
-        <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2<?= $hasActiveFilters ? '' : ' d-none' ?>" title="Clear all column filters">
+        <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2" title="Clear all column filters"<?= $hasActiveFilters ? '' : ' disabled' ?>>
             <i class="bi bi-funnel"></i> Clear all filters
         </button>
         <span class="text-muted small ms-auto align-self-center" id="ledgerTotalLabel"><?= (int)$total ?> total</span>
@@ -1278,14 +1680,24 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 </th>
 <?php
 $colDefs = [
-    ['key' => 'date', 'label' => 'Date', 'filter' => 'date', 'class' => 'text-nowrap'],
-    ['key' => 'reference', 'label' => 'Ref #', 'filter' => 'text', 'class' => 'text-nowrap'],
-    ['key' => 'pay_to', 'label' => 'Pay To', 'filter' => 'text', 'class' => ''],
-    ['key' => 'description', 'label' => 'Description', 'filter' => 'text', 'class' => ''],
-    ['key' => 'account', 'label' => 'Account', 'filter' => 'account', 'class' => ''],
-    ['key' => 'fund', 'label' => 'Fund', 'filter' => 'fund', 'class' => ''],
-    ['key' => 'amount', 'label' => 'Amount', 'filter' => 'amount', 'class' => 'text-end text-nowrap', 'title' => 'Debit / Credit amounts'],
-    ['key' => 'status', 'label' => 'Status', 'filter' => 'status', 'class' => ''],
+    ['key' => 'date', 'label' => 'Date', 'filter' => 'multi', 'class' => 'text-nowrap'],
+    ['key' => 'reference', 'label' => 'Ref #', 'filter' => 'multi', 'class' => 'text-nowrap'],
+    ['key' => 'pay_to', 'label' => 'Pay To', 'filter' => 'multi', 'class' => ''],
+    ['key' => 'description', 'label' => 'Description', 'filter' => 'multi', 'class' => ''],
+    ['key' => 'account', 'label' => 'Account', 'filter' => 'multi', 'class' => ''],
+    ['key' => 'fund', 'label' => 'Fund', 'filter' => 'multi', 'class' => ''],
+    ['key' => 'amount', 'label' => 'Amount', 'filter' => 'multi', 'class' => 'text-end text-nowrap', 'title' => 'Debit / Credit amounts'],
+    ['key' => 'status', 'label' => 'Status', 'filter' => 'multi', 'class' => ''],
+];
+$ledgerFilterKeyMap = [
+    'date' => 'dates',
+    'reference' => 'references',
+    'pay_to' => 'pay_tos',
+    'description' => 'descriptions',
+    'account' => 'account_ids',
+    'fund' => 'fund_ids',
+    'amount' => 'amounts',
+    'status' => 'statuses',
 ];
 foreach ($colDefs as $col):
     $ck = $col['key'];
@@ -1294,28 +1706,20 @@ foreach ($colDefs as $col):
     if ($isSorted) {
         $sortIcon = $list_sort_dir === 'asc' ? ' ↑' : ' ↓';
     }
-    $filterActive = false;
-    if ($ck === 'date') {
+    $fk = $ledgerFilterKeyMap[$ck] ?? $ck;
+    $sel = $active_filters[$fk] ?? [];
+    $filterActive = is_array($sel) && count($sel) > 0;
+    if (!$filterActive && $ck === 'date') {
         $filterActive = ($active_filters['date_from'] ?? '') !== '' || ($active_filters['date_to'] ?? '') !== '';
-    } elseif ($ck === 'reference') {
-        $filterActive = ($active_filters['reference'] ?? '') !== '';
-    } elseif ($ck === 'pay_to') {
-        $filterActive = ($active_filters['pay_to'] ?? '') !== '';
-    } elseif ($ck === 'description') {
-        $filterActive = ($active_filters['description'] ?? '') !== '';
-    } elseif ($ck === 'account') {
-        $filterActive = (int)($active_filters['account_id'] ?? 0) > 0;
-    } elseif ($ck === 'fund') {
-        $filterActive = (int)($active_filters['fund_id'] ?? 0) > 0;
-    } elseif ($ck === 'amount') {
-        $filterActive = ($active_filters['amount'] ?? '') !== '' || ($active_filters['amount_min'] ?? '') !== '' || ($active_filters['amount_max'] ?? '') !== '';
-    } elseif ($ck === 'status') {
-        $filterActive = ($active_filters['status'] ?? '') !== '';
+    }
+    if (!$filterActive && $ck === 'amount') {
+        $filterActive = ($active_filters['amount_min'] ?? '') !== '' || ($active_filters['amount_max'] ?? '') !== '';
     }
 ?>
                                 <th class="ledger-th-filter <?= htmlspecialchars($col['class']) ?><?= $filterActive ? ' ledger-filter-active' : '' ?>"
                                     data-col="<?= htmlspecialchars($ck) ?>"
-                                    data-filter-type="<?= htmlspecialchars($col['filter']) ?>"
+                                    data-filter-type="multi"
+                                    data-filter-key="<?= htmlspecialchars($fk) ?>"
                                     <?= !empty($col['title']) ? ' title="' . htmlspecialchars($col['title']) . '"' : '' ?>>
                                     <div class="d-flex align-items-center gap-1 <?= str_contains($col['class'], 'text-end') ? 'justify-content-end' : '' ?>">
                                         <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none ledger-sort-btn <?= str_contains($col['class'], 'text-end') ? '' : 'text-start' ?> text-white"
@@ -1329,58 +1733,16 @@ foreach ($colDefs as $col):
                                                     aria-expanded="false" title="Filter <?= htmlspecialchars($col['label']) ?>">
                                                 <i class="bi <?= $filterActive ? 'bi-funnel-fill' : 'bi-funnel' ?>"></i>
                                             </button>
-                                            <div class="dropdown-menu dropdown-menu-end p-2 shadow ledger-filter-menu" style="min-width:14rem;">
+                                            <div class="dropdown-menu dropdown-menu-end p-2 shadow ledger-filter-menu" style="min-width:16rem; max-width:22rem;">
                                                 <div class="small text-muted mb-1 fw-semibold"><?= htmlspecialchars($col['label']) ?> filter</div>
-<?php if ($col['filter'] === 'date'): ?>
-                                                <label class="form-label small mb-0">From</label>
-                                                <input type="date" class="form-control form-control-sm mb-1 ledger-f-date-from" value="<?= htmlspecialchars($active_filters['date_from'] ?? '') ?>" data-dirty-ignore>
-                                                <label class="form-label small mb-0">To</label>
-                                                <input type="date" class="form-control form-control-sm mb-2 ledger-f-date-to" value="<?= htmlspecialchars($active_filters['date_to'] ?? '') ?>" data-dirty-ignore>
-<?php elseif ($col['filter'] === 'text'): ?>
-                                                <input type="search" class="form-control form-control-sm mb-2 ledger-f-text" placeholder="Contains…"
-                                                       value="<?= htmlspecialchars(
-                                                           $ck === 'reference' ? ($active_filters['reference'] ?? '')
-                                                           : ($ck === 'pay_to' ? ($active_filters['pay_to'] ?? '')
-                                                           : ($ck === 'description' ? ($active_filters['description'] ?? '') : ''))
-                                                       ) ?>" data-dirty-ignore autocomplete="off">
-<?php elseif ($col['filter'] === 'account'): ?>
-                                                <select class="form-select form-select-sm mb-2 ledger-f-account" data-dirty-ignore>
-                                                    <option value="0">All accounts</option>
-<?php foreach ($view_accts as $va): $vid = (int)$va['id']; ?>
-                                                    <option value="<?= $vid ?>" <?= $vid === $filter_account_id ? 'selected' : '' ?>><?= htmlspecialchars($va['name']) ?></option>
-<?php endforeach; ?>
-                                                </select>
-<?php elseif ($col['filter'] === 'fund'): ?>
-                                                <select class="form-select form-select-sm mb-2 ledger-f-fund" data-dirty-ignore>
-                                                    <option value="0">All funds</option>
-<?php foreach ($view_funds as $vf): $fid = (int)$vf['id']; ?>
-                                                    <option value="<?= $fid ?>" <?= $fid === $filter_fund_id ? 'selected' : '' ?>><?= htmlspecialchars($vf['name'] . (!empty($vf['code']) ? ' (' . $vf['code'] . ')' : '')) ?></option>
-<?php endforeach; ?>
-                                                </select>
-<?php elseif ($col['filter'] === 'amount'): ?>
-                                                <label class="form-label small mb-0">Contains</label>
-                                                <input type="search" class="form-control form-control-sm mb-1 ledger-f-amount" placeholder="e.g. 125.00"
-                                                       value="<?= htmlspecialchars($active_filters['amount'] ?? '') ?>" data-dirty-ignore autocomplete="off">
-                                                <div class="row g-1 mb-2">
-                                                    <div class="col-6">
-                                                        <label class="form-label small mb-0">Min debit</label>
-                                                        <input type="number" step="0.01" min="0" class="form-control form-control-sm ledger-f-amount-min"
-                                                               value="<?= htmlspecialchars($active_filters['amount_min'] ?? '') ?>" data-dirty-ignore>
-                                                    </div>
-                                                    <div class="col-6">
-                                                        <label class="form-label small mb-0">Max debit</label>
-                                                        <input type="number" step="0.01" min="0" class="form-control form-control-sm ledger-f-amount-max"
-                                                               value="<?= htmlspecialchars($active_filters['amount_max'] ?? '') ?>" data-dirty-ignore>
-                                                    </div>
+                                                <input type="search" class="form-control form-control-sm mb-2 ledger-f-search" placeholder="Search…" data-dirty-ignore autocomplete="off">
+                                                <div class="form-check mb-1 ledger-f-select-all-wrap">
+                                                    <input class="form-check-input ledger-f-select-all" type="checkbox" id="ledgerFAll_<?= htmlspecialchars($ck) ?>" data-dirty-ignore checked>
+                                                    <label class="form-check-label small" for="ledgerFAll_<?= htmlspecialchars($ck) ?>">(Select All)</label>
                                                 </div>
-<?php elseif ($col['filter'] === 'status'): ?>
-                                                <select class="form-select form-select-sm mb-2 ledger-f-status" data-dirty-ignore>
-                                                    <option value="">All statuses</option>
-                                                    <option value="pending" <?= ($active_filters['status'] ?? '') === 'pending' ? 'selected' : '' ?>>Pending</option>
-                                                    <option value="cleared" <?= ($active_filters['status'] ?? '') === 'cleared' ? 'selected' : '' ?>>Cleared</option>
-                                                    <option value="reconciled" <?= ($active_filters['status'] ?? '') === 'reconciled' ? 'selected' : '' ?>>Reconciled</option>
-                                                </select>
-<?php endif; ?>
+                                                <div class="ledger-f-values border rounded px-1 mb-2 bg-body" data-loaded="0">
+                                                    <div class="text-muted small p-2 ledger-f-placeholder">Open to load values…</div>
+                                                </div>
                                                 <div class="d-flex gap-1">
                                                     <button type="button" class="btn btn-sm btn-primary flex-grow-1 ledger-f-apply">Apply</button>
                                                     <button type="button" class="btn btn-sm btn-outline-secondary ledger-f-clear">Clear</button>
@@ -1796,7 +2158,7 @@ foreach ($colDefs as $col):
             listState.has_more = !!raw.has_more;
             listState.sort = raw.sort || 'date';
             listState.sort_dir = raw.sort_dir || 'desc';
-            listState.filters = raw.filters || {};
+            listState.filters = normalizeFilters(raw.filters || {});
         } catch (e) { /* ignore */ }
     })();
 
@@ -1980,36 +2342,103 @@ foreach ($colDefs as $col):
         updateBudgetPeriodWarning();
     }
 
+    /** Column key → multi-select filter array key in listState.filters */
+    const FILTER_KEY_MAP = {
+        date: 'dates',
+        reference: 'references',
+        pay_to: 'pay_tos',
+        description: 'descriptions',
+        account: 'account_ids',
+        fund: 'fund_ids',
+        amount: 'amounts',
+        status: 'statuses'
+    };
+    const FILTER_PARAM_MAP = {
+        dates: 'date',
+        references: 'reference',
+        pay_tos: 'pay_to',
+        descriptions: 'description',
+        account_ids: 'account_id',
+        fund_ids: 'fund_id',
+        amounts: 'amount',
+        statuses: 'status'
+    };
+
+    function emptyMultiFilters() {
+        return {
+            dates: [],
+            references: [],
+            descriptions: [],
+            pay_tos: [],
+            statuses: [],
+            amounts: [],
+            account_ids: [],
+            fund_ids: [],
+            date_from: '',
+            date_to: '',
+            check_number: '',
+            search: '',
+            amount_min: '',
+            amount_max: '',
+            account_id: 0,
+            fund_id: 0
+        };
+    }
+
+    function normalizeFilters(raw) {
+        const base = emptyMultiFilters();
+        if (!raw || typeof raw !== 'object') return base;
+        const asArr = (v) => {
+            if (Array.isArray(v)) return v.map(x => String(x));
+            if (v === undefined || v === null || v === '') return [];
+            return [String(v)];
+        };
+        const asIdArr = (v) => asArr(v).map(x => parseInt(x, 10)).filter(n => n > 0).map(String);
+        base.dates = asArr(raw.dates || raw.date);
+        base.references = asArr(raw.references != null ? raw.references : raw.reference);
+        base.descriptions = asArr(raw.descriptions != null ? raw.descriptions : raw.description);
+        base.pay_tos = asArr(raw.pay_tos != null ? raw.pay_tos : raw.pay_to);
+        base.statuses = asArr(raw.statuses != null ? raw.statuses : raw.status);
+        base.amounts = asArr(raw.amounts != null ? raw.amounts : raw.amount);
+        base.account_ids = asIdArr(raw.account_ids != null ? raw.account_ids : raw.account_id);
+        base.fund_ids = asIdArr(raw.fund_ids != null ? raw.fund_ids : raw.fund_id);
+        base.date_from = raw.date_from ? String(raw.date_from) : '';
+        base.date_to = raw.date_to ? String(raw.date_to) : '';
+        base.check_number = raw.check_number ? String(raw.check_number) : '';
+        base.search = raw.search ? String(raw.search) : '';
+        base.amount_min = raw.amount_min != null && raw.amount_min !== '' ? String(raw.amount_min) : '';
+        base.amount_max = raw.amount_max != null && raw.amount_max !== '' ? String(raw.amount_max) : '';
+        base.account_id = base.account_ids.length === 1 ? parseInt(base.account_ids[0], 10) : 0;
+        base.fund_id = base.fund_ids.length === 1 ? parseInt(base.fund_ids[0], 10) : 0;
+        return base;
+    }
+
     function getActiveFilters() {
-        // Prefer live state; fall back to listState.filters
-        return Object.assign({}, listState.filters || {});
+        return normalizeFilters(listState.filters || {});
     }
 
     function buildFilterParams(includeSort = true, offset = null, limit = null) {
         const p = new URLSearchParams();
         const f = getActiveFilters();
-        const setIf = (k, v) => {
-            if (v === undefined || v === null || v === '') return;
-            if ((k === 'account_id' || k === 'fund_id') && (String(v) === '0' || v === 0)) return;
-            p.set(k, String(v));
+        const appendMulti = (paramName, arr) => {
+            if (!arr || !arr.length) return;
+            arr.forEach(v => p.append(paramName + '[]', String(v)));
         };
-        setIf('date_from', f.date_from);
-        setIf('date_to', f.date_to);
-        setIf('reference', f.reference);
-        setIf('description', f.description);
-        setIf('pay_to', f.pay_to);
-        setIf('check_number', f.check_number);
-        setIf('search', f.search);
-        setIf('status', f.status);
-        setIf('amount', f.amount);
-        setIf('amount_min', f.amount_min);
-        setIf('amount_max', f.amount_max);
-        setIf('account_id', f.account_id);
-        setIf('fund_id', f.fund_id);
+        appendMulti('date', f.dates);
+        appendMulti('reference', f.references);
+        appendMulti('description', f.descriptions);
+        appendMulti('pay_to', f.pay_tos);
+        appendMulti('status', f.statuses);
+        appendMulti('amount', f.amounts);
+        appendMulti('account_id', f.account_ids);
+        appendMulti('fund_id', f.fund_ids);
+        if (f.date_from) p.set('date_from', f.date_from);
+        if (f.date_to) p.set('date_to', f.date_to);
+        if (f.check_number) p.set('check_number', f.check_number);
+        if (f.search) p.set('search', f.search);
+        if (f.amount_min) p.set('amount_min', f.amount_min);
+        if (f.amount_max) p.set('amount_max', f.amount_max);
         if (includeSort) {
-            if (listState.sort && listState.sort !== 'date') p.set('sort', listState.sort);
-            if (listState.sort_dir && listState.sort_dir !== 'desc') p.set('sort_dir', listState.sort_dir);
-            // Always send sort for determinism when non-default
             if (listState.sort) p.set('sort', listState.sort);
             if (listState.sort_dir) p.set('sort_dir', listState.sort_dir);
         }
@@ -2026,20 +2455,287 @@ foreach ($colDefs as $col):
 
     function hasAnyActiveFilter() {
         const f = getActiveFilters();
-        for (const k of Object.keys(f)) {
-            const v = f[k];
-            if (k === 'account_id' || k === 'fund_id') {
-                if (parseInt(v, 10) > 0) return true;
-            } else if (v !== undefined && v !== null && String(v).trim() !== '') {
-                return true;
-            }
+        const multiKeys = ['dates', 'references', 'descriptions', 'pay_tos', 'statuses', 'amounts', 'account_ids', 'fund_ids'];
+        for (const k of multiKeys) {
+            if (f[k] && f[k].length) return true;
         }
+        if (f.date_from || f.date_to || f.check_number || f.search || f.amount_min || f.amount_max) return true;
         return false;
     }
 
     function updateClearAllFiltersBtn() {
         if (!clearAllFiltersBtn) return;
-        clearAllFiltersBtn.classList.toggle('d-none', !hasAnyActiveFilter());
+        clearAllFiltersBtn.disabled = !hasAnyActiveFilter();
+    }
+
+    function isColumnFilterActive(col, f) {
+        f = f || getActiveFilters();
+        const key = FILTER_KEY_MAP[col];
+        if (key && f[key] && f[key].length) return true;
+        if (col === 'date' && (f.date_from || f.date_to)) return true;
+        if (col === 'amount' && (f.amount_min || f.amount_max)) return true;
+        return false;
+    }
+
+    function selectedValuesForColumn(col) {
+        const f = getActiveFilters();
+        const key = FILTER_KEY_MAP[col];
+        return key ? (f[key] || []).map(String) : [];
+    }
+
+    function setColumnFilterValues(col, values) {
+        const f = getActiveFilters();
+        const key = FILTER_KEY_MAP[col];
+        if (!key) return;
+        if (col === 'account' || col === 'fund') {
+            f[key] = (values || []).map(v => String(parseInt(v, 10))).filter(v => v !== '0' && v !== 'NaN');
+        } else {
+            f[key] = (values || []).map(String);
+        }
+        // Clear legacy range when multi dates set
+        if (col === 'date') {
+            f.date_from = '';
+            f.date_to = '';
+        }
+        if (col === 'amount') {
+            f.amount_min = '';
+            f.amount_max = '';
+        }
+        f.account_id = f.account_ids.length === 1 ? parseInt(f.account_ids[0], 10) : 0;
+        f.fund_id = f.fund_ids.length === 1 ? parseInt(f.fund_ids[0], 10) : 0;
+        listState.filters = f;
+    }
+
+    function escAttr(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function renderMultiValueList(container, values, selected, { isDateTree, tree } = {}) {
+        if (!container) return;
+        const selectedSet = new Set((selected || []).map(String));
+        // When no filter active, Excel shows all checked
+        const allChecked = selectedSet.size === 0;
+
+        if (isDateTree && tree && tree.length) {
+            let html = '<div class="ledger-date-tree">';
+            tree.forEach((yNode, yi) => {
+                const yearId = 'ldy_' + yNode.year + '_' + yi;
+                const yearDays = [];
+                (yNode.months || []).forEach(m => (m.days || []).forEach(d => yearDays.push(String(d.value))));
+                const yearAll = yearDays.every(d => allChecked || selectedSet.has(d));
+                const yearSome = yearDays.some(d => allChecked || selectedSet.has(d));
+                html += '<details class="mb-1" open>'
+                    + '<summary class="ledger-date-year ledger-f-item d-flex align-items-center gap-1">'
+                    + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-year-cb m-0" data-year="' + escAttr(yNode.year) + '"'
+                    + (yearAll ? ' checked' : '') + (yearSome && !yearAll ? ' data-indeterminate="1"' : '')
+                    + ' data-dirty-ignore>'
+                    + '<span class="small">' + escHtml(yNode.year) + '</span>'
+                    + '<span class="ledger-f-count ms-auto">(' + (yNode.count || 0) + ')</span>'
+                    + '</summary><div class="ledger-date-month-wrap">';
+                (yNode.months || []).forEach((mNode, mi) => {
+                    const monthDays = (mNode.days || []).map(d => String(d.value));
+                    const mAll = monthDays.every(d => allChecked || selectedSet.has(d));
+                    const mSome = monthDays.some(d => allChecked || selectedSet.has(d));
+                    html += '<details class="mb-1" open>'
+                        + '<summary class="ledger-date-month ledger-f-item d-flex align-items-center gap-1">'
+                        + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-month-cb m-0" data-year="' + escAttr(yNode.year) + '" data-month="' + escAttr(mNode.month) + '"'
+                        + (mAll ? ' checked' : '') + (mSome && !mAll ? ' data-indeterminate="1"' : '')
+                        + ' data-dirty-ignore>'
+                        + '<span class="small">' + escHtml(mNode.label || mNode.month) + '</span>'
+                        + '<span class="ledger-f-count ms-auto">(' + (mNode.count || 0) + ')</span>'
+                        + '</summary><div class="ledger-date-day-wrap">';
+                    (mNode.days || []).forEach(d => {
+                        const val = String(d.value);
+                        const checked = allChecked || selectedSet.has(val);
+                        html += '<div class="form-check ledger-f-item ledger-date-day">'
+                            + '<input class="form-check-input ledger-f-cb ledger-f-day-cb" type="checkbox" value="' + escAttr(val) + '"'
+                            + ' data-label="' + escAttr(val) + '"'
+                            + (checked ? ' checked' : '') + ' data-dirty-ignore>'
+                            + '<label class="form-check-label small">' + escHtml(d.label || val)
+                            + ' <span class="ledger-f-count">(' + (d.count || 0) + ')</span></label>'
+                            + '</div>';
+                    });
+                    html += '</div></details>';
+                });
+                html += '</div></details>';
+            });
+            html += '</div>';
+            container.innerHTML = html;
+            container.querySelectorAll('input[data-indeterminate="1"]').forEach(el => {
+                el.indeterminate = true;
+            });
+            return;
+        }
+
+        if (!values || !values.length) {
+            container.innerHTML = '<div class="text-muted small p-2">No values</div>';
+            return;
+        }
+        let html = '';
+        values.forEach((item, idx) => {
+            const val = String(item.value);
+            const label = item.label != null ? String(item.label) : val;
+            const checked = allChecked || selectedSet.has(val);
+            const id = 'lfv_' + Math.random().toString(36).slice(2, 9) + '_' + idx;
+            html += '<div class="form-check ledger-f-item" data-search="' + escAttr((label + ' ' + val).toLowerCase()) + '">'
+                + '<input class="form-check-input ledger-f-cb" type="checkbox" value="' + escAttr(val) + '" id="' + id + '"'
+                + ' data-label="' + escAttr(label) + '"'
+                + (checked ? ' checked' : '') + ' data-dirty-ignore>'
+                + '<label class="form-check-label small" for="' + id + '">' + escHtml(label)
+                + (item.count != null ? ' <span class="ledger-f-count">(' + item.count + ')</span>' : '')
+                + '</label></div>';
+        });
+        container.innerHTML = html;
+    }
+
+    function getLeafCheckboxes(th, { visibleOnly = false, checkedOnly = false } = {}) {
+        const menu = th && th.querySelector('.ledger-filter-menu');
+        if (!menu) return [];
+        const isDate = !!menu.querySelector('.ledger-date-tree');
+        const selector = isDate
+            ? '.ledger-f-day-cb'
+            : '.ledger-f-values .ledger-f-cb:not(.ledger-f-year-cb):not(.ledger-f-month-cb)';
+        return Array.from(menu.querySelectorAll(selector)).filter(cb => {
+            if (checkedOnly && !cb.checked) return false;
+            if (visibleOnly) {
+                const item = cb.closest('.ledger-f-item');
+                if (item && item.style.display === 'none') return false;
+                const det = cb.closest('details');
+                if (det && det.style.display === 'none') return false;
+            }
+            return true;
+        });
+    }
+
+    function syncSelectAllCheckbox(th) {
+        const menu = th && th.querySelector('.ledger-filter-menu');
+        if (!menu) return;
+        const selectAll = menu.querySelector('.ledger-f-select-all');
+        if (!selectAll) return;
+        const leaves = getLeafCheckboxes(th, { visibleOnly: true });
+        if (!leaves.length) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+            return;
+        }
+        const nChecked = leaves.filter(c => c.checked).length;
+        selectAll.checked = nChecked === leaves.length;
+        selectAll.indeterminate = nChecked > 0 && nChecked < leaves.length;
+    }
+
+    function getCheckedLeafValues(th) {
+        return getLeafCheckboxes(th, { checkedOnly: true }).map(cb => cb.value);
+    }
+
+    function getAllLeafValues(th) {
+        return getLeafCheckboxes(th).map(cb => cb.value);
+    }
+
+    function applySearchFilterToMenu(th, q) {
+        const menu = th.querySelector('.ledger-filter-menu');
+        if (!menu) return;
+        q = String(q || '').trim().toLowerCase();
+        const isDate = !!menu.querySelector('.ledger-date-tree');
+        if (isDate) {
+            menu.querySelectorAll('.ledger-f-day-cb').forEach(cb => {
+                const label = (cb.dataset.label || cb.value || '').toLowerCase();
+                const show = !q || label.includes(q);
+                const wrap = cb.closest('.ledger-f-item');
+                if (wrap) wrap.style.display = show ? '' : 'none';
+            });
+            // Hide empty months/years
+            menu.querySelectorAll('details').forEach(det => {
+                const days = det.querySelectorAll('.ledger-f-day-cb');
+                if (!days.length) return;
+                let any = false;
+                days.forEach(d => {
+                    const wrap = d.closest('.ledger-f-item');
+                    if (wrap && wrap.style.display !== 'none') any = true;
+                });
+                det.style.display = any || !q ? '' : 'none';
+            });
+        } else {
+            menu.querySelectorAll('.ledger-f-values .ledger-f-item').forEach(item => {
+                const hay = (item.dataset.search || item.textContent || '').toLowerCase();
+                item.style.display = !q || hay.includes(q) ? '' : 'none';
+            });
+        }
+        syncSelectAllCheckbox(th);
+    }
+
+    function setAllVisibleChecked(th, checked) {
+        const menu = th.querySelector('.ledger-filter-menu');
+        if (!menu) return;
+        const isDate = !!menu.querySelector('.ledger-date-tree');
+        const leaves = isDate
+            ? menu.querySelectorAll('.ledger-f-day-cb')
+            : menu.querySelectorAll('.ledger-f-values .ledger-f-cb:not(.ledger-f-year-cb):not(.ledger-f-month-cb)');
+        leaves.forEach(cb => {
+            const item = cb.closest('.ledger-f-item');
+            if (item && item.style.display === 'none') return;
+            cb.checked = checked;
+        });
+        if (isDate) {
+            menu.querySelectorAll('.ledger-f-year-cb, .ledger-f-month-cb').forEach(cb => {
+                const det = cb.closest('details');
+                if (det && det.style.display === 'none') return;
+                cb.checked = checked;
+                cb.indeterminate = false;
+            });
+        }
+        syncSelectAllCheckbox(th);
+    }
+
+    function syncDateParentCheckboxes(th) {
+        const menu = th.querySelector('.ledger-filter-menu');
+        if (!menu || !menu.querySelector('.ledger-date-tree')) return;
+        menu.querySelectorAll('details').forEach(det => {
+            const parentCb = det.querySelector(':scope > summary > .ledger-f-cb');
+            if (!parentCb) return;
+            const days = det.querySelectorAll('.ledger-f-day-cb');
+            if (!days.length) return;
+            const n = days.length;
+            const c = Array.from(days).filter(d => d.checked).length;
+            parentCb.checked = c === n;
+            parentCb.indeterminate = c > 0 && c < n;
+        });
+        syncSelectAllCheckbox(th);
+    }
+
+    function loadFilterValuesForMenu(th) {
+        if (!th) return Promise.resolve();
+        const col = th.dataset.col;
+        const menu = th.querySelector('.ledger-filter-menu');
+        const box = th.querySelector('.ledger-f-values');
+        if (!menu || !box) return Promise.resolve();
+        box.innerHTML = '<div class="text-muted small p-2"><span class="spinner-border spinner-border-sm me-1"></span>Loading…</div>';
+        const params = buildFilterParams(false, null, null);
+        params.set('filter_values', '1');
+        params.set('column', col);
+        return fetch('pages/ledger.php?' + params.toString())
+            .then(r => r.json())
+            .then(data => {
+                if (!data || data.success === false) {
+                    box.innerHTML = '<div class="text-danger small p-2">' + escHtml((data && data.error) || 'Failed to load values') + '</div>';
+                    return;
+                }
+                const selected = selectedValuesForColumn(col);
+                const isDate = col === 'date';
+                renderMultiValueList(box, data.values || [], selected, {
+                    isDateTree: isDate,
+                    tree: data.tree
+                });
+                box.dataset.loaded = '1';
+                syncSelectAllCheckbox(th);
+            })
+            .catch(err => {
+                console.error(err);
+                box.innerHTML = '<div class="text-danger small p-2">Failed to load values</div>';
+            });
     }
 
     function fmtLedgerAmtJs(amount) {
@@ -2124,15 +2820,7 @@ foreach ($colDefs as $col):
         const f = getActiveFilters();
         document.querySelectorAll('#ledgerTxTable thead th.ledger-th-filter').forEach(th => {
             const col = th.dataset.col;
-            let active = false;
-            if (col === 'date') active = !!(f.date_from || f.date_to);
-            else if (col === 'reference') active = !!f.reference;
-            else if (col === 'pay_to') active = !!f.pay_to;
-            else if (col === 'description') active = !!f.description;
-            else if (col === 'account') active = parseInt(f.account_id || 0, 10) > 0;
-            else if (col === 'fund') active = parseInt(f.fund_id || 0, 10) > 0;
-            else if (col === 'amount') active = !!(f.amount || f.amount_min || f.amount_max);
-            else if (col === 'status') active = !!f.status;
+            const active = isColumnFilterActive(col, f);
             th.classList.toggle('ledger-filter-active', active);
             const btn = th.querySelector('.ledger-filter-toggle');
             const icon = th.querySelector('.ledger-filter-toggle i');
@@ -2194,7 +2882,7 @@ foreach ($colDefs as $col):
                 listState.has_more = !!data.has_more;
                 if (data.sort) listState.sort = data.sort;
                 if (data.sort_dir) listState.sort_dir = data.sort_dir;
-                if (data.filters) listState.filters = data.filters;
+                if (data.filters) listState.filters = normalizeFilters(data.filters);
                 updateListFooter();
             })
             .catch(err => {
@@ -2210,90 +2898,68 @@ foreach ($colDefs as $col):
     function reloadTransactionList() {
         listState.offset = 0;
         listState.has_more = true;
+        // Force filter value panels to reload next open (other filters may change available values)
+        document.querySelectorAll('#ledgerTxTable .ledger-f-values').forEach(el => {
+            el.dataset.loaded = '0';
+        });
         return fetchTransactionList({ reset: true });
+    }
+
+    function closeFilterDropdown(th) {
+        const toggle = th && th.querySelector('.ledger-filter-toggle');
+        if (toggle && typeof bootstrap !== 'undefined') {
+            const dd = bootstrap.Dropdown.getInstance(toggle);
+            if (dd) dd.hide();
+        }
     }
 
     function applyColumnFilterFromMenu(th) {
         if (!th) return;
         const col = th.dataset.col;
-        const f = Object.assign({}, listState.filters || {});
-        const type = th.dataset.filterType;
-        if (type === 'date') {
-            f.date_from = th.querySelector('.ledger-f-date-from')?.value || '';
-            f.date_to = th.querySelector('.ledger-f-date-to')?.value || '';
-        } else if (type === 'text') {
-            const val = (th.querySelector('.ledger-f-text')?.value || '').trim();
-            if (col === 'reference') f.reference = val;
-            else if (col === 'pay_to') f.pay_to = val;
-            else if (col === 'description') f.description = val;
-        } else if (type === 'account') {
-            f.account_id = parseInt(th.querySelector('.ledger-f-account')?.value || '0', 10) || 0;
-        } else if (type === 'fund') {
-            f.fund_id = parseInt(th.querySelector('.ledger-f-fund')?.value || '0', 10) || 0;
-        } else if (type === 'amount') {
-            f.amount = (th.querySelector('.ledger-f-amount')?.value || '').trim();
-            f.amount_min = (th.querySelector('.ledger-f-amount-min')?.value || '').trim();
-            f.amount_max = (th.querySelector('.ledger-f-amount-max')?.value || '').trim();
-        } else if (type === 'status') {
-            f.status = th.querySelector('.ledger-f-status')?.value || '';
+        const allVals = getAllLeafValues(th);
+        const checked = getCheckedLeafValues(th);
+        // Excel: Select All (all checked) = no column filter; none checked = no matches
+        if (allVals.length && checked.length === allVals.length) {
+            setColumnFilterValues(col, []);
+        } else if (checked.length === 0) {
+            setColumnFilterValues(col, ['__NONE__']);
+        } else {
+            setColumnFilterValues(col, checked);
         }
-        listState.filters = f;
         reloadTransactionList();
-        // Close dropdown
-        const toggle = th.querySelector('.ledger-filter-toggle');
-        if (toggle && typeof bootstrap !== 'undefined') {
-            const dd = bootstrap.Dropdown.getInstance(toggle);
-            if (dd) dd.hide();
-        }
+        closeFilterDropdown(th);
     }
 
     function clearColumnFilterFromMenu(th) {
         if (!th) return;
         const col = th.dataset.col;
-        const f = Object.assign({}, listState.filters || {});
-        const type = th.dataset.filterType;
-        if (type === 'date') {
-            f.date_from = ''; f.date_to = '';
-            const a = th.querySelector('.ledger-f-date-from'); if (a) a.value = '';
-            const b = th.querySelector('.ledger-f-date-to'); if (b) b.value = '';
-        } else if (type === 'text') {
-            if (col === 'reference') f.reference = '';
-            else if (col === 'pay_to') f.pay_to = '';
-            else if (col === 'description') f.description = '';
-            const t = th.querySelector('.ledger-f-text'); if (t) t.value = '';
-        } else if (type === 'account') {
-            f.account_id = 0;
-            const s = th.querySelector('.ledger-f-account'); if (s) s.value = '0';
-        } else if (type === 'fund') {
-            f.fund_id = 0;
-            const s = th.querySelector('.ledger-f-fund'); if (s) s.value = '0';
-        } else if (type === 'amount') {
-            f.amount = ''; f.amount_min = ''; f.amount_max = '';
-            const a = th.querySelector('.ledger-f-amount'); if (a) a.value = '';
-            const b = th.querySelector('.ledger-f-amount-min'); if (b) b.value = '';
-            const c = th.querySelector('.ledger-f-amount-max'); if (c) c.value = '';
-        } else if (type === 'status') {
-            f.status = '';
-            const s = th.querySelector('.ledger-f-status'); if (s) s.value = '';
+        setColumnFilterValues(col, []);
+        // Reset UI: re-check all visible, clear search
+        const search = th.querySelector('.ledger-f-search');
+        if (search) search.value = '';
+        const box = th.querySelector('.ledger-f-values');
+        if (box) box.dataset.loaded = '0';
+        setAllVisibleChecked(th, true);
+        const selectAll = th.querySelector('.ledger-f-select-all');
+        if (selectAll) {
+            selectAll.checked = true;
+            selectAll.indeterminate = false;
         }
-        listState.filters = f;
         reloadTransactionList();
-        const toggle = th.querySelector('.ledger-filter-toggle');
-        if (toggle && typeof bootstrap !== 'undefined') {
-            const dd = bootstrap.Dropdown.getInstance(toggle);
-            if (dd) dd.hide();
-        }
+        closeFilterDropdown(th);
     }
 
     function clearAllFilters() {
-        listState.filters = {
-            date_from: '', date_to: '', reference: '', description: '', pay_to: '',
-            check_number: '', search: '', status: '', amount: '', amount_min: '', amount_max: '',
-            account_id: 0, fund_id: 0
-        };
-        document.querySelectorAll('#ledgerTxTable .ledger-f-date-from, #ledgerTxTable .ledger-f-date-to, #ledgerTxTable .ledger-f-text, #ledgerTxTable .ledger-f-amount, #ledgerTxTable .ledger-f-amount-min, #ledgerTxTable .ledger-f-amount-max').forEach(el => { el.value = ''; });
-        document.querySelectorAll('#ledgerTxTable .ledger-f-account, #ledgerTxTable .ledger-f-fund').forEach(el => { el.value = '0'; });
-        document.querySelectorAll('#ledgerTxTable .ledger-f-status').forEach(el => { el.value = ''; });
+        listState.filters = emptyMultiFilters();
+        document.querySelectorAll('#ledgerTxTable .ledger-f-search').forEach(el => { el.value = ''; });
+        document.querySelectorAll('#ledgerTxTable .ledger-f-values').forEach(el => {
+            el.dataset.loaded = '0';
+            el.innerHTML = '<div class="text-muted small p-2 ledger-f-placeholder">Open to load values…</div>';
+        });
+        document.querySelectorAll('#ledgerTxTable .ledger-f-select-all').forEach(el => {
+            el.checked = true;
+            el.indeterminate = false;
+        });
         reloadTransactionList();
     }
 
@@ -2301,6 +2967,7 @@ foreach ($colDefs as $col):
         const table = document.getElementById('ledgerTxTable');
         if (!table || table.dataset.filtersWired === '1') return;
         table.dataset.filtersWired = '1';
+
         table.addEventListener('click', function(e) {
             const applyBtn = e.target.closest('.ledger-f-apply');
             if (applyBtn) {
@@ -2316,6 +2983,10 @@ foreach ($colDefs as $col):
                 clearColumnFilterFromMenu(clearBtn.closest('th'));
                 return;
             }
+            // Keep checkbox clicks from toggling <details> open/close
+            if (e.target.classList && e.target.classList.contains('ledger-f-cb')) {
+                e.stopPropagation();
+            }
             const sortBtn = e.target.closest('.ledger-sort-btn');
             if (sortBtn) {
                 e.preventDefault();
@@ -2325,22 +2996,70 @@ foreach ($colDefs as $col):
                     listState.sort_dir = listState.sort_dir === 'asc' ? 'desc' : 'asc';
                 } else {
                     listState.sort = col;
-                    // Default: date newest first; text cols asc first; amount desc
                     listState.sort_dir = (col === 'date' || col === 'amount') ? 'desc' : 'asc';
                 }
                 reloadTransactionList();
             }
         });
-        // Enter in filter inputs applies
+
+        table.addEventListener('change', function(e) {
+            if (e.target.classList && e.target.classList.contains('ledger-f-select-all')) {
+                const th = e.target.closest('th');
+                setAllVisibleChecked(th, e.target.checked);
+                e.target.indeterminate = false;
+                return;
+            }
+            if (e.target.classList && e.target.classList.contains('ledger-f-day-cb')) {
+                syncDateParentCheckboxes(e.target.closest('th'));
+                return;
+            }
+            if (e.target.classList && e.target.classList.contains('ledger-f-cb')) {
+                const th = e.target.closest('th');
+                if (e.target.classList.contains('ledger-f-year-cb') || e.target.classList.contains('ledger-f-month-cb')) {
+                    const det = e.target.closest('details');
+                    if (det) {
+                        det.querySelectorAll('.ledger-f-day-cb').forEach(cb => { cb.checked = e.target.checked; });
+                        det.querySelectorAll('.ledger-f-month-cb, .ledger-f-year-cb').forEach(cb => {
+                            if (cb !== e.target && det.contains(cb)) {
+                                cb.checked = e.target.checked;
+                                cb.indeterminate = false;
+                            }
+                        });
+                    }
+                    e.target.indeterminate = false;
+                    syncDateParentCheckboxes(th);
+                } else {
+                    syncSelectAllCheckbox(th);
+                }
+            }
+        });
+
+        table.addEventListener('input', function(e) {
+            if (e.target.classList && e.target.classList.contains('ledger-f-search')) {
+                applySearchFilterToMenu(e.target.closest('th'), e.target.value);
+            }
+        });
+
+        // Enter in search applies
         table.addEventListener('keydown', function(e) {
             if (e.key !== 'Enter') return;
             const th = e.target.closest('th.ledger-th-filter');
             if (!th) return;
-            if (e.target.matches('input, select')) {
+            if (e.target.matches('input.ledger-f-search')) {
                 e.preventDefault();
                 applyColumnFilterFromMenu(th);
             }
         });
+
+        // Load unique values when a filter dropdown opens (respects other active filters)
+        table.querySelectorAll('.ledger-filter-toggle').forEach(toggle => {
+            toggle.addEventListener('show.bs.dropdown', function() {
+                const th = toggle.closest('th');
+                if (!th) return;
+                loadFilterValuesForMenu(th);
+            });
+        });
+
         if (clearAllFiltersBtn) {
             clearAllFiltersBtn.addEventListener('click', () => clearAllFilters());
         }
