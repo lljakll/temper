@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.912](#v0912)
 - [v0.911](#v0911)
 - [v0.910](#v0910)
 - [v0.909](#v0909)
@@ -117,6 +118,43 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.912
+
+**Ledger redesign: modal form, infinite scroll, Excel-style filters** — 2026-08-09
+
+> No schema update required for this release (ledger UI/API only).  
+> **Patch file (history row):** `updates/20260809_0912_ledger_modal_infinite_scroll.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.912
+
+- **Transaction Add / Edit / View** open in a Bootstrap modal dialog (same form, validations, funds/accounts, attachments, reference-number behavior).
+  - Add and Edit: full editing (budget-only for cleared/reconciled, unchanged rules).
+  - View: read-only modal.
+  - Dirty-form protection on Add/Edit (click-away, Cancel, Escape) via existing `TemperDirtyForms` / `hide.bs.modal` handling. View mode does not require it.
+- **Transaction list**
+  - Classic Prev/Next pagination removed.
+  - Continuous scrolling list with incremental JSON loading (`?list_transactions=1`) when many rows exist.
+  - Filters always applied **server-side** against the full dataset (lazy-loaded pages never hide matching rows).
+- **Excel-style auto-filter headers** on Date, Reference, Pay To, Description, Account, Fund, Amount, Status (funnel control + sort on each title).
+  - Active columns highlighted; toolbar **Clear all filters** button.
+- **Row interaction**
+  - Double-click → read-only View modal.
+  - Toolbar **View** → read-only View modal.
+  - Toolbar **Edit** only → editable Edit modal (not double-click).
+  - Single-click still selects (checkbox / Ctrl / Shift multi-select); bulk Clear/Reconcile preserved.
+- Sticky table header (titles + filter controls stay visible while scrolling).
+- Lightweight “Loading more…” indicator for incremental fetch; default sort newest first (header sort still available).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.912**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.911 | `updates/20260809_0912_ledger_modal_infinite_scroll.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.911 patches, then this process patch |
 
 ---
 

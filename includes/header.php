@@ -667,29 +667,64 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             white-space: nowrap;
         }
 
-        /* ── Ledger layout ───────────────────────────────────────────────── */
+        /* ── Ledger layout (full-height infinite scroll list + modal form) ─ */
+        .ledger-page {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
         .ledger-workspace {
-            height: calc(100vh - 170px);
-            min-height: 300px;
+            height: calc(100vh - 150px);
+            min-height: 280px;
+            flex: 1 1 auto;
         }
         .ledger-tx-list {
-            height: 35vh;
+            height: 100%;
+            min-height: 0;
+        }
+        .ledger-table-scroll {
+            overscroll-behavior: contain;
+        }
+        .ledger-sticky-head th {
+            position: sticky;
+            top: 0;
+            z-index: 12;
+            vertical-align: middle;
+            background-color: var(--bs-dark);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+        }
+        .ledger-th-filter.ledger-filter-active {
+            box-shadow: inset 0 -3px 0 var(--bs-warning);
+        }
+        .ledger-sort-btn {
+            font-weight: 600;
+            font-size: inherit;
+            line-height: 1.2;
+            max-width: 100%;
+        }
+        .ledger-sort-btn:hover,
+        .ledger-sort-btn:focus {
+            color: #fff !important;
+            opacity: 0.9;
+        }
+        .ledger-filter-toggle {
+            line-height: 1;
+            min-width: 1.25rem;
+        }
+        .ledger-filter-menu {
+            z-index: 1080;
+        }
+        .ledger-tx-table tbody tr {
+            cursor: pointer;
+        }
+        .ledger-tx-table tbody tr.table-active,
+        .ledger-tx-table tbody tr:has(.tx-cb:checked) {
+            --bs-table-bg-state: rgba(var(--bs-primary-rgb), 0.08);
         }
         @media (max-width: 767.98px) {
             .ledger-workspace {
-                height: auto;
-                min-height: 0;
-            }
-            .ledger-tx-list {
-                height: 45vh;
-                max-height: 45vh;
-            }
-            .ledger-filter-row .col-auto {
-                flex: 1 1 45%;
-            }
-            .ledger-filter-row .col-auto .form-control,
-            .ledger-filter-row .col-auto .form-select {
-                width: 100%;
+                height: calc(100vh - 190px);
+                min-height: 240px;
             }
             .ledger-action-bar .btn {
                 flex: 1 1 calc(50% - 0.25rem);

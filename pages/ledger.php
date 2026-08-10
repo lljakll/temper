@@ -166,6 +166,349 @@ require_once __DIR__ . '/../includes/permissions.php';
         exit;
     }
 
+    /**
+     * Build ledger list WHERE clause + bind params from request filters.
+     * Used by HTML first paint and JSON infinite-scroll endpoint.
+     *
+     * @return array{conditions: string[], bind_params: array, bind_types: string, filter_account_id: int, view_normal: string, filters: array}
+     */
+    $ledgerBuildListFilters = static function (mysqli $db, array $src): array {
+        $date_from = trim((string)($src['date_from'] ?? ''));
+        $date_to = trim((string)($src['date_to'] ?? ''));
+        $reference = trim((string)($src['reference'] ?? $src['reference_number'] ?? ''));
+        $description = trim((string)($src['description'] ?? ''));
+        $pay_to = trim((string)($src['pay_to'] ?? ''));
+        $check_number = trim((string)($src['check_number'] ?? ''));
+        $search = trim((string)($src['search'] ?? ''));
+        $status = strtolower(trim((string)($src['status'] ?? '')));
+        $amount = trim((string)($src['amount'] ?? ''));
+        $amount_min = trim((string)($src['amount_min'] ?? ''));
+        $amount_max = trim((string)($src['amount_max'] ?? ''));
+
+        $filter_account_id = isset($src['account_id']) ? (int)$src['account_id'] : 0;
+        if ($filter_account_id < 0) {
+            $filter_account_id = 0;
+        }
+        $filter_fund_id = isset($src['fund_id']) ? (int)$src['fund_id'] : 0;
+        if ($filter_fund_id < 0) {
+            $filter_fund_id = 0;
+        }
+
+        $allowedStatus = ['pending', 'cleared', 'reconciled'];
+        if ($status !== '' && !in_array($status, $allowedStatus, true)) {
+            $status = '';
+        }
+
+        $conditions = [];
+        $bind_params = [];
+        $bind_types = '';
+
+        if ($date_from !== '') {
+            $conditions[] = 'td.transaction_date >= ?';
+            $bind_params[] = $date_from;
+            $bind_types .= 's';
+        }
+        if ($date_to !== '') {
+            $conditions[] = 'td.transaction_date <= ?';
+            $bind_params[] = $date_to;
+            $bind_types .= 's';
+        }
+        if ($reference !== '') {
+            $like = '%' . $reference . '%';
+            $conditions[] = 'td.reference_number LIKE ?';
+            $bind_params[] = $like;
+            $bind_types .= 's';
+        }
+        if ($description !== '') {
+            $like = '%' . $description . '%';
+            $conditions[] = 'td.description LIKE ?';
+            $bind_params[] = $like;
+            $bind_types .= 's';
+        }
+        if ($pay_to !== '') {
+            $like = '%' . $pay_to . '%';
+            $conditions[] = 'td.pay_to LIKE ?';
+            $bind_params[] = $like;
+            $bind_types .= 's';
+        }
+        if ($check_number !== '') {
+            $like = '%' . $check_number . '%';
+            $conditions[] = 'td.check_number LIKE ?';
+            $bind_params[] = $like;
+            $bind_types .= 's';
+        }
+        if ($status !== '') {
+            $conditions[] = 'td.status = ?';
+            $bind_params[] = $status;
+            $bind_types .= 's';
+        }
+        if ($search !== '') {
+            $like = '%' . $search . '%';
+            $conditions[] = '(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.description LIKE ? OR CAST(COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS CHAR) LIKE ?)';
+            $bind_params = array_merge($bind_params, [$like, $like, $like, $like, $like]);
+            $bind_types .= str_repeat('s', 5);
+        }
+        if ($filter_account_id > 0) {
+            $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.account_id = ?)';
+            $bind_params[] = $filter_account_id;
+            $bind_types .= 'i';
+        }
+        if ($filter_fund_id > 0) {
+            $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id = ?)';
+            $bind_params[] = $filter_fund_id;
+            $bind_types .= 'i';
+        }
+
+        // Amount filters against total line amounts (absolute sum of lines) and debit/credit totals
+        $totalExpr = 'COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0)';
+        $debitExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0)";
+        $creditExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0)";
+
+        if ($amount !== '') {
+            $like = '%' . $amount . '%';
+            $conditions[] = "(CAST($totalExpr AS CHAR) LIKE ? OR CAST($debitExpr AS CHAR) LIKE ? OR CAST($creditExpr AS CHAR) LIKE ?)";
+            $bind_params = array_merge($bind_params, [$like, $like, $like]);
+            $bind_types .= 'sss';
+        }
+        if ($amount_min !== '' && is_numeric($amount_min)) {
+            $conditions[] = "$debitExpr >= ?";
+            $bind_params[] = (float)$amount_min;
+            $bind_types .= 'd';
+        }
+        if ($amount_max !== '' && is_numeric($amount_max)) {
+            $conditions[] = "$debitExpr <= ?";
+            $bind_params[] = (float)$amount_max;
+            $bind_types .= 'd';
+        }
+
+        $view_normal = '';
+        if ($filter_account_id > 0) {
+            $vn = $db->prepare('SELECT normal_balance FROM accounts WHERE id = ? LIMIT 1');
+            $vn->bind_param('i', $filter_account_id);
+            $vn->execute();
+            if ($vnr = $vn->get_result()->fetch_assoc()) {
+                $view_normal = (string)$vnr['normal_balance'];
+            }
+            $vn->close();
+        }
+
+        return [
+            'conditions' => $conditions,
+            'bind_params' => $bind_params,
+            'bind_types' => $bind_types,
+            'filter_account_id' => $filter_account_id,
+            'filter_fund_id' => $filter_fund_id,
+            'view_normal' => $view_normal,
+            'filters' => [
+                'date_from' => $date_from,
+                'date_to' => $date_to,
+                'reference' => $reference,
+                'description' => $description,
+                'pay_to' => $pay_to,
+                'check_number' => $check_number,
+                'search' => $search,
+                'status' => $status,
+                'amount' => $amount,
+                'amount_min' => $amount_min,
+                'amount_max' => $amount_max,
+                'account_id' => $filter_account_id,
+                'fund_id' => $filter_fund_id,
+            ],
+        ];
+    };
+
+    /**
+     * Fetch a page of ledger transactions with server-side filters + sort.
+     *
+     * @return array{rows: array, total: int, offset: int, limit: int, has_more: bool, sort: string, sort_dir: string, filter_account_id: int, filters: array}
+     */
+    $ledgerFetchTransactionPage = static function (mysqli $db, array $src, callable $buildFilters) use ($ledgerBuildListFilters): array {
+        $built = $buildFilters($db, $src);
+        $conditions = $built['conditions'];
+        $bind_params = $built['bind_params'];
+        $bind_types = $built['bind_types'];
+        $filter_account_id = $built['filter_account_id'];
+        $where_clause = $conditions ? (' WHERE ' . implode(' AND ', $conditions)) : '';
+
+        $limit = isset($src['limit']) ? (int)$src['limit'] : 50;
+        if ($limit < 1) {
+            $limit = 50;
+        }
+        if ($limit > 200) {
+            $limit = 200;
+        }
+        $offset = isset($src['offset']) ? max(0, (int)$src['offset']) : 0;
+        // Legacy page param support
+        if ($offset === 0 && isset($src['page']) && (int)$src['page'] > 1) {
+            $offset = ((int)$src['page'] - 1) * $limit;
+        }
+
+        $sortKey = strtolower(trim((string)($src['sort'] ?? 'date')));
+        $sortDir = strtolower(trim((string)($src['sort_dir'] ?? 'desc'))) === 'asc' ? 'ASC' : 'DESC';
+        $sortMap = [
+            'date' => 'td.transaction_date',
+            'reference' => 'td.reference_number',
+            'ref' => 'td.reference_number',
+            'pay_to' => 'td.pay_to',
+            'check' => 'td.check_number',
+            'check_number' => 'td.check_number',
+            'description' => 'td.description',
+            'status' => 'td.status',
+            'lines' => 'num_lines',
+            'debit' => 'total_debits',
+            'credit' => 'total_credits',
+            'amount' => 'total_debits',
+            'id' => 'td.id',
+        ];
+        if (!isset($sortMap[$sortKey])) {
+            $sortKey = 'date';
+        }
+        $orderCol = $sortMap[$sortKey];
+        // Secondary sort always newest id for stable paging
+        $orderSql = $orderCol . ' ' . $sortDir . ', td.id ' . $sortDir;
+
+        $count_stmt = $db->prepare('SELECT COUNT(*) AS total FROM transaction_details td' . $where_clause);
+        if ($bind_types !== '') {
+            $count_stmt->bind_param($bind_types, ...$bind_params);
+        }
+        $count_stmt->execute();
+        $total = (int)($count_stmt->get_result()->fetch_assoc()['total'] ?? 0);
+        $count_stmt->close();
+
+        $list_params = $bind_params;
+        $list_types = $bind_types;
+        $list_params[] = $limit;
+        $list_params[] = $offset;
+        $list_types .= 'ii';
+
+        $sql = "
+            SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.description, td.status, td.cleared_date,
+                   td.validated_by_user_id, td.validated_at,
+                   COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0) AS total_debits,
+                   COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
+                   COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
+                   COALESCE((SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS num_lines,
+                   (SELECT GROUP_CONCAT(DISTINCT a.name ORDER BY a.name SEPARATOR ', ')
+                      FROM transaction_lines tl2
+                      INNER JOIN accounts a ON a.id = tl2.account_id
+                     WHERE tl2.transaction_detail_id = td.id) AS account_names,
+                   (SELECT GROUP_CONCAT(DISTINCT f.name ORDER BY f.name SEPARATOR ', ')
+                      FROM transaction_lines tl3
+                      LEFT JOIN funds f ON f.id = tl3.fund_id
+                     WHERE tl3.transaction_detail_id = td.id AND tl3.fund_id IS NOT NULL) AS fund_names
+            FROM transaction_details td
+            $where_clause
+            ORDER BY $orderSql
+            LIMIT ? OFFSET ?
+        ";
+        $tx_stmt = $db->prepare($sql);
+        if ($list_types !== '') {
+            $tx_stmt->bind_param($list_types, ...$list_params);
+        }
+        $tx_stmt->execute();
+        $tx_result = $tx_stmt->get_result();
+        $tx_rows = [];
+        if ($tx_result) {
+            while ($r = $tx_result->fetch_assoc()) {
+                $tx_rows[] = $r;
+            }
+            $tx_result->close();
+        }
+        $tx_stmt->close();
+
+        // When an account is selected, show Debit/Credit totals for that account only
+        $acct_debits = [];
+        $acct_credits = [];
+        if ($filter_account_id > 0 && count($tx_rows) > 0) {
+            $ids = [];
+            foreach ($tx_rows as $r) {
+                $ids[] = (int)$r['id'];
+            }
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $dq = $db->prepare("
+                SELECT transaction_detail_id,
+                       COALESCE(SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END), 0) AS debits,
+                       COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END), 0) AS credits
+                FROM transaction_lines
+                WHERE transaction_detail_id IN ($in) AND account_id = ?
+                GROUP BY transaction_detail_id
+            ");
+            $dtypes = str_repeat('i', count($ids)) . 'i';
+            $dparams = array_merge($ids, [$filter_account_id]);
+            $dq->bind_param($dtypes, ...$dparams);
+            $dq->execute();
+            $dres = $dq->get_result();
+            while ($dm = $dres->fetch_assoc()) {
+                $tid = (int)$dm['transaction_detail_id'];
+                $acct_debits[$tid] = (float)$dm['debits'];
+                $acct_credits[$tid] = (float)$dm['credits'];
+            }
+            $dq->close();
+        }
+
+        $out_rows = [];
+        foreach ($tx_rows as $r) {
+            $tid = (int)$r['id'];
+            if ($filter_account_id > 0) {
+                $debAmt = $acct_debits[$tid] ?? 0.0;
+                $credAmt = $acct_credits[$tid] ?? 0.0;
+            } else {
+                $debAmt = (float)($r['total_debits'] ?? 0);
+                $credAmt = (float)($r['total_credits'] ?? 0);
+            }
+            $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
+            $out_rows[] = [
+                'id' => $tid,
+                'transaction_date' => $r['transaction_date'],
+                'pay_to' => $r['pay_to'] ?? '',
+                'reference_number' => $r['reference_number'] ?? '',
+                'check_number' => $r['check_number'] ?? '',
+                'description' => $r['description'] ?? '',
+                'status' => $r['status'] ?? 'pending',
+                'cleared_date' => $r['cleared_date'] ?? null,
+                'total_debits' => (float)($r['total_debits'] ?? 0),
+                'total_credits' => (float)($r['total_credits'] ?? 0),
+                'total_amount' => (float)($r['total_amount'] ?? 0),
+                'num_lines' => (int)($r['num_lines'] ?? 0),
+                'account_names' => $r['account_names'] ?? '',
+                'fund_names' => $r['fund_names'] ?? '',
+                'debits' => $debAmt,
+                'credits' => $credAmt,
+                'is_cleared' => $isCleared ? 1 : 0,
+            ];
+        }
+
+        return [
+            'rows' => $out_rows,
+            'total' => $total,
+            'offset' => $offset,
+            'limit' => $limit,
+            'has_more' => ($offset + count($out_rows)) < $total,
+            'sort' => $sortKey,
+            'sort_dir' => strtolower($sortDir) === 'asc' ? 'asc' : 'desc',
+            'filter_account_id' => $filter_account_id,
+            'filters' => $built['filters'],
+        ];
+    };
+
+    // JSON list endpoint for infinite scroll / Excel-style server-side filters
+    if (isset($_GET['list_transactions'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        $page = $ledgerFetchTransactionPage($db, $_GET, $ledgerBuildListFilters);
+        echo json_encode([
+            'success' => true,
+            'total' => $page['total'],
+            'offset' => $page['offset'],
+            'limit' => $page['limit'],
+            'has_more' => $page['has_more'],
+            'sort' => $page['sort'],
+            'sort_dir' => $page['sort_dir'],
+            'filters' => $page['filters'],
+            'rows' => $page['rows'],
+        ]);
+        exit;
+    }
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? 'save';
         require_once __DIR__ . '/../auth.php';
@@ -818,7 +1161,21 @@ require_once __DIR__ . '/../includes/permissions.php';
         }
     }
 
-    // Curated accounts for Account View dropdown: exclude revenue accounts like Contributions.
+    // Filters + initial page for continuous list (infinite scroll loads more via JSON)
+    $list_page = $ledgerFetchTransactionPage($db, $_GET, $ledgerBuildListFilters);
+    $tx_list_rows = $list_page['rows'];
+    $total = $list_page['total'];
+    $list_offset = $list_page['offset'];
+    $list_limit = $list_page['limit'];
+    $list_has_more = $list_page['has_more'];
+    $list_sort = $list_page['sort'];
+    $list_sort_dir = $list_page['sort_dir'];
+    $active_filters = $list_page['filters'];
+    $filter_account_id = (int)$list_page['filter_account_id'];
+    $filter_fund_id = (int)($active_filters['fund_id'] ?? 0);
+    $dropdown_selected = $filter_account_id;
+
+    // Curated accounts for Account filter dropdown: exclude revenue accounts like Contributions.
     // Ordered by CoA number ascending (null/empty CoA at end), then name, then id.
     $view_accts = [];
     $vaq = $db->query("SELECT id, name, normal_balance, coa_number FROM accounts WHERE archived=FALSE ORDER BY (coa_number IS NULL OR coa_number = '') ASC, coa_number ASC, name ASC, id ASC");
@@ -829,131 +1186,13 @@ require_once __DIR__ . '/../includes/permissions.php';
         }
     }
 
-    // Filters and pagination
-    $date_from = $_GET['date_from'] ?? '';
-    $date_to = $_GET['date_to'] ?? '';
-    $search = trim($_GET['search'] ?? '');
-    $page = max(1, (int)($_GET['page'] ?? 1));
-    $per_page = 25;
-
-    // Account View filter defaults to All Accounts (0)
-    $filter_account_id = isset($_GET['account_id']) ? (int)$_GET['account_id'] : 0;
-    if ($filter_account_id < 0) {
-        $filter_account_id = 0;
-    }
-    $dropdown_selected = $filter_account_id;
-
-    $conditions = [];
-    $bind_params = [];
-    $bind_types = '';
-    if ($date_from) {
-        $conditions[] = "td.transaction_date >= ?";
-        $bind_params[] = $date_from;
-        $bind_types .= 's';
-    }
-    if ($date_to) {
-        $conditions[] = "td.transaction_date <= ?";
-        $bind_params[] = $date_to;
-        $bind_types .= 's';
-    }
-    if ($search !== '') {
-        $like = '%' . $search . '%';
-        $conditions[] = "(td.pay_to LIKE ? OR td.reference_number LIKE ? OR td.check_number LIKE ? OR td.description LIKE ? OR CAST(COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS CHAR) LIKE ?)";
-        $bind_params = array_merge($bind_params, [$like, $like, $like, $like, $like]);
-        $bind_types .= str_repeat('s', 5);
-    }
-    if ($filter_account_id > 0) {
-        $conditions[] = "EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.account_id = ?)";
-        $bind_params[] = $filter_account_id;
-        $bind_types .= 'i';
-    }
-    $where_clause = $conditions ? ' WHERE ' . implode(' AND ', $conditions) : '';
-
-    // Load selected account info for signed amount calc
-    $view_normal = '';
-    if ($filter_account_id > 0) {
-        $vn = $db->prepare("SELECT normal_balance FROM accounts WHERE id = ? LIMIT 1");
-        $vn->bind_param('i', $filter_account_id);
-        $vn->execute();
-        if ($vnr = $vn->get_result()->fetch_assoc()) {
-            $view_normal = $vnr['normal_balance'];
+    // Funds for fund filter dropdown
+    $view_funds = [];
+    $vfq = $db->query("SELECT id, name, code FROM funds WHERE is_active=TRUE AND archived=FALSE ORDER BY name ASC, id ASC");
+    if ($vfq) {
+        while ($vf = $vfq->fetch_assoc()) {
+            $view_funds[] = $vf;
         }
-        $vn->close();
-    }
-
-    // Total for pagination
-    $count_stmt = $db->prepare("SELECT COUNT(*) AS total FROM transaction_details td" . $where_clause);
-    if ($bind_types) {
-        $count_stmt->bind_param($bind_types, ...$bind_params);
-    }
-    $count_stmt->execute();
-    $total = (int)($count_stmt->get_result()->fetch_assoc()['total'] ?? 0);
-    $count_stmt->close();
-
-    $total_pages = max(1, (int)ceil($total / $per_page));
-    $page = min($page, $total_pages);
-    $offset = ($page - 1) * $per_page;
-
-    // List query with pagination
-    $list_params = $bind_params;
-    $list_types = $bind_types;
-    $list_params[] = $per_page;
-    $list_params[] = $offset;
-    $list_types .= 'ii';
-
-    $tx_stmt = $db->prepare("
-        SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.description, td.status, td.cleared_date,
-               td.validated_by_user_id, td.validated_at,
-               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0) AS total_debits,
-               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
-               COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
-               COALESCE((SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS num_lines
-        FROM transaction_details td
-        $where_clause
-        ORDER BY td.transaction_date DESC, td.id DESC
-        LIMIT ? OFFSET ?
-    ");
-    if ($list_types) {
-        $tx_stmt->bind_param($list_types, ...$list_params);
-    }
-    $tx_stmt->execute();
-    $tx_result = $tx_stmt->get_result();
-
-    // Collect rows (small page size)
-    $tx_rows = [];
-    if ($tx_result) {
-        while ($r = $tx_result->fetch_assoc()) {
-            $tx_rows[] = $r;
-        }
-        $tx_result->close();
-    }
-
-    // When an account is selected, show Debit/Credit totals for that account only
-    $acct_debits = [];
-    $acct_credits = [];
-    if ($filter_account_id > 0 && count($tx_rows) > 0) {
-        $ids = [];
-        foreach ($tx_rows as $r) { $ids[] = (int)$r['id']; }
-        $in = implode(',', array_fill(0, count($ids), '?'));
-        $dq = $db->prepare("
-            SELECT transaction_detail_id,
-                   COALESCE(SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END), 0) AS debits,
-                   COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END), 0) AS credits
-            FROM transaction_lines
-            WHERE transaction_detail_id IN ($in) AND account_id = ?
-            GROUP BY transaction_detail_id
-        ");
-        $dtypes = str_repeat('i', count($ids)) . 'i';
-        $dparams = array_merge($ids, [$filter_account_id]);
-        $dq->bind_param($dtypes, ...$dparams);
-        $dq->execute();
-        $dres = $dq->get_result();
-        while ($dm = $dres->fetch_assoc()) {
-            $tid = (int)$dm['transaction_detail_id'];
-            $acct_debits[$tid] = (float)$dm['debits'];
-            $acct_credits[$tid] = (float)$dm['credits'];
-        }
-        $dq->close();
     }
 
     /**
@@ -966,18 +1205,44 @@ require_once __DIR__ . '/../includes/permissions.php';
         }
         return '$' . number_format(abs($a), 2);
     };
+
+    $hasActiveFilters = false;
+    foreach ($active_filters as $fk => $fv) {
+        if ($fk === 'account_id' || $fk === 'fund_id') {
+            if ((int)$fv > 0) { $hasActiveFilters = true; break; }
+        } elseif ($fv !== '' && $fv !== null) {
+            $hasActiveFilters = true;
+            break;
+        }
+    }
+
 ?>
-<div class="container-fluid">
+<div class="container-fluid ledger-page">
 <?php if ($success || $error): ?>
 <script type="application/json" id="ledger-flash"><?= json_encode(['message' => $success ?: $error, 'type' => $success ? 'success' : 'danger']) ?></script>
 <?php endif; ?>
+<script type="application/json" id="ledger-list-state"><?= json_encode([
+    'total' => (int)$total,
+    'offset' => (int)$list_offset,
+    'limit' => (int)$list_limit,
+    'has_more' => (bool)$list_has_more,
+    'sort' => $list_sort,
+    'sort_dir' => $list_sort_dir,
+    'filters' => $active_filters,
+    'loaded' => count($tx_list_rows),
+], JSON_UNESCAPED_UNICODE) ?></script>
 
     <!-- Top Action Buttons -->
-    <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar">
+    <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar align-items-center">
         <?php if ($canWriteLedger): ?>
         <button type="button" id="addTxBtn" class="btn btn-primary">
             <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">Add Transaction</span><span class="d-sm-none">Add</span>
         </button>
+        <?php endif; ?>
+        <button type="button" id="viewTxBtn" class="btn btn-outline-secondary" disabled>
+            <i class="bi bi-eye"></i> View
+        </button>
+        <?php if ($canWriteLedger): ?>
         <button type="button" id="editTxBtn" class="btn btn-outline-secondary" disabled>
             <i class="bi bi-pencil"></i> Edit
         </button>
@@ -990,135 +1255,218 @@ require_once __DIR__ . '/../includes/permissions.php';
         <?php else: ?>
         <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
         <?php endif; ?>
+        <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2<?= $hasActiveFilters ? '' : ' d-none' ?>" title="Clear all column filters">
+            <i class="bi bi-funnel"></i> Clear all filters
+        </button>
+        <span class="text-muted small ms-auto align-self-center" id="ledgerTotalLabel"><?= (int)$total ?> total</span>
     </div>
 
-    <!-- Constrained viewport area: list fixed at 35%, form takes remainder and scrolls internally if long -->
     <div class="d-flex flex-column ledger-workspace">
-        <!-- Filters -->
-        <div class="mb-2 flex-shrink-0">
-            <div class="row g-2 align-items-end ledger-filter-row">
-                <div class="col-6 col-md-auto">
-                    <label class="form-label small mb-1">Date From</label>
-                    <input type="date" id="filterDateFrom" class="form-control form-control-sm" value="<?= htmlspecialchars($date_from) ?>">
-                </div>
-                <div class="col-6 col-md-auto">
-                    <label class="form-label small mb-1">Date To</label>
-                    <input type="date" id="filterDateTo" class="form-control form-control-sm" value="<?= htmlspecialchars($date_to) ?>">
-                </div>
-                <div class="col-12 col-sm-6 col-md-auto">
-                    <label class="form-label small mb-1">Account View</label>
-                    <select id="filterAccount" class="form-select form-select-sm" style="min-width:170px;">
-                        <option value="0" <?= $dropdown_selected === 0 ? 'selected' : '' ?>>All Accounts</option>
-<?php foreach ($view_accts as $va): ?>
-<?php $vid = (int)$va['id']; ?>
-                        <option value="<?= $vid ?>" <?= $vid === $dropdown_selected ? 'selected' : '' ?>><?= htmlspecialchars($va['name']) ?></option>
-<?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="col-12 col-md-3">
-                    <label class="form-label small mb-1"><span class="d-none d-md-inline">Search (Pay To / Ref # / Check # / Description / Amount)</span><span class="d-md-none">Search</span></label>
-                    <input type="search" id="filterSearch" class="form-control form-control-sm" value="<?= htmlspecialchars($search) ?>" placeholder="Search transactions...">
-                </div>
-                <div class="col-12 col-md-auto d-flex flex-wrap gap-2">
-                    <button type="button" id="applyFilterBtn" class="btn btn-sm btn-primary flex-grow-1 flex-md-grow-0">Apply</button>
-                    <button type="button" id="clearFilterBtn" class="btn btn-sm btn-outline-secondary flex-grow-1 flex-md-grow-0">Clear</button>
-                </div>
-                <div class="col-12 col-md-auto ms-md-auto text-muted small align-self-center">
-                    <?= (int)$total ?> total
-                </div>
-            </div>
-        </div>
-
-        <!-- Transactions List (fixed 35% height of page, internally scrollable) -->
-        <div class="card mb-2 flex-shrink-0 ledger-tx-list">
-            <div class="card-header py-2">
+        <div class="card flex-grow-1 d-flex flex-column ledger-tx-list mb-0" style="min-height:0;">
+            <div class="card-header py-2 d-flex flex-wrap align-items-center gap-2 flex-shrink-0">
                 <strong>Transactions</strong>
-                <small class="text-muted ms-2 d-none d-md-inline">(click row to view; checkbox or Ctrl/Shift+click for multi)</small>
-                <small class="text-muted ms-2 d-md-none">(tap row to view)</small>
+                <small class="text-muted d-none d-md-inline">(double-click or View to open; checkbox / Ctrl / Shift for multi-select)</small>
+                <small class="text-muted d-md-none">(double-tap to view)</small>
             </div>
-            <div class="card-body p-0 d-flex flex-column" style="height: calc(100% - 2.25rem);">
-                <div class="table-responsive" style="flex: 1 1 auto; overflow: auto; min-height: 0;">
-                    <table class="table table-sm table-hover mb-0 align-middle" style="min-width: 720px;">
-                        <thead class="table-dark" style="position: sticky; top: 0; z-index: 10;">
-                            <tr>
-                                <th style="width:28px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
-                                <th>Date</th>
-                                <th>Ref #</th>
-                                <th>Pay To</th>
-                                <th>Check #</th>
-                                <th>Description</th>
-                                <th class="text-end text-nowrap" style="min-width:5.5rem" title="Debit amounts">Debit</th>
-                                <th class="text-end text-nowrap" style="min-width:5.5rem" title="Credit amounts">Credit</th>
-                                <th>Status</th>
-                                <th class="text-center">Lines</th>
+            <div class="card-body p-0 d-flex flex-column" style="flex:1 1 auto; min-height:0;">
+                <div class="table-responsive ledger-table-scroll" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
+                    <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 980px;">
+                        <thead class="table-dark ledger-sticky-head">
+                            <tr class="ledger-col-titles">
+                                <th style="width:28px" class="ledger-th-check">
+                                    <input type="checkbox" id="selectAll" class="form-check-input" title="Select all loaded">
+                                </th>
+<?php
+$colDefs = [
+    ['key' => 'date', 'label' => 'Date', 'filter' => 'date', 'class' => 'text-nowrap'],
+    ['key' => 'reference', 'label' => 'Ref #', 'filter' => 'text', 'class' => 'text-nowrap'],
+    ['key' => 'pay_to', 'label' => 'Pay To', 'filter' => 'text', 'class' => ''],
+    ['key' => 'description', 'label' => 'Description', 'filter' => 'text', 'class' => ''],
+    ['key' => 'account', 'label' => 'Account', 'filter' => 'account', 'class' => ''],
+    ['key' => 'fund', 'label' => 'Fund', 'filter' => 'fund', 'class' => ''],
+    ['key' => 'amount', 'label' => 'Amount', 'filter' => 'amount', 'class' => 'text-end text-nowrap', 'title' => 'Debit / Credit amounts'],
+    ['key' => 'status', 'label' => 'Status', 'filter' => 'status', 'class' => ''],
+];
+foreach ($colDefs as $col):
+    $ck = $col['key'];
+    $isSorted = ($list_sort === $ck || ($ck === 'amount' && in_array($list_sort, ['amount', 'debit', 'credit'], true)) || ($ck === 'reference' && in_array($list_sort, ['reference', 'ref'], true)));
+    $sortIcon = '';
+    if ($isSorted) {
+        $sortIcon = $list_sort_dir === 'asc' ? ' ↑' : ' ↓';
+    }
+    $filterActive = false;
+    if ($ck === 'date') {
+        $filterActive = ($active_filters['date_from'] ?? '') !== '' || ($active_filters['date_to'] ?? '') !== '';
+    } elseif ($ck === 'reference') {
+        $filterActive = ($active_filters['reference'] ?? '') !== '';
+    } elseif ($ck === 'pay_to') {
+        $filterActive = ($active_filters['pay_to'] ?? '') !== '';
+    } elseif ($ck === 'description') {
+        $filterActive = ($active_filters['description'] ?? '') !== '';
+    } elseif ($ck === 'account') {
+        $filterActive = (int)($active_filters['account_id'] ?? 0) > 0;
+    } elseif ($ck === 'fund') {
+        $filterActive = (int)($active_filters['fund_id'] ?? 0) > 0;
+    } elseif ($ck === 'amount') {
+        $filterActive = ($active_filters['amount'] ?? '') !== '' || ($active_filters['amount_min'] ?? '') !== '' || ($active_filters['amount_max'] ?? '') !== '';
+    } elseif ($ck === 'status') {
+        $filterActive = ($active_filters['status'] ?? '') !== '';
+    }
+?>
+                                <th class="ledger-th-filter <?= htmlspecialchars($col['class']) ?><?= $filterActive ? ' ledger-filter-active' : '' ?>"
+                                    data-col="<?= htmlspecialchars($ck) ?>"
+                                    data-filter-type="<?= htmlspecialchars($col['filter']) ?>"
+                                    <?= !empty($col['title']) ? ' title="' . htmlspecialchars($col['title']) . '"' : '' ?>>
+                                    <div class="d-flex align-items-center gap-1 <?= str_contains($col['class'], 'text-end') ? 'justify-content-end' : '' ?>">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none ledger-sort-btn <?= str_contains($col['class'], 'text-end') ? '' : 'text-start' ?> text-white"
+                                                data-sort="<?= htmlspecialchars($ck) ?>" title="Sort by <?= htmlspecialchars($col['label']) ?>">
+                                            <span class="ledger-col-label"><?= htmlspecialchars($col['label']) ?></span><span class="ledger-sort-indicator"><?= $sortIcon ?></span>
+                                        </button>
+                                        <div class="dropdown">
+                                            <button type="button"
+                                                    class="btn btn-sm p-0 border-0 ledger-filter-toggle <?= $filterActive ? 'text-warning' : 'text-white-50' ?>"
+                                                    data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                                                    aria-expanded="false" title="Filter <?= htmlspecialchars($col['label']) ?>">
+                                                <i class="bi <?= $filterActive ? 'bi-funnel-fill' : 'bi-funnel' ?>"></i>
+                                            </button>
+                                            <div class="dropdown-menu dropdown-menu-end p-2 shadow ledger-filter-menu" style="min-width:14rem;">
+                                                <div class="small text-muted mb-1 fw-semibold"><?= htmlspecialchars($col['label']) ?> filter</div>
+<?php if ($col['filter'] === 'date'): ?>
+                                                <label class="form-label small mb-0">From</label>
+                                                <input type="date" class="form-control form-control-sm mb-1 ledger-f-date-from" value="<?= htmlspecialchars($active_filters['date_from'] ?? '') ?>" data-dirty-ignore>
+                                                <label class="form-label small mb-0">To</label>
+                                                <input type="date" class="form-control form-control-sm mb-2 ledger-f-date-to" value="<?= htmlspecialchars($active_filters['date_to'] ?? '') ?>" data-dirty-ignore>
+<?php elseif ($col['filter'] === 'text'): ?>
+                                                <input type="search" class="form-control form-control-sm mb-2 ledger-f-text" placeholder="Contains…"
+                                                       value="<?= htmlspecialchars(
+                                                           $ck === 'reference' ? ($active_filters['reference'] ?? '')
+                                                           : ($ck === 'pay_to' ? ($active_filters['pay_to'] ?? '')
+                                                           : ($ck === 'description' ? ($active_filters['description'] ?? '') : ''))
+                                                       ) ?>" data-dirty-ignore autocomplete="off">
+<?php elseif ($col['filter'] === 'account'): ?>
+                                                <select class="form-select form-select-sm mb-2 ledger-f-account" data-dirty-ignore>
+                                                    <option value="0">All accounts</option>
+<?php foreach ($view_accts as $va): $vid = (int)$va['id']; ?>
+                                                    <option value="<?= $vid ?>" <?= $vid === $filter_account_id ? 'selected' : '' ?>><?= htmlspecialchars($va['name']) ?></option>
+<?php endforeach; ?>
+                                                </select>
+<?php elseif ($col['filter'] === 'fund'): ?>
+                                                <select class="form-select form-select-sm mb-2 ledger-f-fund" data-dirty-ignore>
+                                                    <option value="0">All funds</option>
+<?php foreach ($view_funds as $vf): $fid = (int)$vf['id']; ?>
+                                                    <option value="<?= $fid ?>" <?= $fid === $filter_fund_id ? 'selected' : '' ?>><?= htmlspecialchars($vf['name'] . (!empty($vf['code']) ? ' (' . $vf['code'] . ')' : '')) ?></option>
+<?php endforeach; ?>
+                                                </select>
+<?php elseif ($col['filter'] === 'amount'): ?>
+                                                <label class="form-label small mb-0">Contains</label>
+                                                <input type="search" class="form-control form-control-sm mb-1 ledger-f-amount" placeholder="e.g. 125.00"
+                                                       value="<?= htmlspecialchars($active_filters['amount'] ?? '') ?>" data-dirty-ignore autocomplete="off">
+                                                <div class="row g-1 mb-2">
+                                                    <div class="col-6">
+                                                        <label class="form-label small mb-0">Min debit</label>
+                                                        <input type="number" step="0.01" min="0" class="form-control form-control-sm ledger-f-amount-min"
+                                                               value="<?= htmlspecialchars($active_filters['amount_min'] ?? '') ?>" data-dirty-ignore>
+                                                    </div>
+                                                    <div class="col-6">
+                                                        <label class="form-label small mb-0">Max debit</label>
+                                                        <input type="number" step="0.01" min="0" class="form-control form-control-sm ledger-f-amount-max"
+                                                               value="<?= htmlspecialchars($active_filters['amount_max'] ?? '') ?>" data-dirty-ignore>
+                                                    </div>
+                                                </div>
+<?php elseif ($col['filter'] === 'status'): ?>
+                                                <select class="form-select form-select-sm mb-2 ledger-f-status" data-dirty-ignore>
+                                                    <option value="">All statuses</option>
+                                                    <option value="pending" <?= ($active_filters['status'] ?? '') === 'pending' ? 'selected' : '' ?>>Pending</option>
+                                                    <option value="cleared" <?= ($active_filters['status'] ?? '') === 'cleared' ? 'selected' : '' ?>>Cleared</option>
+                                                    <option value="reconciled" <?= ($active_filters['status'] ?? '') === 'reconciled' ? 'selected' : '' ?>>Reconciled</option>
+                                                </select>
+<?php endif; ?>
+                                                <div class="d-flex gap-1">
+                                                    <button type="button" class="btn btn-sm btn-primary flex-grow-1 ledger-f-apply">Apply</button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary ledger-f-clear">Clear</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </th>
+<?php endforeach; ?>
+                                <th class="text-center" style="width:3rem" title="Line count">#</th>
                             </tr>
                         </thead>
                         <tbody id="txTableBody">
-                            <?php if (count($tx_rows) > 0): ?>
-                                <?php foreach ($tx_rows as $r): ?>
+                            <?php if (count($tx_list_rows) > 0): ?>
+                                <?php foreach ($tx_list_rows as $r): ?>
                                     <?php
-                                        $isCleared = ($r['status'] === 'cleared' || !empty($r['cleared_date']));
+                                        $isCleared = !empty($r['is_cleared']) || ($r['status'] === 'cleared' || !empty($r['cleared_date']));
                                         $statusBadge = 'bg-secondary';
                                         $statusText = 'Pending';
                                         if ($r['status'] === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
                                         elseif ($r['status'] === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
                                         $tid = (int)$r['id'];
-                                        if ($filter_account_id > 0) {
-                                            $debAmt = $acct_debits[$tid] ?? 0.0;
-                                            $credAmt = $acct_credits[$tid] ?? 0.0;
-                                        } else {
-                                            $debAmt = (float)($r['total_debits'] ?? 0);
-                                            $credAmt = (float)($r['total_credits'] ?? 0);
-                                        }
+                                        $debAmt = (float)($r['debits'] ?? $r['total_debits'] ?? 0);
+                                        $credAmt = (float)($r['credits'] ?? $r['total_credits'] ?? 0);
                                         $debDisplay = $fmtLedgerAmt($debAmt);
                                         $credDisplay = $fmtLedgerAmt($credAmt);
+                                        $acctNames = (string)($r['account_names'] ?? '');
+                                        $fundNames = (string)($r['fund_names'] ?? '');
+                                        $descFull = (string)($r['description'] ?? '');
                                     ?>
                                     <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= $tid ?>"></td>
-                                        <td><?= htmlspecialchars($r['transaction_date']) ?></td>
+                                        <td class="text-nowrap"><?= htmlspecialchars($r['transaction_date']) ?></td>
                                         <td class="font-monospace"><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
-                                        <td><?= htmlspecialchars($r['check_number'] ?? '') ?></td>
-                                        <td class="small text-muted"><?= htmlspecialchars(substr($r['description'] ?? '', 0, 70)) ?></td>
-                                        <td class="text-end font-monospace text-primary fw-semibold ledger-debit-col"><?= $debDisplay !== '' ? htmlspecialchars($debDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
-                                        <td class="text-end font-monospace text-success fw-semibold ledger-credit-col"><?= $credDisplay !== '' ? htmlspecialchars($credDisplay) : '<span class="text-muted">&nbsp;</span>' ?></td>
+                                        <td class="small text-muted" title="<?= htmlspecialchars($descFull) ?>"><?= htmlspecialchars(mb_strlen($descFull) > 70 ? mb_substr($descFull, 0, 70) . '…' : $descFull) ?></td>
+                                        <td class="small" title="<?= htmlspecialchars($acctNames) ?>"><?= htmlspecialchars(mb_strlen($acctNames) > 40 ? mb_substr($acctNames, 0, 40) . '…' : $acctNames) ?></td>
+                                        <td class="small" title="<?= htmlspecialchars($fundNames) ?>"><?= htmlspecialchars(mb_strlen($fundNames) > 30 ? mb_substr($fundNames, 0, 30) . '…' : $fundNames) ?></td>
+                                        <td class="text-end font-monospace small">
+                                            <?php if ($debDisplay !== ''): ?><div class="text-primary fw-semibold ledger-debit-col"><?= htmlspecialchars($debDisplay) ?></div><?php endif; ?>
+                                            <?php if ($credDisplay !== ''): ?><div class="text-success fw-semibold ledger-credit-col"><?= htmlspecialchars($credDisplay) ?></div><?php endif; ?>
+                                            <?php if ($debDisplay === '' && $credDisplay === ''): ?><span class="text-muted">&nbsp;</span><?php endif; ?>
+                                        </td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr>
-                                    <td colspan="10" class="text-center text-muted py-4">No transactions yet. Use "Add Transaction" to create one.</td>
+                                <tr class="ledger-empty-row">
+                                    <td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.<?= $canWriteLedger ? ' Use “Add Transaction” to create one.' : '' ?></td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
-                <div id="paginationBar" class="d-flex justify-content-between align-items-center px-2 py-2 small bg-body-tertiary border-top flex-shrink-0 gap-2"
-                     data-current-page="<?= (int)$page ?>" data-total-pages="<?= (int)$total_pages ?>">
-                    <div class="text-nowrap">Page <?= (int)$page ?> of <?= (int)$total_pages ?></div>
-                    <div class="d-flex gap-1">
-                        <button type="button" id="prevPageBtn" class="btn btn-sm btn-outline-secondary" <?= $page <= 1 ? 'disabled' : '' ?>>Prev</button>
-                        <button type="button" id="nextPageBtn" class="btn btn-sm btn-outline-secondary" <?= $page >= $total_pages ? 'disabled' : '' ?>>Next</button>
+                <div id="ledgerLoadMoreBar" class="d-flex justify-content-center align-items-center px-2 py-2 small bg-body-tertiary border-top flex-shrink-0 gap-2<?= $list_has_more ? '' : ' d-none' ?>">
+                    <div id="ledgerLoadingIndicator" class="d-none text-muted">
+                        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                        Loading more…
                     </div>
+                    <span id="ledgerEndOfList" class="text-muted d-none">End of list</span>
                 </div>
             </div>
         </div>
+    </div>
+</div>
 
-        <!-- Transaction Details Form (fills remaining space; body scrolls internally if content is long) -->
-        <div id="txFormSection" class="card flex-grow-1 d-flex flex-column" style="min-height: 0;">
-            <div class="card-header d-flex justify-content-between align-items-center flex-shrink-0">
-                <div>
-                    <strong id="formTitle">Transaction Details</strong>
-                    <span id="formModeBadge" class="badge bg-body-secondary text-body ms-1"></span>
+<!-- Transaction Add / Edit / View modal -->
+<div class="modal fade" id="txFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <form id="txForm" method="post" data-dirty-track>
+                <div class="modal-header py-2">
+                    <div class="d-flex align-items-center flex-wrap gap-2 me-2 min-w-0">
+                        <h5 class="modal-title text-truncate mb-0" id="formTitle">Transaction Details</h5>
+                        <span id="formModeBadge" class="badge bg-body-secondary text-body"></span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 ms-auto">
+                        <button type="button" id="importTextBtn" class="btn btn-sm btn-outline-primary d-none"
+                                title="Paste Beancount-style text to fill this form (does not save)">
+                            <i class="bi bi-clipboard-data"></i> <span class="d-none d-sm-inline">Import from Text</span>
+                        </button>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
                 </div>
-                <button type="button" id="importTextBtn" class="btn btn-sm btn-outline-primary d-none"
-                        title="Paste Beancount-style text to fill this form (does not save)">
-                    <i class="bi bi-clipboard-data"></i> Import from Text
-                </button>
-            </div>
-            <div class="card-body flex-grow-1 overflow-auto" style="min-height: 0;">
-                <form id="txForm" method="post" data-dirty-track>
+                <div class="modal-body">
                     <input type="hidden" name="tx_id" id="tx_id">
                     <input type="hidden" name="lines_json" id="lines_json">
 
@@ -1240,14 +1588,13 @@ require_once __DIR__ . '/../includes/permissions.php';
                             </div>
                         </div>
                     </div>
-
-                    <div class="mt-2 d-flex flex-wrap gap-2">
-                        <button type="submit" id="saveBtn" class="btn btn-sm btn-primary" disabled>Save Transaction</button>
-                        <button type="button" id="resetLinesBtn" class="btn btn-sm btn-outline-secondary">Reset to 2 Lines</button>
-                        <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary">Cancel</button>
-                    </div>
-                </form>
-            </div>
+                </div>
+                <div class="modal-footer py-2 flex-wrap gap-2">
+                    <button type="submit" id="saveBtn" class="btn btn-sm btn-primary" disabled>Save Transaction</button>
+                    <button type="button" id="resetLinesBtn" class="btn btn-sm btn-outline-secondary">Reset to 2 Lines</button>
+                    <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -1398,18 +1745,60 @@ require_once __DIR__ . '/../includes/permissions.php';
     const refHelpBtn = document.getElementById('referenceHelpBtn');
     let refReuseConfirmedFor = ''; // last Reference # user confirmed for reuse
     const txIdField = document.getElementById('tx_id');
-    const formSection = document.getElementById('txFormSection');
     const formTitle = document.getElementById('formTitle');
-    const cancelBtn = document.getElementById('cancelFormBtn');
     const cancelBtn2 = document.getElementById('cancelFormBtn2');
 
     const addTxBtn = document.getElementById('addTxBtn');
+    const viewTxBtn = document.getElementById('viewTxBtn');
     const editTxBtn = document.getElementById('editTxBtn');
     const clearTxBtn = document.getElementById('clearTxBtn');
     const reconcileTxBtn = document.getElementById('reconcileTxBtn');
+    const clearAllFiltersBtn = document.getElementById('clearAllFiltersBtn');
 
     const selectAll = document.getElementById('selectAll');
     const txTableBody = document.getElementById('txTableBody');
+    const ledgerTableScroll = document.getElementById('ledgerTableScroll');
+    const ledgerTotalLabel = document.getElementById('ledgerTotalLabel');
+    const ledgerLoadMoreBar = document.getElementById('ledgerLoadMoreBar');
+    const ledgerLoadingIndicator = document.getElementById('ledgerLoadingIndicator');
+    const ledgerEndOfList = document.getElementById('ledgerEndOfList');
+
+    // Transaction form modal (Add / Edit / View)
+    let txFormModalEl = document.getElementById('txFormModal');
+    if (txFormModalEl && typeof window.mountModalOnBody === 'function') {
+        txFormModalEl = window.mountModalOnBody(txFormModalEl);
+    }
+    function openTxFormModal() {
+        if (!txFormModalEl) return;
+        // Already visible — keep content swap without re-show flicker
+        if (txFormModalEl.classList.contains('show')) return;
+        showLedgerModal(txFormModalEl);
+    }
+    function closeTxFormModal() {
+        if (!txFormModalEl || typeof bootstrap === 'undefined') return;
+        const inst = bootstrap.Modal.getInstance(txFormModalEl);
+        if (inst) inst.hide();
+    }
+    function isTxFormModalOpen() {
+        return !!(txFormModalEl && txFormModalEl.classList.contains('show'));
+    }
+
+    // List state for infinite scroll + server-side filters
+    let listState = { total: 0, offset: 0, limit: 50, has_more: false, sort: 'date', sort_dir: 'desc', filters: {}, loading: false };
+    (function initListStateFromDom() {
+        const el = document.getElementById('ledger-list-state');
+        if (!el) return;
+        try {
+            const raw = JSON.parse(el.textContent || '{}');
+            listState.total = raw.total || 0;
+            listState.offset = (raw.offset || 0) + (raw.loaded || 0);
+            listState.limit = raw.limit || 50;
+            listState.has_more = !!raw.has_more;
+            listState.sort = raw.sort || 'date';
+            listState.sort_dir = raw.sort_dir || 'desc';
+            listState.filters = raw.filters || {};
+        } catch (e) { /* ignore */ }
+    })();
 
     const accountOpts = `<?= $aopt ?>`;
     const fundOpts = `<?= $fopt ?>`;
@@ -1591,25 +1980,381 @@ require_once __DIR__ . '/../includes/permissions.php';
         updateBudgetPeriodWarning();
     }
 
-    function buildQueryString(preservePage = true) {
+    function getActiveFilters() {
+        // Prefer live state; fall back to listState.filters
+        return Object.assign({}, listState.filters || {});
+    }
+
+    function buildFilterParams(includeSort = true, offset = null, limit = null) {
         const p = new URLSearchParams();
-        const df = document.getElementById('filterDateFrom');
-        if (df && df.value) p.set('date_from', df.value);
-        const dt = document.getElementById('filterDateTo');
-        if (dt && dt.value) p.set('date_to', dt.value);
-        const sr = document.getElementById('filterSearch');
-        if (sr && sr.value.trim()) p.set('search', sr.value.trim());
-        const acc = document.getElementById('filterAccount');
-        if (acc) p.set('account_id', acc.value);
-        if (preservePage) {
-            const bar = document.getElementById('paginationBar');
-            if (bar) {
-                const pg = parseInt(bar.dataset.currentPage || '1', 10);
-                if (pg > 1) p.set('page', pg);
-            }
+        const f = getActiveFilters();
+        const setIf = (k, v) => {
+            if (v === undefined || v === null || v === '') return;
+            if ((k === 'account_id' || k === 'fund_id') && (String(v) === '0' || v === 0)) return;
+            p.set(k, String(v));
+        };
+        setIf('date_from', f.date_from);
+        setIf('date_to', f.date_to);
+        setIf('reference', f.reference);
+        setIf('description', f.description);
+        setIf('pay_to', f.pay_to);
+        setIf('check_number', f.check_number);
+        setIf('search', f.search);
+        setIf('status', f.status);
+        setIf('amount', f.amount);
+        setIf('amount_min', f.amount_min);
+        setIf('amount_max', f.amount_max);
+        setIf('account_id', f.account_id);
+        setIf('fund_id', f.fund_id);
+        if (includeSort) {
+            if (listState.sort && listState.sort !== 'date') p.set('sort', listState.sort);
+            if (listState.sort_dir && listState.sort_dir !== 'desc') p.set('sort_dir', listState.sort_dir);
+            // Always send sort for determinism when non-default
+            if (listState.sort) p.set('sort', listState.sort);
+            if (listState.sort_dir) p.set('sort_dir', listState.sort_dir);
         }
+        if (offset !== null && offset !== undefined) p.set('offset', String(offset));
+        if (limit !== null && limit !== undefined) p.set('limit', String(limit));
+        return p;
+    }
+
+    function buildQueryString(_preservePage = true) {
+        const p = buildFilterParams(true, null, null);
         const s = p.toString();
         return s ? '?' + s : '';
+    }
+
+    function hasAnyActiveFilter() {
+        const f = getActiveFilters();
+        for (const k of Object.keys(f)) {
+            const v = f[k];
+            if (k === 'account_id' || k === 'fund_id') {
+                if (parseInt(v, 10) > 0) return true;
+            } else if (v !== undefined && v !== null && String(v).trim() !== '') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function updateClearAllFiltersBtn() {
+        if (!clearAllFiltersBtn) return;
+        clearAllFiltersBtn.classList.toggle('d-none', !hasAnyActiveFilter());
+    }
+
+    function fmtLedgerAmtJs(amount) {
+        const a = parseFloat(amount) || 0;
+        if (Math.abs(a) < 0.005) return '';
+        return '$' + Math.abs(a).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function statusBadgeHtml(status) {
+        const st = String(status || 'pending');
+        let badge = 'bg-secondary';
+        let text = 'Pending';
+        if (st === 'cleared') { badge = 'bg-success'; text = 'Cleared'; }
+        else if (st === 'reconciled') { badge = 'bg-info'; text = 'Reconciled'; }
+        return '<span class="badge ' + badge + '">' + text + '</span>';
+    }
+
+    function truncText(s, n) {
+        s = String(s || '');
+        if (s.length <= n) return s;
+        return s.slice(0, n) + '…';
+    }
+
+    function renderTxRow(r) {
+        const tid = parseInt(r.id, 10) || 0;
+        const isCleared = r.is_cleared || r.status === 'cleared' || !!r.cleared_date;
+        const debAmt = r.debits != null ? r.debits : (r.total_debits || 0);
+        const credAmt = r.credits != null ? r.credits : (r.total_credits || 0);
+        const debDisplay = fmtLedgerAmtJs(debAmt);
+        const credDisplay = fmtLedgerAmtJs(credAmt);
+        const desc = r.description || '';
+        const accts = r.account_names || '';
+        const funds = r.fund_names || '';
+        let amtHtml = '';
+        if (debDisplay) amtHtml += '<div class="text-primary fw-semibold ledger-debit-col">' + escHtml(debDisplay) + '</div>';
+        if (credDisplay) amtHtml += '<div class="text-success fw-semibold ledger-credit-col">' + escHtml(credDisplay) + '</div>';
+        if (!amtHtml) amtHtml = '<span class="text-muted">&nbsp;</span>';
+        return '<tr data-id="' + tid + '" data-cleared="' + (isCleared ? '1' : '0') + '" data-status="' + escHtml(r.status || 'pending') + '" data-debits="' + escHtml(String(debAmt)) + '" data-credits="' + escHtml(String(credAmt)) + '">'
+            + '<td><input type="checkbox" class="form-check-input tx-cb" value="' + tid + '"></td>'
+            + '<td class="text-nowrap">' + escHtml(r.transaction_date || '') + '</td>'
+            + '<td class="font-monospace">' + escHtml(r.reference_number || '') + '</td>'
+            + '<td>' + escHtml(r.pay_to || '') + '</td>'
+            + '<td class="small text-muted" title="' + escHtml(desc) + '">' + escHtml(truncText(desc, 70)) + '</td>'
+            + '<td class="small" title="' + escHtml(accts) + '">' + escHtml(truncText(accts, 40)) + '</td>'
+            + '<td class="small" title="' + escHtml(funds) + '">' + escHtml(truncText(funds, 30)) + '</td>'
+            + '<td class="text-end font-monospace small">' + amtHtml + '</td>'
+            + '<td>' + statusBadgeHtml(r.status) + '</td>'
+            + '<td class="text-center">' + (parseInt(r.num_lines, 10) || 0) + '</td>'
+            + '</tr>';
+    }
+
+    function setListLoading(on) {
+        listState.loading = !!on;
+        if (ledgerLoadingIndicator) ledgerLoadingIndicator.classList.toggle('d-none', !on);
+        if (ledgerLoadMoreBar && (on || listState.has_more)) {
+            ledgerLoadMoreBar.classList.remove('d-none');
+        }
+    }
+
+    function updateListFooter() {
+        if (ledgerTotalLabel) {
+            ledgerTotalLabel.textContent = (listState.total || 0) + ' total';
+        }
+        if (ledgerLoadMoreBar) {
+            if (listState.has_more || listState.loading) {
+                ledgerLoadMoreBar.classList.remove('d-none');
+            } else if ((listState.total || 0) > 0 && listState.offset >= listState.total) {
+                ledgerLoadMoreBar.classList.remove('d-none');
+            } else {
+                ledgerLoadMoreBar.classList.add('d-none');
+            }
+        }
+        if (ledgerEndOfList) {
+            const showEnd = !listState.has_more && !listState.loading && (listState.total || 0) > 0 && listState.offset > 0;
+            ledgerEndOfList.classList.toggle('d-none', !showEnd);
+        }
+        updateClearAllFiltersBtn();
+        updateFilterHeaderIndicators();
+    }
+
+    function updateFilterHeaderIndicators() {
+        const f = getActiveFilters();
+        document.querySelectorAll('#ledgerTxTable thead th.ledger-th-filter').forEach(th => {
+            const col = th.dataset.col;
+            let active = false;
+            if (col === 'date') active = !!(f.date_from || f.date_to);
+            else if (col === 'reference') active = !!f.reference;
+            else if (col === 'pay_to') active = !!f.pay_to;
+            else if (col === 'description') active = !!f.description;
+            else if (col === 'account') active = parseInt(f.account_id || 0, 10) > 0;
+            else if (col === 'fund') active = parseInt(f.fund_id || 0, 10) > 0;
+            else if (col === 'amount') active = !!(f.amount || f.amount_min || f.amount_max);
+            else if (col === 'status') active = !!f.status;
+            th.classList.toggle('ledger-filter-active', active);
+            const btn = th.querySelector('.ledger-filter-toggle');
+            const icon = th.querySelector('.ledger-filter-toggle i');
+            if (btn) {
+                btn.classList.toggle('text-warning', active);
+                btn.classList.toggle('text-white-50', !active);
+            }
+            if (icon) {
+                icon.className = active ? 'bi bi-funnel-fill' : 'bi bi-funnel';
+            }
+        });
+        // Sort indicators
+        document.querySelectorAll('#ledgerTxTable .ledger-sort-btn').forEach(btn => {
+            const col = btn.dataset.sort;
+            const ind = btn.querySelector('.ledger-sort-indicator');
+            if (!ind) return;
+            let sorted = listState.sort === col;
+            if (col === 'amount' && ['amount', 'debit', 'credit'].includes(listState.sort)) sorted = true;
+            if (col === 'reference' && ['reference', 'ref'].includes(listState.sort)) sorted = true;
+            ind.textContent = sorted ? (listState.sort_dir === 'asc' ? ' ↑' : ' ↓') : '';
+        });
+    }
+
+    function fetchTransactionList({ reset = false } = {}) {
+        if (listState.loading) return Promise.resolve();
+        if (!reset && !listState.has_more) return Promise.resolve();
+        const offset = reset ? 0 : (listState.offset || 0);
+        const limit = listState.limit || 50;
+        const params = buildFilterParams(true, offset, limit);
+        params.set('list_transactions', '1');
+        setListLoading(true);
+        return fetch('pages/ledger.php?' + params.toString())
+            .then(r => r.json())
+            .then(data => {
+                if (!data || data.success === false) {
+                    showToast((data && data.error) || 'Failed to load transactions.', 'danger');
+                    return;
+                }
+                const rows = data.rows || [];
+                if (reset) {
+                    if (!txTableBody) return;
+                    if (rows.length === 0) {
+                        txTableBody.innerHTML = '<tr class="ledger-empty-row"><td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+                    } else {
+                        txTableBody.innerHTML = rows.map(renderTxRow).join('');
+                    }
+                    if (selectAll) selectAll.checked = false;
+                    lastAnchorRow = null;
+                    updateButtonStates();
+                } else if (rows.length && txTableBody) {
+                    // Remove empty placeholder if present
+                    const empty = txTableBody.querySelector('.ledger-empty-row');
+                    if (empty) empty.remove();
+                    txTableBody.insertAdjacentHTML('beforeend', rows.map(renderTxRow).join(''));
+                }
+                listState.total = data.total || 0;
+                listState.offset = (data.offset || 0) + rows.length;
+                listState.limit = data.limit || limit;
+                listState.has_more = !!data.has_more;
+                if (data.sort) listState.sort = data.sort;
+                if (data.sort_dir) listState.sort_dir = data.sort_dir;
+                if (data.filters) listState.filters = data.filters;
+                updateListFooter();
+            })
+            .catch(err => {
+                console.error(err);
+                showToast('Failed to load transactions.', 'danger');
+            })
+            .finally(() => {
+                setListLoading(false);
+                updateListFooter();
+            });
+    }
+
+    function reloadTransactionList() {
+        listState.offset = 0;
+        listState.has_more = true;
+        return fetchTransactionList({ reset: true });
+    }
+
+    function applyColumnFilterFromMenu(th) {
+        if (!th) return;
+        const col = th.dataset.col;
+        const f = Object.assign({}, listState.filters || {});
+        const type = th.dataset.filterType;
+        if (type === 'date') {
+            f.date_from = th.querySelector('.ledger-f-date-from')?.value || '';
+            f.date_to = th.querySelector('.ledger-f-date-to')?.value || '';
+        } else if (type === 'text') {
+            const val = (th.querySelector('.ledger-f-text')?.value || '').trim();
+            if (col === 'reference') f.reference = val;
+            else if (col === 'pay_to') f.pay_to = val;
+            else if (col === 'description') f.description = val;
+        } else if (type === 'account') {
+            f.account_id = parseInt(th.querySelector('.ledger-f-account')?.value || '0', 10) || 0;
+        } else if (type === 'fund') {
+            f.fund_id = parseInt(th.querySelector('.ledger-f-fund')?.value || '0', 10) || 0;
+        } else if (type === 'amount') {
+            f.amount = (th.querySelector('.ledger-f-amount')?.value || '').trim();
+            f.amount_min = (th.querySelector('.ledger-f-amount-min')?.value || '').trim();
+            f.amount_max = (th.querySelector('.ledger-f-amount-max')?.value || '').trim();
+        } else if (type === 'status') {
+            f.status = th.querySelector('.ledger-f-status')?.value || '';
+        }
+        listState.filters = f;
+        reloadTransactionList();
+        // Close dropdown
+        const toggle = th.querySelector('.ledger-filter-toggle');
+        if (toggle && typeof bootstrap !== 'undefined') {
+            const dd = bootstrap.Dropdown.getInstance(toggle);
+            if (dd) dd.hide();
+        }
+    }
+
+    function clearColumnFilterFromMenu(th) {
+        if (!th) return;
+        const col = th.dataset.col;
+        const f = Object.assign({}, listState.filters || {});
+        const type = th.dataset.filterType;
+        if (type === 'date') {
+            f.date_from = ''; f.date_to = '';
+            const a = th.querySelector('.ledger-f-date-from'); if (a) a.value = '';
+            const b = th.querySelector('.ledger-f-date-to'); if (b) b.value = '';
+        } else if (type === 'text') {
+            if (col === 'reference') f.reference = '';
+            else if (col === 'pay_to') f.pay_to = '';
+            else if (col === 'description') f.description = '';
+            const t = th.querySelector('.ledger-f-text'); if (t) t.value = '';
+        } else if (type === 'account') {
+            f.account_id = 0;
+            const s = th.querySelector('.ledger-f-account'); if (s) s.value = '0';
+        } else if (type === 'fund') {
+            f.fund_id = 0;
+            const s = th.querySelector('.ledger-f-fund'); if (s) s.value = '0';
+        } else if (type === 'amount') {
+            f.amount = ''; f.amount_min = ''; f.amount_max = '';
+            const a = th.querySelector('.ledger-f-amount'); if (a) a.value = '';
+            const b = th.querySelector('.ledger-f-amount-min'); if (b) b.value = '';
+            const c = th.querySelector('.ledger-f-amount-max'); if (c) c.value = '';
+        } else if (type === 'status') {
+            f.status = '';
+            const s = th.querySelector('.ledger-f-status'); if (s) s.value = '';
+        }
+        listState.filters = f;
+        reloadTransactionList();
+        const toggle = th.querySelector('.ledger-filter-toggle');
+        if (toggle && typeof bootstrap !== 'undefined') {
+            const dd = bootstrap.Dropdown.getInstance(toggle);
+            if (dd) dd.hide();
+        }
+    }
+
+    function clearAllFilters() {
+        listState.filters = {
+            date_from: '', date_to: '', reference: '', description: '', pay_to: '',
+            check_number: '', search: '', status: '', amount: '', amount_min: '', amount_max: '',
+            account_id: 0, fund_id: 0
+        };
+        document.querySelectorAll('#ledgerTxTable .ledger-f-date-from, #ledgerTxTable .ledger-f-date-to, #ledgerTxTable .ledger-f-text, #ledgerTxTable .ledger-f-amount, #ledgerTxTable .ledger-f-amount-min, #ledgerTxTable .ledger-f-amount-max').forEach(el => { el.value = ''; });
+        document.querySelectorAll('#ledgerTxTable .ledger-f-account, #ledgerTxTable .ledger-f-fund').forEach(el => { el.value = '0'; });
+        document.querySelectorAll('#ledgerTxTable .ledger-f-status').forEach(el => { el.value = ''; });
+        reloadTransactionList();
+    }
+
+    function wireLedgerFiltersAndSort() {
+        const table = document.getElementById('ledgerTxTable');
+        if (!table || table.dataset.filtersWired === '1') return;
+        table.dataset.filtersWired = '1';
+        table.addEventListener('click', function(e) {
+            const applyBtn = e.target.closest('.ledger-f-apply');
+            if (applyBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                applyColumnFilterFromMenu(applyBtn.closest('th'));
+                return;
+            }
+            const clearBtn = e.target.closest('.ledger-f-clear');
+            if (clearBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                clearColumnFilterFromMenu(clearBtn.closest('th'));
+                return;
+            }
+            const sortBtn = e.target.closest('.ledger-sort-btn');
+            if (sortBtn) {
+                e.preventDefault();
+                const col = sortBtn.dataset.sort;
+                if (!col) return;
+                if (listState.sort === col || (col === 'amount' && ['amount','debit','credit'].includes(listState.sort)) || (col === 'reference' && ['reference','ref'].includes(listState.sort))) {
+                    listState.sort_dir = listState.sort_dir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    listState.sort = col;
+                    // Default: date newest first; text cols asc first; amount desc
+                    listState.sort_dir = (col === 'date' || col === 'amount') ? 'desc' : 'asc';
+                }
+                reloadTransactionList();
+            }
+        });
+        // Enter in filter inputs applies
+        table.addEventListener('keydown', function(e) {
+            if (e.key !== 'Enter') return;
+            const th = e.target.closest('th.ledger-th-filter');
+            if (!th) return;
+            if (e.target.matches('input, select')) {
+                e.preventDefault();
+                applyColumnFilterFromMenu(th);
+            }
+        });
+        if (clearAllFiltersBtn) {
+            clearAllFiltersBtn.addEventListener('click', () => clearAllFilters());
+        }
+        // Infinite scroll
+        if (ledgerTableScroll) {
+            ledgerTableScroll.addEventListener('scroll', function() {
+                if (listState.loading || !listState.has_more) return;
+                const el = ledgerTableScroll;
+                if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
+                    fetchTransactionList({ reset: false });
+                }
+            });
+        }
+        updateListFooter();
     }
 
     function getLineAmountAndType(row) {
@@ -2416,18 +3161,18 @@ require_once __DIR__ . '/../includes/permissions.php';
         budgetOnlyEditMode = false;
         // Keep sessionStorage queue so a failed save can re-open the same tx and restore it
         clearPendingDocDeletes(false);
-        form.reset();
-        linesBody.innerHTML = '';
+        if (form) form.reset();
+        if (linesBody) linesBody.innerHTML = '';
         renderMetaSection(null);
         setDocUploadVisible(false);
         setMainFieldsReadOnly(true);
         setBudgetStatusWarning(false);
-        formTitle.textContent = 'Transaction Details';
+        if (formTitle) formTitle.textContent = 'Transaction Details';
         updateModeBadge('blank');
         if (addLineBtn) addLineBtn.style.display = 'none';
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
         if (saveBtn) saveBtn.style.display = 'none';
-        if (cancelBtn2) cancelBtn2.style.display = 'none';
+        if (cancelBtn2) cancelBtn2.style.display = '';
         markTxFormClean();
     }
 
@@ -2479,6 +3224,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         // Re-render docs without delete buttons in view mode
         renderDocumentsList((data && data.documents) || [], false);
         markTxFormClean();
+        openTxFormModal();
     }
 
     function populateEditable(data) {
@@ -2510,6 +3256,8 @@ require_once __DIR__ . '/../includes/permissions.php';
             renderMetaSection(data);
             applyBudgetOnlyEditMode(data);
             recalcTotals();
+            markTxFormClean();
+            openTxFormModal();
             return;
         }
 
@@ -2538,6 +3286,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         setDocUploadVisible(!!data.is_editable);
         renderDocumentsList(data.documents || [], !!data.is_editable);
         recalcTotals();
+        markTxFormClean();
+        openTxFormModal();
     }
 
     function enableEditFromView() {
@@ -2548,6 +3298,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         // Cleared/reconciled: unlock budget only
         if (isTxClearedOrReconciled(currentViewData)) {
             applyBudgetOnlyEditMode(currentViewData || { id: id });
+            markTxFormClean();
+            openTxFormModal();
             return;
         }
 
@@ -2574,6 +3326,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         renderDocumentsList((currentViewData && currentViewData.documents) || [], canEdit);
         recalcTotals();
         markTxFormClean();
+        openTxFormModal();
     }
 
     function showFormForAdd() {
@@ -2604,18 +3357,21 @@ require_once __DIR__ . '/../includes/permissions.php';
         refreshReferenceSuggestion().then(updateReferenceHintVisibility);
         updateReferenceHintVisibility();
         markTxFormClean();
+        openTxFormModal();
     }
 
     function updateButtonStates() {
+        if (!txTableBody) return;
         const checked = txTableBody.querySelectorAll('.tx-cb:checked');
         const count = checked.length;
         const multi = count > 1;
 
-        addTxBtn.disabled = multi;
+        if (addTxBtn) addTxBtn.disabled = multi;
+        if (viewTxBtn) viewTxBtn.disabled = (count !== 1);
         // Edit allowed for single selection including cleared/reconciled (budget-only there)
-        editTxBtn.disabled = (count !== 1);
-        clearTxBtn.disabled = (count === 0);
-        reconcileTxBtn.disabled = (count === 0);
+        if (editTxBtn) editTxBtn.disabled = (count !== 1);
+        if (clearTxBtn) clearTxBtn.disabled = (count === 0);
+        if (reconcileTxBtn) reconcileTxBtn.disabled = (count === 0);
     }
 
     function getSelectedIds() {
@@ -2675,98 +3431,59 @@ require_once __DIR__ . '/../includes/permissions.php';
         return true;
     }
 
-    // Basic client-side sorting for specified columns
-    let currentSortCol = -1;
-    let currentSortDir = 1;
     let lastAnchorRow = null;
     let currentViewData = null;
 
-    function sortTable(colIdx) {
-        const tbody = txTableBody;
-        let rows = Array.from(tbody.querySelectorAll('tr'));
-        if (rows.length < 2) return;
-
-        const dir = (currentSortCol === colIdx) ? -currentSortDir : 1;
-        currentSortCol = colIdx;
-        currentSortDir = dir;
-
-        rows.sort((ra, rb) => {
-            const ta = ra.children[colIdx] ? ra.children[colIdx].textContent.trim() : '';
-            const tb = rb.children[colIdx] ? rb.children[colIdx].textContent.trim() : '';
-
-            if (colIdx === 1) { // Date
-                const da = ta ? Date.parse(ta) : 0;
-                const db = tb ? Date.parse(tb) : 0;
-                return (da - db) * dir;
-            } else if (colIdx === 2 || colIdx === 4 || colIdx === 6 || colIdx === 7) {
-                // Ref #, Check #, Debit, Credit — numeric
-                const na = parseFloat(ta.replace(/[^0-9.-]/g, '')) || 0;
-                const nb = parseFloat(tb.replace(/[^0-9.-]/g, '')) || 0;
-                return (na - nb) * dir;
-            } else {
-                // string compare (case-insensitive)
-                const sa = ta.toLowerCase();
-                const sb = tb.toLowerCase();
-                if (sa < sb) return -dir;
-                if (sa > sb) return dir;
-                return 0;
-            }
-        });
-
-        rows.forEach(r => tbody.appendChild(r));
-
-        // update header indicators (basic)
-        const table = tbody.closest('table');
-        const ths = table.querySelectorAll('thead th');
-        ths.forEach((th, i) => {
-            let txt = th.textContent.replace(/\s*[↑↓]$/, '');
-            if (i === colIdx) {
-                txt += (dir > 0 ? ' ↑' : ' ↓');
-            }
-            th.textContent = txt;
-        });
-    }
-
-    function initSorting() {
-        const table = txTableBody.closest('table');
-        if (!table) return;
-        const ths = table.querySelectorAll('thead th');
-        // 1=Date, 2=Pay To, 3=Ref #, 4=Check #, 6=Debit, 7=Credit, 8=Status
-        const sortable = [1, 2, 3, 4, 6, 7, 8];
-        ths.forEach((th, idx) => {
-            if (sortable.includes(idx)) {
-                th.style.cursor = 'pointer';
-                th.addEventListener('click', () => sortTable(idx));
-            }
-        });
-    }
-
     // Wire action buttons
-    addTxBtn.addEventListener('click', () => {
+    if (addTxBtn) addTxBtn.addEventListener('click', () => {
         // Prompt only when the user has edited the form since it was loaded
         if ((isTxEditMode() || budgetOnlyEditMode) && isLedgerFormDirty()) {
             if (!confirmDiscardTx()) return;
         }
         // clear the current selection when starting add
-        txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
+        if (txTableBody) txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
         if (selectAll) selectAll.checked = false;
         updateButtonStates();
         showFormForAdd();
         markTxFormClean();
     });
 
-    editTxBtn.addEventListener('click', () => {
-        const ids = getSelectedIds();
-        if (ids.length !== 1) return;
+    function openViewForId(id) {
+        if (!id) return;
+        // If already showing this tx in view mode in an open modal, no-op
+        if (isTxFormModalOpen() && String(txIdField.value) === String(id)
+            && document.getElementById('transaction_date')?.readOnly && !budgetOnlyEditMode
+            && saveBtn && saveBtn.style.display === 'none') {
+            return;
+        }
+        if (isLedgerFormDirty() && !confirmDiscardTx()) return;
+        fetch('pages/ledger.php?get_transaction=' + id)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showToast(data.error, 'danger');
+                    return;
+                }
+                populateView(data);
+            })
+            .catch(err => {
+                console.error(err);
+                showToast('Failed to load transaction.', 'danger');
+            });
+    }
+
+    function openEditForId(id) {
+        if (!id) return;
         const curId = txIdField.value;
-        const alreadyFullEdit = curId == ids[0] && !document.getElementById('transaction_date').readOnly;
-        const alreadyBudgetOnly = curId == ids[0] && budgetOnlyEditMode;
-        if (alreadyFullEdit || alreadyBudgetOnly) return; // already editing
-        if (curId == ids[0] && currentViewData) {
+        const alreadyFullEdit = isTxFormModalOpen() && curId == id && !document.getElementById('transaction_date').readOnly;
+        const alreadyBudgetOnly = isTxFormModalOpen() && curId == id && budgetOnlyEditMode;
+        if (alreadyFullEdit || alreadyBudgetOnly) return;
+        if (isLedgerFormDirty() && String(curId) !== String(id) && !confirmDiscardTx()) return;
+        if (curId == id && currentViewData && isTxFormModalOpen()) {
             enableEditFromView();
             return;
         }
-        fetch('pages/ledger.php?get_transaction=' + ids[0])
+        fetch('pages/ledger.php?get_transaction=' + id)
             .then(r => r.json())
             .then(data => {
                 if (data.error) {
@@ -2779,9 +3496,21 @@ require_once __DIR__ . '/../includes/permissions.php';
                 console.error(err);
                 showToast('Failed to load transaction for edit.', 'danger');
             });
+    }
+
+    if (viewTxBtn) viewTxBtn.addEventListener('click', () => {
+        const ids = getSelectedIds();
+        if (ids.length !== 1) return;
+        openViewForId(ids[0]);
     });
 
-    clearTxBtn.addEventListener('click', () => {
+    if (editTxBtn) editTxBtn.addEventListener('click', () => {
+        const ids = getSelectedIds();
+        if (ids.length !== 1) return;
+        openEditForId(ids[0]);
+    });
+
+    if (clearTxBtn) clearTxBtn.addEventListener('click', () => {
         const ids = getSelectedIds();
         if (ids.length === 0) return;
         if (anySelectedNonPending()) {
@@ -2804,7 +3533,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             });
     });
 
-    reconcileTxBtn.addEventListener('click', () => {
+    if (reconcileTxBtn) reconcileTxBtn.addEventListener('click', () => {
         const ids = getSelectedIds();
         if (ids.length === 0) return;
         if (anySelectedNonPending()) {
@@ -2827,23 +3556,22 @@ require_once __DIR__ . '/../includes/permissions.php';
             });
     });
 
-    // Cancel form (revert edit->view or deselect+blank) — discard queued deletions
-    function cancelFormAction() {
-        if (!confirmDiscardTx()) return;
+    // Cancel / close: data-bs-dismiss on Cancel; dirty protection via hide.bs.modal.
+    // On successful dismiss, clear pending doc queue and reset form state.
+    function onTxFormModalHidden() {
         clearPendingDocDeletes(true);
-        const curId = txIdField.value;
-        if (curId && currentViewData && String(currentViewData.id) === String(curId)) {
-            populateView(currentViewData);
-        } else {
-            txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
-            if (selectAll) selectAll.checked = false;
-            updateButtonStates();
-            showBlankForm();
-        }
+        showBlankForm();
         markTxFormClean();
     }
-    if (cancelBtn) cancelBtn.addEventListener('click', cancelFormAction);
-    if (cancelBtn2) cancelBtn2.addEventListener('click', cancelFormAction);
+    if (txFormModalEl) {
+        txFormModalEl.addEventListener('hidden.bs.modal', onTxFormModalHidden);
+    }
+    // Programmatic cancel still available if needed
+    function cancelFormAction() {
+        if (!confirmDiscardTx()) return;
+        markTxFormClean();
+        closeTxFormModal();
+    }
 
     // Reset lines to exactly 2
     if (resetLinesBtn) {
@@ -3257,31 +3985,12 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
 
     function afterSelectionChanged() {
-        const checkedCbs = txTableBody.querySelectorAll('.tx-cb:checked');
-        const count = checkedCbs.length;
         updateButtonStates();
-        if (count === 1) {
-            const id = parseInt(checkedCbs[0].value, 10);
-            if (String(txIdField.value) !== String(id)) {
-                loadView(id);
-            }
-            // same id: leave current mode (view or edit) as-is
-        } else {
-            showBlankForm();
-        }
+        // Selection alone does not open the form; use View / Edit / double-click.
     }
 
     function loadView(id) {
-        fetch('pages/ledger.php?get_transaction=' + id)
-            .then(r => r.json())
-            .then(data => {
-                if (data && data.error) {
-                    showBlankForm();
-                    return;
-                }
-                populateView(data);
-            })
-            .catch(() => showBlankForm());
+        openViewForId(id);
     }
 
     if (selectAll) {
@@ -3334,6 +4043,23 @@ require_once __DIR__ . '/../includes/permissions.php';
             }
             syncSelectAllState();
             afterSelectionChanged();
+        });
+
+        // Double-click row → read-only View modal (not Edit)
+        txTableBody.addEventListener('dblclick', function(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+            const row = e.target.closest('tr[data-id]');
+            if (!row) return;
+            const id = parseInt(row.dataset.id, 10);
+            if (!id) return;
+            // Select this row only
+            txTableBody.querySelectorAll('.tx-cb').forEach(cb => {
+                cb.checked = (parseInt(cb.value, 10) === id);
+            });
+            lastAnchorRow = row;
+            syncSelectAllState();
+            afterSelectionChanged();
+            openViewForId(id);
         });
     }
 
@@ -3991,87 +4717,8 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     // Initial state
     updateButtonStates();
-    initSorting();
-
-    // Always start with blank read-only form
     showBlankForm();
-
-    // Wire filter apply/clear + search enter + pagination
-    const applyFilterBtn = document.getElementById('applyFilterBtn');
-    const clearFilterBtn = document.getElementById('clearFilterBtn');
-    const filterSearchEl = document.getElementById('filterSearch');
-
-    function fetchAndReplaceLedger(url) {
-        if (!confirmDiscardTx()) return;
-        fetch(url)
-            .then(r => r.text())
-            .then(html => { applyMainContent(html); });
-    }
-
-    if (applyFilterBtn) {
-        applyFilterBtn.addEventListener('click', () => {
-            fetchAndReplaceLedger('pages/ledger.php' + buildQueryString(false));
-        });
-    }
-    if (clearFilterBtn) {
-        clearFilterBtn.addEventListener('click', () => {
-            if (!confirmDiscardTx()) return;
-            const df = document.getElementById('filterDateFrom');
-            const dt = document.getElementById('filterDateTo');
-            const sr = document.getElementById('filterSearch');
-            const accf = document.getElementById('filterAccount');
-            if (df) df.value = '';
-            if (dt) dt.value = '';
-            if (sr) sr.value = '';
-            if (accf) accf.value = '0';
-            fetch('pages/ledger.php' + buildQueryString(false))
-                .then(r => r.text())
-                .then(html => { applyMainContent(html); });
-        });
-    }
-    if (filterSearchEl) {
-        filterSearchEl.addEventListener('keydown', function(ev) {
-            if (ev.key === 'Enter') {
-                fetchAndReplaceLedger('pages/ledger.php' + buildQueryString(false));
-            }
-        });
-    }
-
-    function loadWithPage(pageNum) {
-        if (!confirmDiscardTx()) return;
-        const params = new URLSearchParams();
-        const dfEl = document.getElementById('filterDateFrom');
-        const dtEl = document.getElementById('filterDateTo');
-        const srEl = document.getElementById('filterSearch');
-        const accEl = document.getElementById('filterAccount');
-        if (dfEl && dfEl.value) params.set('date_from', dfEl.value);
-        if (dtEl && dtEl.value) params.set('date_to', dtEl.value);
-        if (srEl && srEl.value.trim()) params.set('search', srEl.value.trim());
-        if (accEl) params.set('account_id', accEl.value);
-        if (pageNum > 1) params.set('page', pageNum);
-        const qstr = params.toString() ? ('?' + params.toString()) : '';
-        fetch('pages/ledger.php' + qstr)
-            .then(r => r.text())
-            .then(html => { applyMainContent(html); });
-    }
-
-    const prevPageBtn = document.getElementById('prevPageBtn');
-    const nextPageBtn = document.getElementById('nextPageBtn');
-    if (prevPageBtn) {
-        prevPageBtn.addEventListener('click', () => {
-            const bar = document.getElementById('paginationBar');
-            const cur = bar ? parseInt(bar.dataset.currentPage || '1', 10) : 1;
-            loadWithPage(Math.max(1, cur - 1));
-        });
-    }
-    if (nextPageBtn) {
-        nextPageBtn.addEventListener('click', () => {
-            const bar = document.getElementById('paginationBar');
-            const cur = bar ? parseInt(bar.dataset.currentPage || '1', 10) : 1;
-            const tot = bar ? parseInt(bar.dataset.totalPages || '1', 10) : 1;
-            loadWithPage(Math.min(tot, cur + 1));
-        });
-    }
+    wireLedgerFiltersAndSort();
 
 })();
 </script>
