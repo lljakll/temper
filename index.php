@@ -7,7 +7,12 @@ require_once 'includes/nav.php';
     <!-- Content will be loaded here via AJAX -->
 </div>
 
-<div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" id="appToastContainer" style="z-index: 10050;"></div>
+<!--
+  Toast host: kept in markup for first paint; footer ensureAppToastContainer()
+  reparents it to document.body so it stacks above open modals (not under
+  #main-content-col z-index:1). CSS z-index is set in header.php.
+-->
+<div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" id="appToastContainer" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Idle login-timeout warning (shown 60s before session ends; always above other modals) -->
 <div class="modal fade session-timeout-modal" id="sessionTimeoutModal" tabindex="-1"

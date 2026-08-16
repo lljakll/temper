@@ -70,6 +70,35 @@ require_once __DIR__ . '/../includes/permissions.php';
         exit;
     }
 
+    // Lightweight attachment list for the ledger portfolio viewer
+    if (isset($_GET['transaction_documents'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        $txId = (int)$_GET['transaction_documents'];
+        if ($txId <= 0) {
+            echo json_encode(['success' => false, 'error' => 'Invalid transaction.']);
+            exit;
+        }
+        $tx = ledgerFetchTransaction($db, $txId);
+        if (!$tx) {
+            echo json_encode(['success' => false, 'error' => 'Transaction not found.']);
+            exit;
+        }
+        $docs = [];
+        foreach (($tx['documents'] ?? []) as $doc) {
+            $docs[] = ledgerDocumentClientPayload($doc);
+        }
+        echo json_encode([
+            'success' => true,
+            'transaction_id' => $txId,
+            'reference_number' => $tx['reference_number'] ?? '',
+            'pay_to' => $tx['pay_to'] ?? '',
+            'transaction_date' => $tx['transaction_date'] ?? '',
+            'description' => $tx['description'] ?? '',
+            'documents' => $docs,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     // Reference # (YY####) helpers: shadow default, reuse check, used-list modal
     // Accept reference_api (preferred) or sequence_api (legacy alias)
     if (isset($_GET['reference_api']) || isset($_GET['sequence_api'])) {
@@ -588,6 +617,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                    COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
                    COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
                    COALESCE((SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS num_lines,
+                   COALESCE((SELECT COUNT(*) FROM transaction_documents WHERE transaction_detail_id=td.id), 0) AS doc_count,
                    (SELECT GROUP_CONCAT(DISTINCT a.name ORDER BY a.name SEPARATOR ', ')
                       FROM transaction_lines tl2
                       INNER JOIN accounts a ON a.id = tl2.account_id
@@ -670,6 +700,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 'total_credits' => (float)($r['total_credits'] ?? 0),
                 'total_amount' => (float)($r['total_amount'] ?? 0),
                 'num_lines' => (int)($r['num_lines'] ?? 0),
+                'doc_count' => (int)($r['doc_count'] ?? 0),
                 'account_names' => $r['account_names'] ?? '',
                 'fund_names' => $r['fund_names'] ?? '',
                 'debits' => $debAmt,
@@ -800,10 +831,10 @@ require_once __DIR__ . '/../includes/permissions.php';
             $stmt->execute();
             $res = $stmt->get_result();
             while ($row = $res->fetch_assoc()) {
-                $label = (string)$row['label'];
-                $coa = trim((string)($row['coa_number'] ?? ''));
-                if ($coa !== '') {
-                    $label = $coa . ' — ' . $label;
+                // Display account name only (no CoA number) in the filter list.
+                $label = trim((string)$row['label']);
+                if ($label === '') {
+                    $label = '(Unnamed)';
                 }
                 $values[] = [
                     'value' => (string)(int)$row['value'],
@@ -813,12 +844,13 @@ require_once __DIR__ . '/../includes/permissions.php';
             }
             $stmt->close();
         } elseif ($column === 'fund') {
-            $sql = "SELECT f.id AS value, f.name AS label, f.code, COUNT(DISTINCT td.id) AS cnt
+            // Display fund name only (no fund code) in the filter list.
+            $sql = "SELECT f.id AS value, f.name AS label, COUNT(DISTINCT td.id) AS cnt
                     FROM transaction_details td
                     INNER JOIN transaction_lines tl ON tl.transaction_detail_id = td.id
                     INNER JOIN funds f ON f.id = tl.fund_id
                     $where_clause
-                    GROUP BY f.id, f.name, f.code
+                    GROUP BY f.id, f.name
                     ORDER BY f.name ASC
                     LIMIT 2000";
             $stmt = $db->prepare($sql);
@@ -828,10 +860,9 @@ require_once __DIR__ . '/../includes/permissions.php';
             $stmt->execute();
             $res = $stmt->get_result();
             while ($row = $res->fetch_assoc()) {
-                $label = (string)$row['label'];
-                $code = trim((string)($row['code'] ?? ''));
-                if ($code !== '') {
-                    $label .= ' (' . $code . ')';
+                $label = trim((string)$row['label']);
+                if ($label === '') {
+                    $label = '(Unnamed)';
                 }
                 $values[] = [
                     'value' => (string)(int)$row['value'],
@@ -946,7 +977,25 @@ require_once __DIR__ . '/../includes/permissions.php';
                 echo json_encode(['success' => false, 'error' => 'Transaction ID is required.']);
                 exit;
             }
-            if (empty($_FILES['document']) || (int)($_FILES['document']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            // Prefer tx_document (current field name); accept legacy "document" for older clients.
+            $uploadFile = null;
+            foreach (['tx_document', 'document'] as $fileKey) {
+                if (!isset($_FILES[$fileKey]) || !is_array($_FILES[$fileKey])) {
+                    continue;
+                }
+                $candidate = $_FILES[$fileKey];
+                // Multi-file shape is not used; skip if nested arrays.
+                if (is_array($candidate['error'] ?? null)) {
+                    continue;
+                }
+                $err = (int)($candidate['error'] ?? UPLOAD_ERR_NO_FILE);
+                if ($err === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+                $uploadFile = $candidate;
+                break;
+            }
+            if ($uploadFile === null) {
                 echo json_encode(['success' => false, 'error' => 'Please select a file to upload.']);
                 exit;
             }
@@ -968,10 +1017,10 @@ require_once __DIR__ . '/../includes/permissions.php';
                 $db,
                 $txId,
                 $userId,
-                $_FILES['document']
+                $uploadFile
             );
             if (!empty($result['success'])) {
-                $origName = basename((string)($_FILES['document']['name'] ?? 'file'));
+                $origName = basename((string)($uploadFile['name'] ?? 'file'));
                 try {
                     ledgerLogEvent(
                         $db,
@@ -1599,6 +1648,23 @@ require_once __DIR__ . '/../includes/permissions.php';
         }
         return '$' . number_format(abs($a), 2);
     };
+    $fmtAttachCell = static function (int $txId, int $docCount): string {
+        if ($docCount < 1) {
+            return '<td class="text-center ledger-attach-cell"></td>';
+        }
+        $label = $docCount === 1 ? 'View 1 attachment' : ('View ' . $docCount . ' attachments');
+        $badge = $docCount > 1
+            ? '<span class="badge rounded-pill text-bg-secondary ledger-attach-count">' . $docCount . '</span>'
+            : '';
+        return '<td class="text-center ledger-attach-cell">'
+            . '<button type="button" class="btn btn-link btn-sm p-0 ledger-attach-btn"'
+            . ' data-tx-id="' . $txId . '"'
+            . ' title="' . htmlspecialchars($label) . '"'
+            . ' aria-label="' . htmlspecialchars($label) . '">'
+            . '<i class="bi bi-paperclip" aria-hidden="true"></i>'
+            . $badge
+            . '</button></td>';
+    };
 
     $hasActiveFilters = false;
     foreach ($active_filters as $fk => $fv) {
@@ -1672,7 +1738,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             </div>
             <div class="card-body p-0 d-flex flex-column" style="flex:1 1 auto; min-height:0;">
                 <div class="table-responsive ledger-table-scroll" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
-                    <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 980px;">
+                    <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 1020px;">
                         <thead class="table-dark ledger-sticky-head">
                             <tr class="ledger-col-titles">
                                 <th style="width:28px" class="ledger-th-check">
@@ -1733,17 +1799,17 @@ foreach ($colDefs as $col):
                                                     aria-expanded="false" title="Filter <?= htmlspecialchars($col['label']) ?>">
                                                 <i class="bi <?= $filterActive ? 'bi-funnel-fill' : 'bi-funnel' ?>"></i>
                                             </button>
-                                            <div class="dropdown-menu dropdown-menu-end p-2 shadow ledger-filter-menu" style="min-width:16rem; max-width:22rem;">
-                                                <div class="small text-muted mb-1 fw-semibold"><?= htmlspecialchars($col['label']) ?> filter</div>
-                                                <input type="search" class="form-control form-control-sm mb-2 ledger-f-search" placeholder="Search…" data-dirty-ignore autocomplete="off">
-                                                <div class="form-check mb-1 ledger-f-select-all-wrap">
+                                            <div class="dropdown-menu dropdown-menu-end p-2 shadow ledger-filter-menu">
+                                                <div class="small text-muted mb-1 fw-semibold flex-shrink-0"><?= htmlspecialchars($col['label']) ?> filter</div>
+                                                <input type="search" class="form-control form-control-sm mb-2 ledger-f-search flex-shrink-0" placeholder="Search…" data-dirty-ignore autocomplete="off">
+                                                <div class="ledger-f-select-all-wrap flex-shrink-0">
                                                     <input class="form-check-input ledger-f-select-all" type="checkbox" id="ledgerFAll_<?= htmlspecialchars($ck) ?>" data-dirty-ignore checked>
                                                     <label class="form-check-label small" for="ledgerFAll_<?= htmlspecialchars($ck) ?>">(Select All)</label>
                                                 </div>
-                                                <div class="ledger-f-values border rounded px-1 mb-2 bg-body" data-loaded="0">
+                                                <div class="ledger-f-values border rounded mb-2 bg-body" data-loaded="0">
                                                     <div class="text-muted small p-2 ledger-f-placeholder">Open to load values…</div>
                                                 </div>
-                                                <div class="d-flex gap-1">
+                                                <div class="d-flex gap-1 flex-shrink-0">
                                                     <button type="button" class="btn btn-sm btn-primary flex-grow-1 ledger-f-apply">Apply</button>
                                                     <button type="button" class="btn btn-sm btn-outline-secondary ledger-f-clear">Clear</button>
                                                 </div>
@@ -1753,6 +1819,10 @@ foreach ($colDefs as $col):
                                 </th>
 <?php endforeach; ?>
                                 <th class="text-center" style="width:3rem" title="Line count">#</th>
+                                <th class="text-center ledger-th-attach" style="width:2.6rem" title="Attachments">
+                                    <i class="bi bi-paperclip" aria-hidden="true"></i>
+                                    <span class="visually-hidden">Attachments</span>
+                                </th>
                             </tr>
                         </thead>
                         <tbody id="txTableBody">
@@ -1773,7 +1843,7 @@ foreach ($colDefs as $col):
                                         $fundNames = (string)($r['fund_names'] ?? '');
                                         $descFull = (string)($r['description'] ?? '');
                                     ?>
-                                    <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>">
+                                    <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>" data-doc-count="<?= (int)($r['doc_count'] ?? 0) ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= $tid ?>"></td>
                                         <td class="text-nowrap"><?= htmlspecialchars($r['transaction_date']) ?></td>
                                         <td class="font-monospace"><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
@@ -1788,11 +1858,12 @@ foreach ($colDefs as $col):
                                         </td>
                                         <td><span class="badge <?= $statusBadge ?>"><?= $statusText ?></span></td>
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
+                                        <?= $fmtAttachCell($tid, (int)($r['doc_count'] ?? 0)) ?>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr class="ledger-empty-row">
-                                    <td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.<?= $canWriteLedger ? ' Use “Add Transaction” to create one.' : '' ?></td>
+                                    <td colspan="11" class="text-center text-muted py-4">No transactions match the current filters.<?= $canWriteLedger ? ' Use “Add Transaction” to create one.' : '' ?></td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -1927,10 +1998,16 @@ foreach ($colDefs as $col):
                         <div id="txContributionData" class="d-none mb-2"></div>
                         <h6 class="small mb-1">Documents</h6>
                         <ul id="txDocumentsList" class="list-unstyled small mb-2"></ul>
-                        <!-- Not a nested <form> (invalid inside #txForm); button-driven upload -->
+                        <!--
+                          Not a nested <form> (invalid inside #txForm); button-driven upload via fetch.
+                          name=tx_document avoids clashing with form.property "document".
+                          data-dirty-ignore: selecting a file is not a transaction field edit.
+                        -->
                         <div id="txDocUploadForm" class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-center mb-3 d-none">
-                            <input type="file" id="txDocFile" class="form-control form-control-sm" name="document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
-                            <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm text-nowrap" disabled>Upload</button>
+                            <input type="file" id="txDocFile" class="form-control form-control-sm"
+                                   name="tx_document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                   data-dirty-ignore>
+                            <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm text-nowrap" disabled data-dirty-ignore>Upload</button>
                         </div>
                         <div class="accordion accordion-flush border rounded" id="txAuditAccordion">
                             <div class="accordion-item">
@@ -1975,6 +2052,63 @@ foreach ($colDefs as $col):
             <div class="modal-footer py-2">
                 <a href="#" id="txDocPreviewDownload" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener">Download</a>
                 <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ledger list attachment portfolio viewer -->
+<div class="modal fade" id="txAttachPortfolioModal" tabindex="-1" aria-labelledby="txAttachPortfolioTitle" aria-hidden="true" data-no-autofocus>
+    <div class="modal-dialog ledger-portfolio-dialog">
+        <div class="modal-content ledger-portfolio-modal">
+            <div class="modal-header py-2">
+                <h5 class="modal-title text-truncate" id="txAttachPortfolioTitle">Attachments</h5>
+                <div class="d-flex align-items-center gap-2 ms-auto">
+                    <a href="#" id="txAttachDownload" class="btn btn-sm btn-outline-primary d-none" target="_blank" rel="noopener">
+                        <i class="bi bi-download" aria-hidden="true"></i> Download
+                    </a>
+                    <button type="button" class="btn btn-outline-secondary ledger-portfolio-close" data-bs-dismiss="modal" aria-label="Close" title="Close">
+                        <i class="bi bi-x-lg" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body p-0">
+                <div class="ledger-portfolio">
+                    <aside class="ledger-portfolio-sidebar" aria-label="Attached documents">
+                        <div class="ledger-portfolio-sidebar-head">Documents</div>
+                        <ul id="txAttachPortfolioList" class="list-unstyled mb-0"></ul>
+                    </aside>
+                    <aside class="ledger-portfolio-pages d-none" id="txAttachPagePanel" aria-label="PDF pages">
+                        <div class="ledger-portfolio-sidebar-head">Pages</div>
+                        <div class="ledger-portfolio-page-nav" id="txAttachPdfNav">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="txAttachPdfPrev" title="Previous page" aria-label="Previous page">
+                                <i class="bi bi-chevron-left" aria-hidden="true"></i>
+                            </button>
+                            <span id="txAttachPdfPageLabel" class="ledger-portfolio-page-label">1 / 1</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="txAttachPdfNext" title="Next page" aria-label="Next page">
+                                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                        <ul id="txAttachPageList" class="list-unstyled mb-0"></ul>
+                    </aside>
+                    <div class="ledger-portfolio-main">
+                        <div class="ledger-portfolio-toolbar">
+                            <div id="txAttachZoomBar" class="ledger-portfolio-zoom d-none" aria-label="Zoom">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="txAttachZoomOut" title="Zoom out">
+                                    <i class="bi bi-zoom-out" aria-hidden="true"></i>
+                                </button>
+                                <span id="txAttachZoomLabel" class="ledger-portfolio-zoom-label">Fit</span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="txAttachZoomIn" title="Zoom in">
+                                    <i class="bi bi-zoom-in" aria-hidden="true"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="txAttachZoomFit" title="Fit page height">Fit</button>
+                            </div>
+                        </div>
+                        <div id="txAttachPortfolioPane" class="ledger-portfolio-pane">
+                            <div class="text-center text-muted py-5">Select a document</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2029,7 +2163,7 @@ foreach ($colDefs as $col):
   Accounts Payable        87.43</pre>
                 <p class="small text-muted mb-2">
                     Header: first quoted string = <strong>Pay To</strong>, second = <strong>Description</strong>.
-                    Metadata lines recognized: <code>reference:</code> and <code>check:</code> only (others ignored).
+                    Metadata lines recognized: <code>reference:</code>, <code>ref:</code>, <code>sequence:</code>, and <code>check:</code> (others ignored).
                     <code>;</code> comments (full-line or trailing) are appended to Description when present.
                     Per-line fund: <code>; fund: GOF</code> or fund name. Account names must match the chart (case-insensitive).
                 </p>
@@ -2523,39 +2657,40 @@ foreach ($colDefs as $col):
         if (isDateTree && tree && tree.length) {
             let html = '<div class="ledger-date-tree">';
             tree.forEach((yNode, yi) => {
-                const yearId = 'ldy_' + yNode.year + '_' + yi;
                 const yearDays = [];
                 (yNode.months || []).forEach(m => (m.days || []).forEach(d => yearDays.push(String(d.value))));
                 const yearAll = yearDays.every(d => allChecked || selectedSet.has(d));
                 const yearSome = yearDays.some(d => allChecked || selectedSet.has(d));
                 html += '<details class="mb-1" open>'
-                    + '<summary class="ledger-date-year ledger-f-item d-flex align-items-center gap-1">'
-                    + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-year-cb m-0" data-year="' + escAttr(yNode.year) + '"'
+                    + '<summary class="ledger-date-year ledger-f-item">'
+                    + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-year-cb" data-year="' + escAttr(yNode.year) + '"'
                     + (yearAll ? ' checked' : '') + (yearSome && !yearAll ? ' data-indeterminate="1"' : '')
                     + ' data-dirty-ignore>'
-                    + '<span class="small">' + escHtml(yNode.year) + '</span>'
-                    + '<span class="ledger-f-count ms-auto">(' + (yNode.count || 0) + ')</span>'
+                    + '<span class="small ledger-f-label">' + escHtml(yNode.year) + '</span>'
+                    + '<span class="ledger-f-count">(' + (yNode.count || 0) + ')</span>'
                     + '</summary><div class="ledger-date-month-wrap">';
-                (yNode.months || []).forEach((mNode, mi) => {
+                (yNode.months || []).forEach((mNode) => {
                     const monthDays = (mNode.days || []).map(d => String(d.value));
                     const mAll = monthDays.every(d => allChecked || selectedSet.has(d));
                     const mSome = monthDays.some(d => allChecked || selectedSet.has(d));
                     html += '<details class="mb-1" open>'
-                        + '<summary class="ledger-date-month ledger-f-item d-flex align-items-center gap-1">'
-                        + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-month-cb m-0" data-year="' + escAttr(yNode.year) + '" data-month="' + escAttr(mNode.month) + '"'
+                        + '<summary class="ledger-date-month ledger-f-item">'
+                        + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-month-cb" data-year="' + escAttr(yNode.year) + '" data-month="' + escAttr(mNode.month) + '"'
                         + (mAll ? ' checked' : '') + (mSome && !mAll ? ' data-indeterminate="1"' : '')
                         + ' data-dirty-ignore>'
-                        + '<span class="small">' + escHtml(mNode.label || mNode.month) + '</span>'
-                        + '<span class="ledger-f-count ms-auto">(' + (mNode.count || 0) + ')</span>'
+                        + '<span class="small ledger-f-label">' + escHtml(mNode.label || mNode.month) + '</span>'
+                        + '<span class="ledger-f-count">(' + (mNode.count || 0) + ')</span>'
                         + '</summary><div class="ledger-date-day-wrap">';
                     (mNode.days || []).forEach(d => {
                         const val = String(d.value);
                         const checked = allChecked || selectedSet.has(val);
-                        html += '<div class="form-check ledger-f-item ledger-date-day">'
+                        // Day label is day-of-month only (meaningful display); full ISO stays in value/data-label for search/filter.
+                        const dayLabel = String(d.label || val);
+                        html += '<div class="ledger-f-item ledger-date-day" data-search="' + escAttr((val + ' ' + dayLabel).toLowerCase()) + '">'
                             + '<input class="form-check-input ledger-f-cb ledger-f-day-cb" type="checkbox" value="' + escAttr(val) + '"'
                             + ' data-label="' + escAttr(val) + '"'
                             + (checked ? ' checked' : '') + ' data-dirty-ignore>'
-                            + '<label class="form-check-label small">' + escHtml(d.label || val)
+                            + '<label class="ledger-f-label small">' + escHtml(dayLabel)
                             + ' <span class="ledger-f-count">(' + (d.count || 0) + ')</span></label>'
                             + '</div>';
                     });
@@ -2581,11 +2716,13 @@ foreach ($colDefs as $col):
             const label = item.label != null ? String(item.label) : val;
             const checked = allChecked || selectedSet.has(val);
             const id = 'lfv_' + Math.random().toString(36).slice(2, 9) + '_' + idx;
-            html += '<div class="form-check ledger-f-item" data-search="' + escAttr((label + ' ' + val).toLowerCase()) + '">'
+            // Flex row (no Bootstrap form-check float) so the checkbox stays fully visible on the left.
+            // data-search uses display label only (not raw ids/codes) so search matches what the user sees.
+            html += '<div class="ledger-f-item" data-search="' + escAttr(label.toLowerCase()) + '">'
                 + '<input class="form-check-input ledger-f-cb" type="checkbox" value="' + escAttr(val) + '" id="' + id + '"'
                 + ' data-label="' + escAttr(label) + '"'
                 + (checked ? ' checked' : '') + ' data-dirty-ignore>'
-                + '<label class="form-check-label small" for="' + id + '">' + escHtml(label)
+                + '<label class="ledger-f-label small" for="' + id + '">' + escHtml(label)
                 + (item.count != null ? ' <span class="ledger-f-count">(' + item.count + ')</span>' : '')
                 + '</label></div>';
         });
@@ -2773,7 +2910,7 @@ foreach ($colDefs as $col):
         if (debDisplay) amtHtml += '<div class="text-primary fw-semibold ledger-debit-col">' + escHtml(debDisplay) + '</div>';
         if (credDisplay) amtHtml += '<div class="text-success fw-semibold ledger-credit-col">' + escHtml(credDisplay) + '</div>';
         if (!amtHtml) amtHtml = '<span class="text-muted">&nbsp;</span>';
-        return '<tr data-id="' + tid + '" data-cleared="' + (isCleared ? '1' : '0') + '" data-status="' + escHtml(r.status || 'pending') + '" data-debits="' + escHtml(String(debAmt)) + '" data-credits="' + escHtml(String(credAmt)) + '">'
+        return '<tr data-id="' + tid + '" data-cleared="' + (isCleared ? '1' : '0') + '" data-status="' + escHtml(r.status || 'pending') + '" data-debits="' + escHtml(String(debAmt)) + '" data-credits="' + escHtml(String(credAmt)) + '" data-doc-count="' + (parseInt(r.doc_count, 10) || 0) + '">'
             + '<td><input type="checkbox" class="form-check-input tx-cb" value="' + tid + '"></td>'
             + '<td class="text-nowrap">' + escHtml(r.transaction_date || '') + '</td>'
             + '<td class="font-monospace">' + escHtml(r.reference_number || '') + '</td>'
@@ -2784,7 +2921,42 @@ foreach ($colDefs as $col):
             + '<td class="text-end font-monospace small">' + amtHtml + '</td>'
             + '<td>' + statusBadgeHtml(r.status) + '</td>'
             + '<td class="text-center">' + (parseInt(r.num_lines, 10) || 0) + '</td>'
+            + attachCellHtml(tid, r.doc_count)
             + '</tr>';
+    }
+
+    function attachCellHtml(txId, docCount) {
+        const n = parseInt(docCount, 10) || 0;
+        if (n < 1) {
+            return '<td class="text-center ledger-attach-cell"></td>';
+        }
+        const label = n === 1 ? 'View 1 attachment' : ('View ' + n + ' attachments');
+        const badge = n > 1
+            ? '<span class="badge rounded-pill text-bg-secondary ledger-attach-count">' + n + '</span>'
+            : '';
+        return '<td class="text-center ledger-attach-cell">'
+            + '<button type="button" class="btn btn-link btn-sm p-0 ledger-attach-btn" data-tx-id="'
+            + (parseInt(txId, 10) || 0)
+            + '" title="' + escHtml(label) + '" aria-label="' + escHtml(label) + '">'
+            + '<i class="bi bi-paperclip" aria-hidden="true"></i>'
+            + badge
+            + '</button></td>';
+    }
+
+    function updateRowAttachmentIndicator(txId, docCount) {
+        const id = parseInt(txId, 10) || 0;
+        if (!id || !txTableBody) return;
+        const row = txTableBody.querySelector('tr[data-id="' + id + '"]');
+        if (!row) return;
+        const n = parseInt(docCount, 10) || 0;
+        row.dataset.docCount = String(n);
+        const cell = row.querySelector('.ledger-attach-cell');
+        if (cell) {
+            const tmp = document.createElement('tbody');
+            tmp.innerHTML = '<tr>' + attachCellHtml(id, n) + '</tr>';
+            const next = tmp.querySelector('td');
+            if (next) cell.replaceWith(next);
+        }
     }
 
     function setListLoading(on) {
@@ -2863,7 +3035,7 @@ foreach ($colDefs as $col):
                 if (reset) {
                     if (!txTableBody) return;
                     if (rows.length === 0) {
-                        txTableBody.innerHTML = '<tr class="ledger-empty-row"><td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+                        txTableBody.innerHTML = '<tr class="ledger-empty-row"><td colspan="11" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
                     } else {
                         txTableBody.innerHTML = rows.map(renderTxRow).join('');
                     }
@@ -3657,6 +3829,7 @@ foreach ($colDefs as $col):
                 }
                 const canEditDocs = !!(data.is_editable && (keepEditUi || isTxEditMode()));
                 renderDocumentsList(data.documents || [], canEditDocs);
+                updateRowAttachmentIndicator(id, (data.documents || []).length);
                 const eventsEl = document.getElementById('txEventsList');
                 if (eventsEl) {
                     renderAuditTrail(data.events || []);
@@ -3715,6 +3888,556 @@ foreach ($colDefs as $col):
                 bodyEl.innerHTML = '<div class="alert alert-danger m-3">Failed to load document preview.</div>';
             });
     }
+
+    // ── Ledger list attachment portfolio ─────────────────────────────────
+    const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174';
+    let attachPortfolio = {
+        txId: 0,
+        docs: [],
+        selectedId: 0,
+        pdfDoc: null,
+        pdfPage: 1,
+        pdfPages: 1,
+        pdfUrl: '',
+        zoom: 1,
+        paneW: 0,
+        paneH: 0,
+        renderToken: 0
+    };
+    let attachPortfolioModalEl = document.getElementById('txAttachPortfolioModal');
+    if (attachPortfolioModalEl && typeof window.mountModalOnBody === 'function') {
+        attachPortfolioModalEl = window.mountModalOnBody(attachPortfolioModalEl);
+    }
+
+    function loadPdfJsLib() {
+        if (window.pdfjsLib) {
+            if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_CDN + '/pdf.worker.min.js';
+            }
+            return Promise.resolve(window.pdfjsLib);
+        }
+        if (window.__temperPdfJsLoading) {
+            return window.__temperPdfJsLoading;
+        }
+        window.__temperPdfJsLoading = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = PDFJS_CDN + '/pdf.min.js';
+            script.async = true;
+            script.onload = function() {
+                if (!window.pdfjsLib) {
+                    reject(new Error('PDF.js failed to initialize'));
+                    return;
+                }
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_CDN + '/pdf.worker.min.js';
+                resolve(window.pdfjsLib);
+            };
+            script.onerror = function() {
+                reject(new Error('Failed to load PDF.js'));
+            };
+            document.head.appendChild(script);
+        });
+        return window.__temperPdfJsLoading;
+    }
+
+    function attachFileTypeMeta(doc) {
+        const name = String((doc && doc.original_filename) || '');
+        const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+        const kind = (doc && doc.preview_kind) || 'other';
+        if (kind === 'pdf' || ext === 'pdf') {
+            return { label: 'PDF', icon: 'bi-filetype-pdf', cls: 'is-pdf' };
+        }
+        if (ext === 'png') return { label: 'PNG', icon: 'bi-filetype-png', cls: 'is-img' };
+        if (ext === 'jpg' || ext === 'jpeg') return { label: 'JPG', icon: 'bi-filetype-jpg', cls: 'is-img' };
+        if (ext === 'gif') return { label: 'GIF', icon: 'bi-filetype-gif', cls: 'is-img' };
+        if (ext === 'webp') return { label: 'WEBP', icon: 'bi-file-earmark-image', cls: 'is-img' };
+        if (kind === 'image') {
+            return { label: (ext || 'IMG').toUpperCase(), icon: 'bi-file-earmark-image', cls: 'is-img' };
+        }
+        if (ext === 'txt' || ext === 'csv' || ext === 'log' || ext === 'md' || kind === 'text') {
+            return { label: 'TXT', icon: 'bi-filetype-txt', cls: 'is-txt' };
+        }
+        if (ext === 'doc') return { label: 'DOC', icon: 'bi-filetype-doc', cls: 'is-doc' };
+        if (ext === 'docx') return { label: 'DOCX', icon: 'bi-filetype-docx', cls: 'is-doc' };
+        return { label: (ext || 'FILE').toUpperCase(), icon: 'bi-file-earmark', cls: 'is-other' };
+    }
+
+    function formatAttachFileSize(bytes) {
+        const n = parseInt(bytes, 10) || 0;
+        if (n <= 0) return '0 bytes';
+        if (n < 1024) return n + ' bytes';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function setAttachPagePanelVisible(on) {
+        const panel = document.getElementById('txAttachPagePanel');
+        if (panel) panel.classList.toggle('d-none', !on);
+    }
+
+    function setAttachZoomBarVisible(on) {
+        const bar = document.getElementById('txAttachZoomBar');
+        if (bar) bar.classList.toggle('d-none', !on);
+    }
+
+    function updateAttachZoomUi() {
+        const label = document.getElementById('txAttachZoomLabel');
+        const out = document.getElementById('txAttachZoomOut');
+        const z = attachPortfolio.zoom || 1;
+        if (label) label.textContent = z <= 1.001 ? 'Fit' : (Math.round(z * 100) + '%');
+        if (out) out.disabled = z <= 1.001;
+        const pane = document.getElementById('txAttachPortfolioPane');
+        if (pane) pane.classList.toggle('is-zoomed', z > 1.001);
+    }
+
+    function destroyAttachPdf() {
+        attachPortfolio.renderToken = (attachPortfolio.renderToken || 0) + 1;
+        if (attachPortfolio.pdfDoc && typeof attachPortfolio.pdfDoc.destroy === 'function') {
+            try { attachPortfolio.pdfDoc.destroy(); } catch (e) { /* ignore */ }
+        }
+        attachPortfolio.pdfDoc = null;
+        attachPortfolio.pdfPage = 1;
+        attachPortfolio.pdfPages = 1;
+        attachPortfolio.pdfUrl = '';
+        const pageList = document.getElementById('txAttachPageList');
+        if (pageList) pageList.innerHTML = '';
+        setAttachPagePanelVisible(false);
+    }
+
+    function updateAttachPdfNav() {
+        const label = document.getElementById('txAttachPdfPageLabel');
+        const prev = document.getElementById('txAttachPdfPrev');
+        const next = document.getElementById('txAttachPdfNext');
+        const page = attachPortfolio.pdfPage || 1;
+        const total = attachPortfolio.pdfPages || 1;
+        if (label) label.textContent = page + ' / ' + total;
+        if (prev) prev.disabled = page <= 1;
+        if (next) next.disabled = page >= total;
+        document.querySelectorAll('#txAttachPageList .ledger-portfolio-page').forEach(function(btn) {
+            const active = parseInt(btn.dataset.page, 10) === page;
+            btn.classList.toggle('active', active);
+            if (active && typeof btn.scrollIntoView === 'function') {
+                btn.scrollIntoView({ block: 'nearest' });
+            }
+        });
+    }
+
+    function attachPaneSize() {
+        const pane = document.getElementById('txAttachPortfolioPane');
+        if (!pane) return { w: 0, h: 0 };
+        return { w: pane.clientWidth || 0, h: pane.clientHeight || 0 };
+    }
+
+    function renderAttachPdfPage(pageNum) {
+        const pane = document.getElementById('txAttachPortfolioPane');
+        const pdf = attachPortfolio.pdfDoc;
+        if (!pdf || !pane) return Promise.resolve();
+        const total = pdf.numPages || 1;
+        const page = Math.max(1, Math.min(total, parseInt(pageNum, 10) || 1));
+        attachPortfolio.pdfPage = page;
+        attachPortfolio.pdfPages = total;
+        updateAttachPdfNav();
+        updateAttachZoomUi();
+        const token = attachPortfolio.renderToken;
+        return pdf.getPage(page).then(function(pg) {
+            if (token !== attachPortfolio.renderToken || attachPortfolio.pdfDoc !== pdf) return;
+            let wrap = pane.querySelector('.ledger-portfolio-pdf-wrap');
+            if (!wrap) {
+                pane.innerHTML = '<div class="ledger-portfolio-pdf-wrap"><canvas class="ledger-portfolio-pdf-canvas"></canvas></div>';
+                wrap = pane.querySelector('.ledger-portfolio-pdf-wrap');
+            }
+            let canvas = wrap.querySelector('canvas.ledger-portfolio-pdf-canvas');
+            if (!canvas) {
+                wrap.innerHTML = '<canvas class="ledger-portfolio-pdf-canvas"></canvas>';
+                canvas = wrap.querySelector('canvas.ledger-portfolio-pdf-canvas');
+            }
+            const size = attachPaneSize();
+            attachPortfolio.paneW = size.w;
+            attachPortfolio.paneH = size.h;
+            const availW = Math.max(40, size.w);
+            const availH = Math.max(40, size.h);
+            const unscaled = pg.getViewport({ scale: 1 });
+            const fitH = availH / unscaled.height;
+            const fitW = availW / unscaled.width;
+            // Default (zoom=1): fit page height without overflowing the pane.
+            // Also cap by width so no scrollbar appears until the user zooms in.
+            const fitScale = Math.min(fitH, fitW);
+            const zoom = attachPortfolio.zoom || 1;
+            const scale = fitScale * zoom;
+            const viewport = pg.getViewport({ scale: scale });
+            const ctx = canvas.getContext('2d');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            canvas.style.width = viewport.width + 'px';
+            canvas.style.height = viewport.height + 'px';
+            return pg.render({ canvasContext: ctx, viewport: viewport }).promise;
+        }).catch(function(err) {
+            console.error(err);
+            if (token !== attachPortfolio.renderToken) return;
+            pane.innerHTML = '<div class="alert alert-warning m-3">Could not render this PDF page. Use Download instead.</div>';
+        });
+    }
+
+    function renderAttachPageThumbs() {
+        const pdf = attachPortfolio.pdfDoc;
+        const list = document.getElementById('txAttachPageList');
+        if (!pdf || !list) return;
+        const total = pdf.numPages || 1;
+        const items = [];
+        for (let p = 1; p <= total; p++) {
+            items.push(
+                '<li><button type="button" class="ledger-portfolio-page' + (p === attachPortfolio.pdfPage ? ' active' : '') + '" data-page="' + p + '">'
+                + '<canvas data-page="' + p + '"></canvas>'
+                + '<span class="ledger-portfolio-page-num">' + p + '</span>'
+                + '</button></li>'
+            );
+        }
+        list.innerHTML = items.join('');
+        const canvases = Array.from(list.querySelectorAll('canvas[data-page]'));
+        let i = 0;
+        const token = attachPortfolio.renderToken;
+        function nextThumb() {
+            if (token !== attachPortfolio.renderToken || attachPortfolio.pdfDoc !== pdf) return;
+            if (i >= canvases.length) return;
+            const canvas = canvases[i++];
+            const pageNum = parseInt(canvas.dataset.page, 10);
+            pdf.getPage(pageNum).then(function(pg) {
+                if (token !== attachPortfolio.renderToken || attachPortfolio.pdfDoc !== pdf) return;
+                const thumbW = 112;
+                const unscaled = pg.getViewport({ scale: 1 });
+                const scale = thumbW / unscaled.width;
+                const vp = pg.getViewport({ scale: scale });
+                canvas.width = vp.width;
+                canvas.height = vp.height;
+                return pg.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+            }).then(nextThumb).catch(nextThumb);
+        }
+        nextThumb();
+    }
+
+    function showAttachPagePanelForPdf() {
+        const pages = attachPortfolio.pdfPages || 1;
+        if (pages > 1) {
+            setAttachPagePanelVisible(true);
+            renderAttachPageThumbs();
+            updateAttachPdfNav();
+        } else {
+            setAttachPagePanelVisible(false);
+        }
+    }
+
+    function applyAttachImageFit() {
+        const pane = document.getElementById('txAttachPortfolioPane');
+        const img = pane && pane.querySelector('.ledger-portfolio-image img');
+        if (!img) return;
+        const size = attachPaneSize();
+        attachPortfolio.paneW = size.w;
+        attachPortfolio.paneH = size.h;
+        const zoom = attachPortfolio.zoom || 1;
+        updateAttachZoomUi();
+        if (zoom <= 1.001) {
+            img.style.maxHeight = '100%';
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.width = 'auto';
+            return;
+        }
+        img.style.maxHeight = 'none';
+        img.style.maxWidth = 'none';
+        img.style.height = Math.round(size.h * zoom) + 'px';
+        img.style.width = 'auto';
+    }
+
+    function applyAttachZoom() {
+        updateAttachZoomUi();
+        if (attachPortfolio.pdfDoc) {
+            return renderAttachPdfPage(attachPortfolio.pdfPage);
+        }
+        applyAttachImageFit();
+        return Promise.resolve();
+    }
+
+    function renderAttachPortfolioList(docs, selectedId) {
+        const list = document.getElementById('txAttachPortfolioList');
+        if (!list) return;
+        if (!docs || !docs.length) {
+            list.innerHTML = '<li class="text-muted small px-3 py-2">No documents attached.</li>';
+            return;
+        }
+        list.innerHTML = docs.map(function(d) {
+            const id = parseInt(d.id, 10) || 0;
+            const name = escHtml(d.original_filename || 'document');
+            const meta = attachFileTypeMeta(d);
+            const active = id === selectedId ? ' active' : '';
+            return '<li>'
+                + '<button type="button" class="ledger-portfolio-item' + active + '" data-doc-id="' + id + '" title="' + name + '">'
+                + '<span class="ledger-portfolio-type-icon ' + meta.cls + '" title="' + escHtml(meta.label) + '">'
+                + '<i class="bi ' + meta.icon + '" aria-hidden="true"></i>'
+                + '</span>'
+                + '<span class="ledger-portfolio-item-name">' + name + '</span>'
+                + '</button></li>';
+        }).join('');
+    }
+
+    function showAttachOtherInfo(doc) {
+        const pane = document.getElementById('txAttachPortfolioPane');
+        if (!pane) return;
+        setAttachZoomBarVisible(false);
+        const name = escHtml(doc.original_filename || 'document');
+        const mime = escHtml(doc.mime_type || 'unknown');
+        const size = escHtml(doc.file_size_label || formatAttachFileSize(doc.file_size));
+        const when = escHtml(doc.created_at || '');
+        const href = escHtml(doc.download_url || ('pages/ledger.php?download_document=' + (doc.id || '')));
+        const meta = attachFileTypeMeta(doc);
+        pane.innerHTML = '<div class="ledger-portfolio-other p-4 text-center">'
+            + '<div class="mb-3 d-inline-flex"><span class="ledger-portfolio-type-icon ' + meta.cls + '" style="width:64px;height:68px">'
+            + '<i class="bi ' + meta.icon + '" aria-hidden="true" style="font-size:2.4rem"></i></span></div>'
+            + '<h6 class="mb-3">' + name + '</h6>'
+            + '<dl class="row justify-content-center small mb-4 text-start mx-auto" style="max-width:22rem">'
+            + '<dt class="col-5">Type</dt><dd class="col-7"><code>' + mime + '</code></dd>'
+            + '<dt class="col-5">Size</dt><dd class="col-7">' + size + '</dd>'
+            + (when ? ('<dt class="col-5">Uploaded</dt><dd class="col-7">' + when + '</dd>') : '')
+            + '</dl>'
+            + '<p class="text-muted small mb-3">Preview is not available for this file type.</p>'
+            + '<a class="btn btn-primary" href="' + href + '" target="_blank" rel="noopener">'
+            + '<i class="bi bi-download" aria-hidden="true"></i> Download</a>'
+            + '</div>';
+    }
+
+    function selectAttachDocument(docId) {
+        const id = parseInt(docId, 10) || 0;
+        const doc = (attachPortfolio.docs || []).find(function(d) { return parseInt(d.id, 10) === id; });
+        const pane = document.getElementById('txAttachPortfolioPane');
+        const dl = document.getElementById('txAttachDownload');
+        if (!pane) return;
+        destroyAttachPdf();
+        attachPortfolio.zoom = 1;
+        updateAttachZoomUi();
+        setAttachZoomBarVisible(false);
+        if (!doc) {
+            if (dl) dl.classList.add('d-none');
+            pane.innerHTML = '<div class="text-center text-muted py-5">Select a document</div>';
+            return;
+        }
+        attachPortfolio.selectedId = id;
+        renderAttachPortfolioList(attachPortfolio.docs, id);
+        const href = doc.download_url || ('pages/ledger.php?download_document=' + id);
+        if (dl) {
+            dl.href = href;
+            dl.classList.remove('d-none');
+        }
+        const kind = doc.preview_kind || 'other';
+        const url = doc.preview_url || ('pages/ledger.php?preview_document=' + id);
+        if (kind === 'image') {
+            setAttachZoomBarVisible(true);
+            pane.innerHTML = '<div class="ledger-portfolio-image">'
+                + '<img src="' + url + '" alt="' + escHtml(doc.original_filename || '') + '">'
+                + '</div>';
+            const img = pane.querySelector('img');
+            if (img) {
+                if (img.complete) applyAttachImageFit();
+                else img.addEventListener('load', applyAttachImageFit, { once: true });
+            }
+            return;
+        }
+        if (kind === 'pdf') {
+            setAttachZoomBarVisible(true);
+            pane.innerHTML = '<div class="ledger-portfolio-pdf-wrap"><div class="text-center text-muted py-5">Loading PDF…</div></div>';
+            loadPdfJsLib().then(function(pdfjsLib) {
+                return pdfjsLib.getDocument({ url: url, withCredentials: true }).promise;
+            }).then(function(pdf) {
+                if (attachPortfolio.selectedId !== id) {
+                    pdf.destroy();
+                    return;
+                }
+                attachPortfolio.pdfDoc = pdf;
+                attachPortfolio.pdfUrl = url;
+                attachPortfolio.pdfPages = pdf.numPages || 1;
+                attachPortfolio.pdfPage = 1;
+                pane.innerHTML = '<div class="ledger-portfolio-pdf-wrap"><canvas class="ledger-portfolio-pdf-canvas"></canvas></div>';
+                showAttachPagePanelForPdf();
+                return renderAttachPdfPage(1);
+            }).catch(function(err) {
+                console.error(err);
+                setAttachPagePanelVisible(false);
+                setAttachZoomBarVisible(false);
+                pane.innerHTML = '<div class="p-4 text-center">'
+                    + '<p class="mb-2">Could not render this PDF in the viewer.</p>'
+                    + '<a class="btn btn-sm btn-primary" href="' + escHtml(href) + '" target="_blank" rel="noopener">Download file</a>'
+                    + '</div>';
+            });
+            return;
+        }
+        if (kind === 'text') {
+            pane.innerHTML = '<div class="text-center text-muted py-5">Loading…</div>';
+            fetch(url).then(function(r) { return r.text(); }).then(function(txt) {
+                pane.innerHTML = '<pre class="small bg-body-tertiary border rounded p-3 ledger-portfolio-text">'
+                    + escHtml(txt) + '</pre>';
+            }).catch(function() {
+                pane.innerHTML = '<div class="alert alert-warning m-3">Could not load text preview. Use Download instead.</div>';
+            });
+            return;
+        }
+        showAttachOtherInfo(doc);
+    }
+
+    function openAttachmentPortfolio(txId) {
+        const id = parseInt(txId, 10) || 0;
+        if (!id || !attachPortfolioModalEl) return;
+        const titleEl = document.getElementById('txAttachPortfolioTitle');
+        const pane = document.getElementById('txAttachPortfolioPane');
+        const list = document.getElementById('txAttachPortfolioList');
+        const dl = document.getElementById('txAttachDownload');
+        destroyAttachPdf();
+        attachPortfolio.txId = id;
+        attachPortfolio.docs = [];
+        attachPortfolio.selectedId = 0;
+        attachPortfolio.zoom = 1;
+        if (titleEl) titleEl.textContent = 'Attachments';
+        if (dl) dl.classList.add('d-none');
+        setAttachZoomBarVisible(false);
+        if (list) list.innerHTML = '<li class="text-muted small px-3 py-2">Loading…</li>';
+        if (pane) pane.innerHTML = '<div class="text-center text-muted py-5">Loading…</div>';
+        showLedgerModal(attachPortfolioModalEl);
+        fetch('pages/ledger.php?transaction_documents=' + id)
+            .then(parseJsonResponse)
+            .then(function(data) {
+                if (!isApiSuccess(data)) {
+                    if (list) list.innerHTML = '';
+                    if (pane) {
+                        pane.innerHTML = '<div class="alert alert-danger m-3">'
+                            + escHtml((data && data.error) || 'Unable to load attachments.') + '</div>';
+                    }
+                    return;
+                }
+                const docs = data.documents || [];
+                attachPortfolio.docs = docs;
+                updateRowAttachmentIndicator(id, docs.length);
+                const bits = ['Attachments'];
+                if (data.reference_number) bits.push('Ref #' + data.reference_number);
+                else if (data.pay_to) bits.push(data.pay_to);
+                if (titleEl) titleEl.textContent = bits.join(' — ');
+                if (!docs.length) {
+                    renderAttachPortfolioList([], 0);
+                    if (pane) pane.innerHTML = '<div class="text-center text-muted py-5">No documents attached.</div>';
+                    return;
+                }
+                selectAttachDocument(docs[0].id);
+            })
+            .catch(function(err) {
+                console.error(err);
+                if (pane) {
+                    pane.innerHTML = '<div class="alert alert-danger m-3">Failed to load attachments.</div>';
+                }
+            });
+    }
+
+    function bindAttachmentPortfolio() {
+        if (!attachPortfolioModalEl || attachPortfolioModalEl.dataset.bound === '1') return;
+        attachPortfolioModalEl.dataset.bound = '1';
+        const list = document.getElementById('txAttachPortfolioList');
+        if (list) {
+            list.addEventListener('click', function(e) {
+                const item = e.target.closest('.ledger-portfolio-item');
+                if (!item) return;
+                e.preventDefault();
+                const id = parseInt(item.dataset.docId, 10);
+                if (id) selectAttachDocument(id);
+            });
+        }
+        const pageList = document.getElementById('txAttachPageList');
+        if (pageList) {
+            pageList.addEventListener('click', function(e) {
+                const btn = e.target.closest('.ledger-portfolio-page');
+                if (!btn) return;
+                e.preventDefault();
+                const p = parseInt(btn.dataset.page, 10);
+                if (p) renderAttachPdfPage(p);
+            });
+        }
+        const prev = document.getElementById('txAttachPdfPrev');
+        const next = document.getElementById('txAttachPdfNext');
+        if (prev) {
+            prev.addEventListener('click', function() {
+                if (attachPortfolio.pdfPage > 1) renderAttachPdfPage(attachPortfolio.pdfPage - 1);
+            });
+        }
+        if (next) {
+            next.addEventListener('click', function() {
+                if (attachPortfolio.pdfPage < attachPortfolio.pdfPages) {
+                    renderAttachPdfPage(attachPortfolio.pdfPage + 1);
+                }
+            });
+        }
+        const zoomIn = document.getElementById('txAttachZoomIn');
+        const zoomOut = document.getElementById('txAttachZoomOut');
+        const zoomFit = document.getElementById('txAttachZoomFit');
+        if (zoomIn) {
+            zoomIn.addEventListener('click', function() {
+                attachPortfolio.zoom = Math.min(4, Math.round(((attachPortfolio.zoom || 1) + 0.25) * 100) / 100);
+                applyAttachZoom();
+            });
+        }
+        if (zoomOut) {
+            zoomOut.addEventListener('click', function() {
+                attachPortfolio.zoom = Math.max(1, Math.round(((attachPortfolio.zoom || 1) - 0.25) * 100) / 100);
+                applyAttachZoom();
+            });
+        }
+        if (zoomFit) {
+            zoomFit.addEventListener('click', function() {
+                attachPortfolio.zoom = 1;
+                applyAttachZoom();
+            });
+        }
+        const pane = document.getElementById('txAttachPortfolioPane');
+        if (pane && typeof ResizeObserver !== 'undefined') {
+            const ro = new ResizeObserver(function() {
+                const size = attachPaneSize();
+                if (Math.abs(size.w - attachPortfolio.paneW) < 2 && Math.abs(size.h - attachPortfolio.paneH) < 2) {
+                    return;
+                }
+                if (!size.w || !size.h) return;
+                applyAttachZoom();
+            });
+            ro.observe(pane);
+        }
+        if (pane) {
+            let lastWheelPageAt = 0;
+            pane.addEventListener('wheel', function(e) {
+                const pages = attachPortfolio.pdfPages || 1;
+                if (!attachPortfolio.pdfDoc || pages <= 1) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const now = Date.now();
+                if (now - lastWheelPageAt < 280) return;
+                const dy = e.deltaY;
+                if (!dy || Math.abs(dy) < 4) return;
+                if (dy > 0 && attachPortfolio.pdfPage < pages) {
+                    lastWheelPageAt = now;
+                    renderAttachPdfPage(attachPortfolio.pdfPage + 1);
+                } else if (dy < 0 && attachPortfolio.pdfPage > 1) {
+                    lastWheelPageAt = now;
+                    renderAttachPdfPage(attachPortfolio.pdfPage - 1);
+                }
+            }, { passive: false });
+        }
+        attachPortfolioModalEl.addEventListener('shown.bs.modal', function() {
+            applyAttachZoom();
+        });
+        attachPortfolioModalEl.addEventListener('hidden.bs.modal', function() {
+            destroyAttachPdf();
+            attachPortfolio.docs = [];
+            attachPortfolio.selectedId = 0;
+            attachPortfolio.zoom = 1;
+            setAttachZoomBarVisible(false);
+            const paneEl = document.getElementById('txAttachPortfolioPane');
+            if (paneEl) {
+                paneEl.classList.remove('is-zoomed');
+                paneEl.innerHTML = '<div class="text-center text-muted py-5">Select a document</div>';
+            }
+        });
+    }
+    bindAttachmentPortfolio();
 
     /**
      * Bootstrap modal confirm for queueing a file delete.
@@ -3831,6 +4554,7 @@ foreach ($colDefs as $col):
                 clearPendingDocDeletes();
                 if (currentViewData && Array.isArray(res.documents)) {
                     currentViewData.documents = res.documents;
+                    updateRowAttachmentIndicator(currentViewData.id, res.documents.length);
                 }
                 return res;
             });
@@ -3863,15 +4587,31 @@ foreach ($colDefs as $col):
         else importTextBtn.classList.add('d-none');
     }
 
+    function getTxDocFileInput() {
+        return document.getElementById('txDocFile');
+    }
+
+    function getTxDocUploadBtn() {
+        return document.getElementById('txDocUploadBtn');
+    }
+
+    /** Clear selected file and disable Upload (does not hide the control row). */
+    function clearDocFileSelection() {
+        const fileInput = getTxDocFileInput();
+        if (fileInput) {
+            // Reset so the same file can be re-chosen after a failed/successful upload
+            fileInput.value = '';
+        }
+        syncDocUploadBtn();
+    }
+
     function setDocUploadVisible(show) {
         const docForm = document.getElementById('txDocUploadForm');
         if (!docForm) return;
         if (show) docForm.classList.remove('d-none');
         else docForm.classList.add('d-none');
-        const fileInput = document.getElementById('txDocFile');
-        const btn = document.getElementById('txDocUploadBtn');
-        if (fileInput) fileInput.value = '';
-        if (btn) btn.disabled = true;
+        // Always reset selection when showing/hiding so a prior pick does not linger across txs
+        clearDocFileSelection();
     }
 
     function showBlankForm() {
@@ -4367,7 +5107,7 @@ foreach ($colDefs as $col):
             if (refReuseFlag) refReuseFlag.value = '1';
             if (refReuseWarn) {
                 refReuseWarn.classList.remove('d-none');
-                refReuseWarn.textContent = 'Reuse of ' + seq + ' confirmed.';
+                refReuseWarn.textContent = 'Already Used';
             }
             return;
         }
@@ -4377,25 +5117,12 @@ foreach ($colDefs as $col):
             .then(r => r.json())
             .then(d => {
                 if (!refReuseWarn) return;
-                const parts = [];
                 if (d && d.taken) {
-                    const u = d.usage || {};
-                    const who = [u.transaction_date, u.pay_to || u.description].filter(Boolean).join(' — ');
-                    parts.push('⚠ Already used'
-                        + (u.id ? (' by <strong>#' + u.id + '</strong>') : '')
-                        + (who ? (' (' + escHtml(who) + ')') : '')
-                        + '. Saving will ask you to confirm reuse.');
                     if (refReuseFlag) refReuseFlag.value = '0';
-                } else {
-                    if (refReuseFlag) refReuseFlag.value = '0';
-                }
-                if (d && d.range_advisory) {
-                    parts.push('ℹ ' + escHtml(d.range_advisory));
-                }
-                if (parts.length) {
                     refReuseWarn.classList.remove('d-none');
-                    refReuseWarn.innerHTML = parts.join('<br>');
+                    refReuseWarn.textContent = 'Already Used';
                 } else {
+                    if (refReuseFlag) refReuseFlag.value = '0';
                     refReuseWarn.classList.add('d-none');
                     refReuseWarn.textContent = '';
                 }
@@ -4438,7 +5165,7 @@ foreach ($colDefs as $col):
                 if (refReuseFlag) refReuseFlag.value = '1';
                 if (refReuseWarn) {
                     refReuseWarn.classList.remove('d-none');
-                    refReuseWarn.textContent = 'Reuse of ' + seqVal + ' confirmed.';
+                    refReuseWarn.textContent = 'Already Used';
                 }
                 return true;
             })
@@ -4729,6 +5456,14 @@ foreach ($colDefs as $col):
         });
 
         txTableBody.addEventListener('click', function(e) {
+            const attachBtn = e.target.closest('.ledger-attach-btn');
+            if (attachBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const attachId = parseInt(attachBtn.dataset.txId, 10);
+                if (attachId) openAttachmentPortfolio(attachId);
+                return;
+            }
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
             const row = e.target.closest('tr');
             if (!row || !row.dataset.id) return;
@@ -4766,6 +5501,11 @@ foreach ($colDefs as $col):
 
         // Double-click row → read-only View modal (not Edit)
         txTableBody.addEventListener('dblclick', function(e) {
+            if (e.target.closest('.ledger-attach-btn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
             const row = e.target.closest('tr[data-id]');
             if (!row) return;
@@ -4782,59 +5522,105 @@ foreach ($colDefs as $col):
         });
     }
 
-    const docFileInput = document.getElementById('txDocFile');
-    const docUploadBtn = document.getElementById('txDocUploadBtn');
     function syncDocUploadBtn() {
+        const docUploadBtn = getTxDocUploadBtn();
+        const docFileInput = getTxDocFileInput();
         if (!docUploadBtn || !docFileInput) return;
         const inEdit = isTxEditMode();
-        const hasFile = docFileInput.files && docFileInput.files.length > 0;
+        const hasFile = !!(docFileInput.files && docFileInput.files.length > 0);
         docUploadBtn.disabled = !(inEdit && hasFile);
     }
-    if (docFileInput) {
-        docFileInput.addEventListener('change', syncDocUploadBtn);
+
+    /**
+     * Read the currently selected File from the live file input (never a stale closure).
+     * @returns {File|null}
+     */
+    function getSelectedDocFile() {
+        const input = getTxDocFileInput();
+        if (!input || !input.files || input.files.length === 0) return null;
+        const f = input.files[0];
+        // Guard: some browsers report a placeholder entry with empty name when nothing is chosen
+        if (!f || (typeof f.size === 'number' && f.size === 0 && !f.name)) return null;
+        if (!f.name) return null;
+        return f;
     }
-    if (docUploadBtn) {
-        docUploadBtn.addEventListener('click', function() {
-            const id = txIdField.value;
-            if (!isTxEditMode()) {
-                showToast('Enter edit mode to upload documents.', 'warning');
-                return;
-            }
-            if (!docFileInput || !docFileInput.files || docFileInput.files.length === 0) {
-                showToast('Please select a file to upload.', 'warning');
-                return;
-            }
-            const fd = new FormData();
-            fd.append('action', 'upload_document');
-            fd.append('tx_id', id);
-            fd.append('document', docFileInput.files[0]);
-            docUploadBtn.disabled = true;
-            fetch('pages/ledger.php', { method: 'POST', body: fd })
-                .then(parseJsonResponse)
-                .then(res => {
-                    if (!isApiSuccess(res)) {
-                        showToast(res.error || 'Upload failed.', 'danger');
-                        syncDocUploadBtn();
-                        return;
-                    }
-                    showToast(res.message || 'Upload Successful', 'success');
-                    // Prefer server-returned documents list for instant refresh (preserve delete queue)
-                    if (Array.isArray(res.documents)) {
-                        if (currentViewData) currentViewData.documents = res.documents;
-                        renderDocumentsList(res.documents, true);
-                        setDocUploadVisible(true);
-                        syncDocUploadBtn();
-                    } else {
-                        refreshDocumentsFromServer(id, true)
-                            .catch(() => showToast('Uploaded, but failed to refresh document list.', 'warning'))
-                            .finally(() => syncDocUploadBtn());
-                    }
-                })
-                .catch(err => {
-                    console.error(err);
-                    showToast('Upload failed.', 'danger');
+
+    function runDocUpload() {
+        const id = txIdField && txIdField.value ? String(txIdField.value).trim() : '';
+        const docUploadBtn = getTxDocUploadBtn();
+        if (!isTxEditMode()) {
+            showToast('Enter edit mode to upload documents.', 'warning');
+            return;
+        }
+        if (!id) {
+            showToast('Save the transaction before uploading documents.', 'warning');
+            return;
+        }
+        const file = getSelectedDocFile();
+        if (!file) {
+            showToast('Please select a file to upload.', 'warning');
+            syncDocUploadBtn();
+            return;
+        }
+        const fd = new FormData();
+        fd.append('action', 'upload_document');
+        fd.append('tx_id', id);
+        // Field name matches server; third arg ensures filename is present in multipart headers
+        fd.append('tx_document', file, file.name);
+        if (docUploadBtn) docUploadBtn.disabled = true;
+        fetch('pages/ledger.php', { method: 'POST', body: fd })
+            .then(parseJsonResponse)
+            .then(res => {
+                if (!isApiSuccess(res)) {
+                    showToast(res.error || 'Upload failed.', 'danger');
                     syncDocUploadBtn();
-                });
+                    return;
+                }
+                showToast(res.message || 'Upload Successful', 'success');
+                clearDocFileSelection();
+                // Prefer server-returned documents list for instant refresh (preserve delete queue)
+                if (Array.isArray(res.documents)) {
+                    if (currentViewData) currentViewData.documents = res.documents;
+                    renderDocumentsList(res.documents, true);
+                    updateRowAttachmentIndicator(id, res.documents.length);
+                    const docForm = document.getElementById('txDocUploadForm');
+                    if (docForm) docForm.classList.remove('d-none');
+                    syncDocUploadBtn();
+                } else {
+                    refreshDocumentsFromServer(id, true)
+                        .catch(() => showToast('Uploaded, but failed to refresh document list.', 'warning'))
+                        .finally(() => syncDocUploadBtn());
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                showToast('Upload failed.', 'danger');
+                syncDocUploadBtn();
+            });
+    }
+
+    // Live binding on the modal (survives reparent to body; no stale element refs)
+    if (txFormModalEl) {
+        txFormModalEl.addEventListener('change', function(e) {
+            if (e.target && e.target.id === 'txDocFile') {
+                syncDocUploadBtn();
+            }
+        });
+        txFormModalEl.addEventListener('click', function(e) {
+            const btn = e.target && e.target.closest ? e.target.closest('#txDocUploadBtn') : null;
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            runDocUpload();
+        });
+    } else {
+        // Fallback if modal node missing at init
+        const docFileInput = getTxDocFileInput();
+        const docUploadBtn = getTxDocUploadBtn();
+        if (docFileInput) docFileInput.addEventListener('change', syncDocUploadBtn);
+        if (docUploadBtn) docUploadBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            runDocUpload();
         });
     }
 
@@ -5111,7 +5897,7 @@ foreach ($colDefs as $col):
 
             // Metadata BEFORE amount matching — values like reference: "260150" contain
             // digits that would otherwise be misread as posting amounts.
-            // Only reference: and check: populate the form; all other key: value lines are ignored.
+            // reference: / ref: / sequence: and check: populate the form; other key: value lines are ignored.
             // Shape: single-token key + colon (not "Assets:Bank Account  10" postings).
             const metaLineM = trimmed.match(/^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/);
             if (metaLineM) {
@@ -5129,7 +5915,7 @@ foreach ($colDefs as $col):
                     || /^-?\d[\d,]*(\.\d+)?\s*(USD|\$)?$/i.test(rhsTrim)
                     || !/\s+-?\d/.test(rhsTrim);
                 if (!rhsHasAccountAmount && rhsIsSimpleValue) {
-                    if (key === 'reference') {
+                    if (key === 'reference' || key === 'ref' || key === 'sequence') {
                         referenceVal = stripMetaQuotes(rhsTrim);
                     } else if (key === 'check') {
                         checkVal = stripMetaQuotes(rhsTrim);
@@ -5330,6 +6116,7 @@ foreach ($colDefs as $col):
         clearReferenceReuseState();
         refreshReferenceSuggestion().then(updateReferenceHintVisibility);
         updateReferenceHintVisibility();
+        checkReferenceReuseLive();
 
         linesBody.innerHTML = '';
         const lines = data.lines || [];

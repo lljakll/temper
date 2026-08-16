@@ -192,7 +192,8 @@ function wantsJsonAuthResponse(): bool {
     }
     // fetch() FormData posts and many action endpoints expect JSON error payloads
     if (!empty($_POST['action']) || isset($_GET['api']) || isset($_GET['get_transaction'])
-        || isset($_GET['get_budget']) || isset($_GET['run_report']) || isset($_GET['document_meta'])) {
+        || isset($_GET['get_budget']) || isset($_GET['run_report']) || isset($_GET['document_meta'])
+        || isset($_GET['transaction_documents']) || isset($_GET['list_transactions'])) {
         return true;
     }
     $xrw = strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? ''));

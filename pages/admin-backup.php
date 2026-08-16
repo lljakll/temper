@@ -317,7 +317,7 @@ pruneUnlockedBackups($backupDir);
 $backups = listBackupFiles($backupDir, true, null);
 // Prefer showing data-only first in the UI list, keep all for management
 $unlockedBackups = getUnlockedBackups();
-$tableCount = (int)($db->query('SHOW TABLES')->num_rows ?? 0);
+$tableCount = count(listDataOnlyBackupTables($db));
 $autoEnabled = isAutoBackupEnabled();
 $autoFreq = getAutoBackupFrequency();
 $autoFormat = getAutoBackupFormat();
@@ -396,7 +396,9 @@ $autoState = loadAutoBackupState();
             </div>
             <div class="card-body">
                 <p class="text-muted small">
-                    Export row data from all <strong><?= $tableCount ?></strong> tables without CREATE/DROP statements.
+                    Export row data from <strong><?= $tableCount ?></strong> operational tables without CREATE/DROP statements.
+                    <code>app_version</code> and <code>audit_log</code> are omitted so a restore keeps the current version history and audit trail.
+                    Roles and all other operational tables are included.
                     Choose SQL (INSERT dump), CSV (zip of per-table CSVs), or both.
                     Files are stored in <code>storage/backups/</code> and can be downloaded.
                 </p>
@@ -521,7 +523,8 @@ $autoState = loadAutoBackupState();
             <div class="card-body">
                 <div class="alert alert-warning py-2 small mb-3">
                     <i class="bi bi-exclamation-triangle"></i>
-                    Restore will <strong>overwrite table data</strong> (TRUNCATE + load). Schema is not modified.
+                    Restore will <strong>overwrite operational table data</strong> (TRUNCATE + load). Schema is not modified.
+                    Existing <code>app_version</code> history and <code>audit_log</code> are left intact.
                     Create a backup first. Full schema restore is only available under Database Maintenance.
                 </div>
 

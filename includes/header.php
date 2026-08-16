@@ -607,10 +607,21 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             body.has-mobile-nav {
                 padding-bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
             }
-            .toast-container {
+            #appToastContainer.toast-container {
                 bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)) !important;
                 top: auto !important;
             }
+        }
+
+        /*
+         * App toasts must sit above open Bootstrap modals/backdrops (1050/1055)
+         * so success/error messages remain readable without closing the modal.
+         * Still below the idle session-timeout layer (20040/20050).
+         * Container is reparented to document.body (see footer showToast / mount).
+         */
+        #appToastContainer.toast-container {
+            z-index: 10900 !important;
+            position: fixed !important;
         }
 
         /* ── Touch-friendly forms & controls ─────────────────────────────── */
@@ -713,27 +724,120 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
         .ledger-filter-menu {
             z-index: 1080;
+            /* Resizable Excel-style panel (drag bottom-right handle) */
+            width: 18rem;
+            min-width: 14rem;
+            max-width: min(92vw, 48rem);
+            min-height: 14rem;
+            max-height: min(75vh, 36rem);
+            height: 18rem;
+            resize: both;
+            overflow: hidden;
+            box-sizing: border-box;
+            position: relative;
+        }
+        /* Only when open — do not override Bootstrap .dropdown-menu { display:none } */
+        .dropdown-menu.ledger-filter-menu.show {
+            display: flex;
+            flex-direction: column;
+        }
+        /* Visible resize cue (native resize handle still active) */
+        .ledger-filter-menu::after {
+            content: '';
+            position: absolute;
+            right: 2px;
+            bottom: 2px;
+            width: 12px;
+            height: 12px;
+            pointer-events: none;
+            opacity: 0.45;
+            background:
+                linear-gradient(135deg, transparent 50%, var(--bs-secondary-color) 50%) 100% 100% / 6px 6px no-repeat,
+                linear-gradient(135deg, transparent 50%, var(--bs-secondary-color) 50%) calc(100% - 4px) calc(100% - 4px) / 6px 6px no-repeat;
         }
         /* Excel-style multi-select auto-filter panel */
         .ledger-f-values {
-            max-height: 240px;
+            flex: 1 1 auto;
+            min-height: 4rem;
+            max-height: none;
+            overflow-x: auto;
             overflow-y: auto;
             overscroll-behavior: contain;
+            /* Enough inset so checkboxes are never clipped at the left edge */
+            padding-left: 0.35rem !important;
+            padding-right: 0.35rem !important;
         }
+        .ledger-f-select-all-wrap {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding-left: 0.35rem;
+            margin-bottom: 0.35rem !important;
+        }
+        .ledger-f-select-all-wrap.form-check {
+            padding-left: 0.35rem;
+            min-height: 0;
+        }
+        .ledger-f-select-all-wrap .form-check-input {
+            float: none;
+            margin: 0;
+            flex: 0 0 auto;
+            position: relative;
+        }
+        .ledger-f-select-all-wrap .form-check-label {
+            margin: 0;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        /*
+         * Filter list rows: do NOT use Bootstrap form-check float/negative-margin.
+         * That pattern clips checkboxes inside overflow containers (looks "missing").
+         */
         .ledger-f-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
             padding: 0.15rem 0.25rem;
             border-radius: 0.2rem;
+            white-space: nowrap;
+            min-width: min-content;
+            box-sizing: border-box;
+        }
+        .ledger-f-item.form-check {
+            /* neutralize Bootstrap form-check layout if class still present */
+            padding-left: 0.25rem;
+            min-height: 0;
+            margin-bottom: 0;
         }
         .ledger-f-item:hover {
             background-color: rgba(var(--bs-primary-rgb), 0.08);
         }
-        .ledger-f-item .form-check-label {
+        .ledger-f-item > .form-check-input,
+        .ledger-f-item .form-check-input {
+            float: none !important;
+            margin: 0 !important;
+            margin-left: 0 !important;
+            flex: 0 0 auto;
+            position: relative;
+            top: 0;
+        }
+        .ledger-f-item .form-check-label,
+        .ledger-f-item .ledger-f-label {
             cursor: pointer;
-            word-break: break-word;
+            margin: 0;
+            white-space: nowrap;
+            word-break: normal;
+            overflow-wrap: normal;
+            flex: 0 0 auto;
+            min-width: 0;
         }
         .ledger-f-item .ledger-f-count {
             opacity: 0.65;
             font-size: 0.75em;
+            white-space: nowrap;
+        }
+        .ledger-date-tree {
+            min-width: min-content;
         }
         .ledger-date-tree .ledger-date-year,
         .ledger-date-tree .ledger-date-month {
@@ -749,6 +853,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             list-style: none;
             cursor: pointer;
             user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            white-space: nowrap;
         }
         .ledger-date-tree details > summary::-webkit-details-marker {
             display: none;
@@ -757,10 +865,14 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             content: '▸';
             display: inline-block;
             width: 0.9em;
+            flex: 0 0 auto;
             color: var(--bs-secondary-color);
         }
         .ledger-date-tree details[open] > summary::before {
             content: '▾';
+        }
+        .ledger-date-tree .ledger-f-count {
+            margin-left: auto;
         }
         .ledger-tx-table tbody tr {
             cursor: pointer;
@@ -768,6 +880,314 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .ledger-tx-table tbody tr.table-active,
         .ledger-tx-table tbody tr:has(.tx-cb:checked) {
             --bs-table-bg-state: rgba(var(--bs-primary-rgb), 0.08);
+        }
+        .ledger-attach-cell {
+            width: 2.6rem;
+            white-space: nowrap;
+        }
+        .ledger-attach-btn {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.5rem;
+            min-height: 1.5rem;
+            color: var(--bs-secondary-color);
+            text-decoration: none;
+            line-height: 1;
+        }
+        .ledger-attach-btn:hover,
+        .ledger-attach-btn:focus {
+            color: var(--bs-primary);
+        }
+        .ledger-attach-btn .bi-paperclip {
+            font-size: 1.1rem;
+            transform: rotate(-45deg);
+        }
+        .ledger-attach-count {
+            position: absolute;
+            top: -0.35rem;
+            right: -0.55rem;
+            font-size: 0.6rem;
+            line-height: 1;
+            padding: 0.15em 0.35em;
+            min-width: 1.1rem;
+        }
+        /* Viewport-height portfolio dialog; ~25% narrower than full width so
+           the backdrop remains clickable on both sides. Selector panes stay fixed px. */
+        #txAttachPortfolioModal .ledger-portfolio-dialog {
+            width: 75vw;
+            max-width: 75vw;
+            height: 100vh;
+            max-height: 100vh;
+            margin: 0 auto;
+        }
+        #txAttachPortfolioModal .ledger-portfolio-modal {
+            height: 100%;
+            max-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            border-radius: 0.35rem;
+            overflow: hidden;
+        }
+        #txAttachPortfolioModal .modal-header {
+            flex: 0 0 auto;
+        }
+        #txAttachPortfolioModal .ledger-portfolio-close {
+            width: 2.35rem;
+            height: 2.35rem;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            font-weight: 700;
+            line-height: 1;
+            border-width: 2px;
+            flex: 0 0 auto;
+        }
+        #txAttachPortfolioModal .ledger-portfolio-close .bi {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+        #txAttachPortfolioModal .modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+        }
+        .ledger-portfolio {
+            display: flex;
+            flex-direction: row;
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+        }
+        .ledger-portfolio-sidebar {
+            flex: 0 0 248px;
+            width: 248px;
+            min-width: 248px;
+            max-width: 248px;
+            border-right: 1px solid var(--bs-border-color);
+            overflow-x: hidden;
+            overflow-y: auto;
+            background-color: var(--bs-tertiary-bg);
+        }
+        .ledger-portfolio-pages {
+            flex: 0 0 148px;
+            width: 148px;
+            min-width: 148px;
+            max-width: 148px;
+            border-right: 1px solid var(--bs-border-color);
+            overflow-x: hidden;
+            overflow-y: auto;
+            background-color: var(--bs-tertiary-bg);
+        }
+        .ledger-portfolio-sidebar-head {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            padding: 0.5rem 0.65rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--bs-secondary-color);
+            background-color: var(--bs-tertiary-bg);
+            border-bottom: 1px solid var(--bs-border-color);
+        }
+        .ledger-portfolio-item {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            text-align: left;
+            padding: 0.65rem 0.7rem;
+        }
+        .ledger-portfolio-item:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.08);
+        }
+        .ledger-portfolio-item.active {
+            background-color: rgba(var(--bs-primary-rgb), 0.16);
+        }
+        .ledger-portfolio-type-icon {
+            flex: 0 0 48px;
+            width: 48px;
+            height: 52px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.3rem;
+            background: var(--bs-body-bg);
+            border: 1px solid var(--bs-border-color);
+            line-height: 1;
+        }
+        .ledger-portfolio-type-icon .bi {
+            font-size: 1.85rem;
+            line-height: 1;
+        }
+        .ledger-portfolio-type-icon.is-pdf { color: #c0392b; }
+        .ledger-portfolio-type-icon.is-img { color: #1d6f42; }
+        .ledger-portfolio-type-icon.is-txt { color: #5c6570; }
+        .ledger-portfolio-type-icon.is-doc { color: #2b579a; }
+        .ledger-portfolio-type-icon.is-other { color: var(--bs-secondary-color); }
+        .ledger-portfolio-item-name {
+            min-width: 0;
+            flex: 1 1 auto;
+            font-size: 0.875rem;
+            line-height: 1.25;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .ledger-portfolio-page-nav {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.2rem;
+            padding: 0.35rem 0.35rem 0.25rem;
+            position: sticky;
+            top: 2.15rem;
+            z-index: 1;
+            background-color: var(--bs-tertiary-bg);
+        }
+        .ledger-portfolio-page-label {
+            font-size: 0.75rem;
+            color: var(--bs-secondary-color);
+            min-width: 2.6rem;
+            text-align: center;
+        }
+        .ledger-portfolio-page {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.2rem;
+            width: 100%;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            padding: 0.35rem 0.45rem;
+        }
+        .ledger-portfolio-page:hover {
+            background-color: rgba(var(--bs-primary-rgb), 0.08);
+        }
+        .ledger-portfolio-page.active .ledger-portfolio-page-thumb,
+        .ledger-portfolio-page.active canvas {
+            outline: 2px solid var(--bs-primary);
+            outline-offset: 1px;
+        }
+        .ledger-portfolio-page-thumb,
+        #txAttachPageList canvas {
+            width: 112px;
+            height: auto;
+            background: #fff;
+            box-shadow: 0 0.08rem 0.25rem rgba(0, 0, 0, 0.12);
+        }
+        .ledger-portfolio-page-num {
+            font-size: 0.7rem;
+            color: var(--bs-secondary-color);
+        }
+        .ledger-portfolio-main {
+            flex: 1 1 auto;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .ledger-portfolio-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex: 0 0 auto;
+            padding: 0.35rem 0.75rem;
+            border-bottom: 1px solid var(--bs-border-color);
+            background-color: var(--bs-body-bg);
+        }
+        .ledger-portfolio-zoom {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .ledger-portfolio-zoom-label {
+            min-width: 3.25rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--bs-secondary-color);
+        }
+        .ledger-portfolio-pane {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+            background-color: var(--bs-tertiary-bg);
+        }
+        .ledger-portfolio-pane.is-zoomed {
+            overflow: auto;
+        }
+        .ledger-portfolio-pdf-wrap {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100%;
+            padding: 0;
+        }
+        .ledger-portfolio-pdf-canvas {
+            display: block;
+            background: #fff;
+            box-shadow: 0 0.15rem 0.6rem rgba(0, 0, 0, 0.12);
+        }
+        .ledger-portfolio-image {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ledger-portfolio-image img {
+            max-height: 100%;
+            max-width: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+        }
+        .ledger-portfolio-pane.is-zoomed .ledger-portfolio-image {
+            display: block;
+            height: auto;
+            min-height: 100%;
+        }
+        .ledger-portfolio-text {
+            height: 100%;
+            overflow: auto;
+            white-space: pre-wrap;
+            margin: 0;
+        }
+        @media (max-width: 767.98px) {
+            #txAttachPortfolioModal .ledger-portfolio-dialog {
+                width: calc(100vw - 1.5rem);
+                max-width: calc(100vw - 1.5rem);
+            }
+            .ledger-portfolio-sidebar {
+                flex: 0 0 200px;
+                width: 200px;
+                min-width: 200px;
+                max-width: 200px;
+            }
+            .ledger-portfolio-pages {
+                flex: 0 0 112px;
+                width: 112px;
+                min-width: 112px;
+                max-width: 112px;
+            }
+            .ledger-portfolio-type-icon {
+                flex: 0 0 40px;
+                width: 40px;
+                height: 44px;
+            }
+            .ledger-portfolio-type-icon .bi {
+                font-size: 1.55rem;
+            }
+            #txAttachPageList canvas {
+                width: 84px;
+            }
         }
         @media (max-width: 767.98px) {
             .ledger-workspace {
@@ -821,6 +1241,11 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
         body > .modal-backdrop.session-timeout-backdrop {
             z-index: 20040 !important;
+        }
+
+        /* Toasts on body always paint above page modals; session-timeout still wins */
+        body > #appToastContainer {
+            z-index: 10900 !important;
         }
 
         /* ── Utility: page titles that wrap cleanly ──────────────────────── */

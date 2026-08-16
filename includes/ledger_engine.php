@@ -1041,9 +1041,78 @@ function ledgerAllowedDocumentTypes(): array {
     ];
 }
 
-/** Max attachment size in bytes (2 MiB — aligns with typical upload_max_filesize). */
+/**
+ * Parse a PHP ini size string (e.g. "20M", "512K", "1G", "20971520") to bytes.
+ * Returns 0 for empty, invalid, or unlimited ("-1").
+ */
+function ledgerParseIniSize(string $value): int {
+    $value = trim($value);
+    if ($value === '' || $value === '-1') {
+        return 0;
+    }
+    if (!preg_match('/^(\d+(?:\.\d+)?)([KMG])?$/i', $value, $m)) {
+        return 0;
+    }
+    $n = (float)$m[1];
+    $unit = strtoupper($m[2] ?? '');
+    $bytes = match ($unit) {
+        'G' => $n * 1024 * 1024 * 1024,
+        'M' => $n * 1024 * 1024,
+        'K' => $n * 1024,
+        default => $n,
+    };
+    if ($bytes <= 0 || $bytes > PHP_INT_MAX) {
+        return 0;
+    }
+    return (int)$bytes;
+}
+
+/**
+ * Human-readable size for upload error messages (e.g. "20 MB").
+ */
+function ledgerFormatBytesLabel(int $bytes): string {
+    if ($bytes <= 0) {
+        return '0 bytes';
+    }
+    $mb = 1024 * 1024;
+    if ($bytes >= $mb) {
+        $n = $bytes / $mb;
+        if (abs($n - round($n)) < 0.05) {
+            return (string)((int)round($n)) . ' MB';
+        }
+        return rtrim(rtrim(number_format($n, 1, '.', ''), '0'), '.') . ' MB';
+    }
+    if ($bytes >= 1024) {
+        return (string)max(1, (int)round($bytes / 1024)) . ' KB';
+    }
+    return $bytes . ' bytes';
+}
+
+/**
+ * Max attachment size in bytes.
+ * Uses the effective PHP upload ceiling: min(upload_max_filesize, post_max_size).
+ * Falls back to 20 MiB if PHP reports unlimited or unreadable values.
+ */
 function ledgerMaxDocumentBytes(): int {
-    return 2 * 1024 * 1024;
+    $fallback = 20 * 1024 * 1024;
+    $upload = ledgerParseIniSize((string)ini_get('upload_max_filesize'));
+    $post = ledgerParseIniSize((string)ini_get('post_max_size'));
+    $candidates = [];
+    if ($upload > 0) {
+        $candidates[] = $upload;
+    }
+    if ($post > 0) {
+        $candidates[] = $post;
+    }
+    if ($candidates === []) {
+        return $fallback;
+    }
+    return min($candidates);
+}
+
+function ledgerDocumentTooLargeError(): string {
+    return 'File exceeds the maximum upload size of '
+        . ledgerFormatBytesLabel(ledgerMaxDocumentBytes()) . '.';
 }
 
 /**
@@ -1052,11 +1121,11 @@ function ledgerMaxDocumentBytes(): int {
  */
 function ledgerValidateUploadedDocument(array $file): array {
     $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
+        return ['success' => false, 'error' => ledgerDocumentTooLargeError()];
+    }
     if ($error === UPLOAD_ERR_NO_FILE || empty($file['tmp_name'])) {
         return ['success' => false, 'error' => 'Please select a file to upload.'];
-    }
-    if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
-        return ['success' => false, 'error' => 'File exceeds the maximum upload size of 2 MB.'];
     }
     if ($error !== UPLOAD_ERR_OK) {
         return ['success' => false, 'error' => 'Upload failed (error code ' . $error . ').'];
@@ -1084,7 +1153,7 @@ function ledgerValidateUploadedDocument(array $file): array {
         return ['success' => false, 'error' => 'Uploaded file is empty.'];
     }
     if ($size > ledgerMaxDocumentBytes()) {
-        return ['success' => false, 'error' => 'File exceeds the maximum upload size of 2 MB.'];
+        return ['success' => false, 'error' => ledgerDocumentTooLargeError()];
     }
 
     $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
@@ -1171,7 +1240,7 @@ function ledgerStoreDocument(
         return ['success' => false, 'error' => 'Uploaded file is empty.'];
     }
     if ($size > ledgerMaxDocumentBytes()) {
-        return ['success' => false, 'error' => 'File exceeds the maximum upload size of 2 MB.'];
+        return ['success' => false, 'error' => ledgerDocumentTooLargeError()];
     }
     if (!is_file($tmpPath) || !is_readable($tmpPath)) {
         return ['success' => false, 'error' => 'Upload temporary file is missing or unreadable.'];
@@ -1402,4 +1471,28 @@ function ledgerDocumentPreviewKind(?string $mimeType, string $originalFilename):
         return 'text';
     }
     return 'other';
+}
+
+/**
+ * JSON payload for a stored document (list preview / portfolio viewer).
+ *
+ * @param array $doc Row from ledgerFetchDocuments / ledgerFetchDocument
+ */
+function ledgerDocumentClientPayload(array $doc): array
+{
+    $id = (int)($doc['id'] ?? 0);
+    $name = (string)($doc['original_filename'] ?? '');
+    $mime = (string)($doc['mime_type'] ?? '');
+    $size = (int)($doc['file_size'] ?? 0);
+    return [
+        'id' => $id,
+        'original_filename' => $name,
+        'mime_type' => $mime,
+        'file_size' => $size,
+        'file_size_label' => ledgerFormatBytesLabel($size),
+        'created_at' => (string)($doc['created_at'] ?? ''),
+        'preview_kind' => ledgerDocumentPreviewKind($mime, $name),
+        'preview_url' => 'pages/ledger.php?preview_document=' . $id,
+        'download_url' => 'pages/ledger.php?download_document=' . $id,
+    ];
 }

@@ -1001,3 +1001,56 @@ Stack trace:
 [10-Aug-2026 03:11:10 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Transaction updated (2 changes). {"debits":1850,"credits":1850,"changes":["Pay to changed from \"—\" to \"Deposit\".","Description updated."]} ip=::1
 [10-Aug-2026 03:11:25 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=2 Budget changed from "2026 - CY26" to "—". {"debits":200,"credits":200,"changes":["Budget changed from \"2026 - CY26\" to \"—\"."]} ip=::1
 [10-Aug-2026 03:12:42 UTC] [AUDIT] user=admin action=ledger.created details=transaction=3 Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines).","Fund \"General Operating Fund\" $100.00."]} ip=::1
+[11-Aug-2026 11:00:37 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Access denied for user 'temper_user'@'localhost' in /var/www/temper/config.php:87
+Stack trace:
+#0 /var/www/temper/config.php(87): mysqli->__construct()
+#1 /var/www/temper/auth.php(366): getDbConnection()
+#2 /var/www/temper/login.php(29): login()
+#3 {main}
+  thrown in /var/www/temper/config.php on line 87
+[11-Aug-2026 11:04:08 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[11-Aug-2026 11:04:08 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[11-Aug-2026 11:04:08 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[11-Aug-2026 11:17:16 UTC] [AUDIT] user=admin action=ledger.created details=transaction=1 Transaction created for "Corner Market Supplies" totaling $200.00 (2 lines). {"debits":200,"credits":200,"changes":["Transaction created for \"Corner Market Supplies\" totaling $200.00 (2 lines)."]} ip=::1
+[12-Aug-2026 10:59:52 UTC] [AUDIT] user=admin action=ledger.created details=transaction=1 Transaction created for "DEPOSIT" totaling $1,850.00 (3 lines). {"debits":1850,"credits":1850,"changes":["Transaction created for \"DEPOSIT\" totaling $1,850.00 (3 lines).","Fund \"Helping Hands\" $100.00."]} ip=::1
+[12-Aug-2026 11:00:44 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Duplicate entry '100110' for key 'code' in /var/www/temper/pages/setup_funds.php:23
+Stack trace:
+#0 /var/www/temper/pages/setup_funds.php(23): mysqli_stmt->execute()
+#1 {main}
+  thrown in /var/www/temper/pages/setup_funds.php on line 23
+[12-Aug-2026 11:04:39 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Transaction updated (2 changes). {"debits":1850,"credits":1850,"changes":["Added Fund \"General Operating Fund\" (FMB: Checking Account) debit $1,750.00.","Removed Account \"FMB: Checking Account\" debit $1,750.00."]} ip=::1
+[12-Aug-2026 11:06:48 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Transaction saved with no field changes (re-saved). {"debits":1850,"credits":1850,"changes":[]} ip=::1
+[12-Aug-2026 11:12:21 UTC] [AUDIT] user=admin action=ledger.created details=transaction=2 Transaction created for "Deposit - Bank Transfer" totaling $200.00 (2 lines). {"debits":200,"credits":200,"changes":["Transaction created for \"Deposit - Bank Transfer\" totaling $200.00 (2 lines).","Fund \"General Operating Fund\" $200.00."]} ip=::1
+[12-Aug-2026 11:13:16 UTC] [AUDIT] user=admin action=ledger.created details=transaction=3 Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines).","Fund \"General Operating Fund\" $100.00."]} ip=::1
+[12-Aug-2026 11:22:34 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "Screenshot_20260620_083627.png" added. {"doc_id":1,"original_filename":"Screenshot_20260620_083627.png"} ip=::1
+[14-Aug-2026 10:55:31 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "temper_3mb.pdf" added. {"doc_id":2,"original_filename":"temper_3mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:55:31 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "temper_dot.png" added. {"doc_id":3,"original_filename":"temper_dot.png"} ip=127.0.0.1
+[14-Aug-2026 10:55:57 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "temper_12mb.pdf" added. {"doc_id":4,"original_filename":"temper_12mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:55:58 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=1 Attachment "temper_12mb.pdf" removed. {"doc_id":4,"original_filename":"temper_12mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:55:58 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=1 Attachment "temper_3mb.pdf" removed. {"doc_id":2,"original_filename":"temper_3mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:55:58 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=1 Attachment "temper_dot.png" removed. {"doc_id":3,"original_filename":"temper_dot.png"} ip=127.0.0.1
+[14-Aug-2026 10:56:14 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "temper_19mb.pdf" added. {"doc_id":5,"original_filename":"temper_19mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:56:26 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=1 Attachment "temper_19mb.pdf" removed. {"doc_id":5,"original_filename":"temper_19mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:57:15 UTC] UPLOAD_DEBUG files={"tx_document":{"name":"temper_20p5mb.pdf","full_path":"temper_20p5mb.pdf","type":"","tmp_name":"","error":1,"size":0}} post_keys=["action","tx_id"]
+[14-Aug-2026 10:57:45 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "temper_3mb.pdf" added. {"doc_id":6,"original_filename":"temper_3mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 10:57:45 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=1 Attachment "temper_3mb.pdf" removed. {"doc_id":6,"original_filename":"temper_3mb.pdf"} ip=127.0.0.1
+[14-Aug-2026 11:01:34 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "260001-20260104-Weekly Deposit.pdf" added. {"doc_id":7,"original_filename":"260001-20260104-Weekly Deposit.pdf"} ip=::1
+[14-Aug-2026 11:01:43 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Transaction saved with no field changes (re-saved). {"debits":1850,"credits":1850,"changes":[]} ip=::1
+[14-Aug-2026 11:01:43 UTC] [AUDIT] user=admin action=ledger.document_deleted details=transaction=1 Attachment "Screenshot_20260620_083627.png" removed. {"doc_id":1,"original_filename":"Screenshot_20260620_083627.png"} ip=::1
+[14-Aug-2026 17:46:13 UTC] [AUDIT] user=admin action=ledger.created details=transaction=4 Transaction created for "DEPOSIT" totaling $1,028.00 (3 lines). {"debits":1028,"credits":1028,"changes":["Transaction created for \"DEPOSIT\" totaling $1,028.00 (3 lines).","Fund \"General Operating Fund\" $928.00.","Fund \"Helping Hands\" $100.00."]} ip=::1
+[14-Aug-2026 17:47:06 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Description updated. {"debits":1850,"credits":1850,"changes":["Description updated."]} ip=::1
+[14-Aug-2026 18:02:41 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Description updated. {"debits":1850,"credits":1850,"changes":["Description updated."]} ip=::1
+[14-Aug-2026 18:02:52 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=4 Description updated. {"debits":1028,"credits":1028,"changes":["Description updated."]} ip=::1
+[14-Aug-2026 18:03:22 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Description updated. {"debits":1850,"credits":1850,"changes":["Description updated."]} ip=::1
+[14-Aug-2026 18:03:46 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=3 Description updated. {"debits":100,"credits":100,"changes":["Description updated."]} ip=::1
+[14-Aug-2026 18:04:01 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=2 Description updated. {"debits":200,"credits":200,"changes":["Description updated."]} ip=::1
+[14-Aug-2026 18:04:08 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=4 Transaction saved with no field changes (re-saved). {"debits":1028,"credits":1028,"changes":[]} ip=::1
+[14-Aug-2026 18:04:08 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=4 Transaction saved with no field changes (re-saved). {"debits":1028,"credits":1028,"changes":[]} ip=::1
+[14-Aug-2026 18:04:43 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=4 Attachment "260002-20260111-Weekly Deposit.pdf" added. {"doc_id":8,"original_filename":"260002-20260111-Weekly Deposit.pdf"} ip=::1
+[14-Aug-2026 18:04:46 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=4 Transaction saved with no field changes (re-saved). {"debits":1028,"credits":1028,"changes":[]} ip=::1
+[14-Aug-2026 18:11:52 UTC] [AUDIT] user=admin action=ledger.document_uploaded details=transaction=1 Attachment "Screenshot_20260620_083659.png" added. {"doc_id":9,"original_filename":"Screenshot_20260620_083659.png"} ip=::1
+[14-Aug-2026 18:11:55 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=1 Transaction saved with no field changes (re-saved). {"debits":1850,"credits":1850,"changes":[]} ip=::1
+[14-Aug-2026 18:19:35 UTC] [AUDIT] user=admin action=ledger.created details=transaction=5 Transaction created for "Deposit - Bank Transfer" totaling $200.00 (2 lines). {"debits":200,"credits":200,"changes":["Transaction created for \"Deposit - Bank Transfer\" totaling $200.00 (2 lines)."]} ip=::1
+[14-Aug-2026 18:20:00 UTC] [AUDIT] user=admin action=ledger.created details=transaction=6 Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines)."]} ip=::1
+[14-Aug-2026 18:20:09 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=5 Transaction updated (2 changes). {"debits":200,"credits":200,"changes":["Added Fund \"General Operating Fund\" (FMB: Checking Account) debit $200.00.","Removed Account \"FMB: Checking Account\" debit $200.00."]} ip=::1
+[14-Aug-2026 18:20:16 UTC] [AUDIT] user=admin action=ledger.updated details=transaction=6 Transaction updated (2 changes). {"debits":100,"credits":100,"changes":["Added Fund \"General Operating Fund\" (FMB: Checking Account) debit $100.00.","Removed Account \"FMB: Checking Account\" debit $100.00."]} ip=::1

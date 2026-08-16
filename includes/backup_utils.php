@@ -267,6 +267,81 @@ function listDatabaseTables(mysqli $db): array {
     return $tables;
 }
 
+/**
+ * System tables omitted from data-only backup and restore.
+ * Full (schema + data) dumps still include every table.
+ * roles and all operational tables remain in the data-only set.
+ *
+ * @return list<string>
+ */
+function dataOnlyBackupExcludedTables(): array {
+    return ['app_version', 'audit_log'];
+}
+
+function isDataOnlyExcludedTable(string $table): bool {
+    $normalized = strtolower(trim($table, " \t\n\r\0\x0B`\"'"));
+    return in_array($normalized, dataOnlyBackupExcludedTables(), true);
+}
+
+/**
+ * Tables included in a data-only backup (all current tables minus system exclusions).
+ *
+ * @return list<string>
+ */
+function listDataOnlyBackupTables(mysqli $db): array {
+    $out = [];
+    foreach (listDatabaseTables($db) as $table) {
+        if (!isDataOnlyExcludedTable($table)) {
+            $out[] = $table;
+        }
+    }
+    return $out;
+}
+
+/**
+ * Remove TRUNCATE / INSERT / DELETE / UPDATE statements (and table-data
+ * comments) that target data-only excluded system tables so a restore of an
+ * older dump cannot wipe app_version history or audit_log.
+ */
+function stripExcludedTablesFromDataOnlySql(string $sql): string {
+    $lines = preg_split("/\r\n|\r|\n/", $sql);
+    if (!is_array($lines)) {
+        return $sql;
+    }
+
+    $out = [];
+    $skipUntilSemicolon = false;
+    foreach ($lines as $line) {
+        if ($skipUntilSemicolon) {
+            if (str_contains($line, ';')) {
+                $skipUntilSemicolon = false;
+            }
+            continue;
+        }
+
+        $trim = ltrim($line);
+        if (@preg_match('/^--\s*Table data:\s*`?([A-Za-z0-9_]+)`?/i', $trim, $commentMatch) === 1
+            && isDataOnlyExcludedTable($commentMatch[1])) {
+            continue;
+        }
+
+        if (@preg_match(
+            '/^(?:TRUNCATE\s+TABLE|INSERT\s+INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE)\s+`?([A-Za-z0-9_]+)`?/i',
+            $trim,
+            $stmtMatch
+        ) === 1 && isDataOnlyExcludedTable($stmtMatch[1])) {
+            if (!str_contains($line, ';')) {
+                $skipUntilSemicolon = true;
+            }
+            continue;
+        }
+
+        $out[] = $line;
+    }
+
+    return implode("\n", $out);
+}
+
 function backupSqlValue(mysqli $db, mixed $value): string {
     if ($value === null) {
         return 'NULL';
@@ -278,14 +353,16 @@ function backupSqlValue(mysqli $db, mixed $value): string {
  * Data-only SQL dump: TRUNCATE + INSERT (no CREATE/DROP).
  */
 function generateDataOnlySqlBackup(mysqli $db): string {
+    $excluded = dataOnlyBackupExcludedTables();
     $sql = "-- Hope Baptist Treasurer Data-Only Backup\n";
     $sql .= "-- Type: data-only\n";
     $sql .= "-- Generated: " . gmdate('Y-m-d H:i:s') . " UTC\n";
-    $sql .= "-- Database: " . DB_NAME . "\n\n";
+    $sql .= "-- Database: " . DB_NAME . "\n";
+    $sql .= "-- Excluded system tables: " . implode(', ', $excluded) . "\n\n";
     $sql .= "SET NAMES utf8mb4;\n";
     $sql .= "SET FOREIGN_KEY_CHECKS = 0;\n\n";
 
-    foreach (listDatabaseTables($db) as $table) {
+    foreach (listDataOnlyBackupTables($db) as $table) {
         $safeTable = str_replace('`', '``', $table);
         $sql .= "-- Table data: `$safeTable`\n";
         $sql .= "TRUNCATE TABLE `$safeTable`;\n";
@@ -399,7 +476,7 @@ function generateDataOnlyCsvZip(mysqli $db): array {
         return ['success' => false, 'error' => 'Could not open temporary zip for CSV backup.'];
     }
 
-    $tables = listDatabaseTables($db);
+    $tables = listDataOnlyBackupTables($db);
     $tableMeta = [];
 
     foreach ($tables as $table) {
@@ -1177,6 +1254,8 @@ function restoreDataOnlySql(mysqli $db, string $rawSql): array {
         return ['success' => false, 'error' => formatSqlValidationError($validation)];
     }
 
+    $sql = stripExcludedTablesFromDataOnlySql($sql);
+
     $result = executeSqlMultiQuery($db, $sql);
     if (!$result['success']) {
         return ['success' => false, 'error' => 'Restore failed: ' . ($result['error'] ?? $db->error)];
@@ -1252,6 +1331,9 @@ function restoreDataOnlyCsvZip(mysqli $db, string $zipPath): array {
     $db->query('SET FOREIGN_KEY_CHECKS = 0');
 
     foreach ($existingTables as $table) {
+        if (isDataOnlyExcludedTable($table)) {
+            continue;
+        }
         $entryKey = strtolower(preg_replace('/[^a-zA-Z0-9_]/', '_', $table) . '.csv');
         if (!isset($csvEntries[$entryKey])) {
             // also try exact table name

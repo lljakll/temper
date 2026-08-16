@@ -86,6 +86,36 @@ $footerDb->close();
             return div.innerHTML;
         }
 
+        /**
+         * Ensure the toast host lives on document.body (not under #main-content-col).
+         * Fragments/modals use body stacking (z-index ~1055); a toast trapped inside
+         * #main-content-col (z-index: 1) is painted under open modals even if its own
+         * z-index is higher within that stacking context.
+         */
+        window.ensureAppToastContainer = function() {
+            let container = document.getElementById('appToastContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'appToastContainer';
+                container.className = 'toast-container position-fixed top-0 start-50 translate-middle-x p-3';
+                container.setAttribute('aria-live', 'polite');
+                container.setAttribute('aria-atomic', 'true');
+                document.body.appendChild(container);
+            } else if (container.parentElement !== document.body) {
+                document.body.appendChild(container);
+            }
+            return container;
+        };
+
+        // Lift toast host out of #main-content-col as soon as the shell is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                window.ensureAppToastContainer();
+            });
+        } else {
+            window.ensureAppToastContainer();
+        }
+
         window.showToast = function(message, type = 'info', delay = 4500) {
             // Never surface toasts while redirecting to login after session expiry
             if (window.__temperAuthRedirecting) return null;
@@ -102,7 +132,9 @@ $footerDb->close();
                 }
                 return null;
             }
-            const container = document.getElementById('appToastContainer');
+            const container = typeof window.ensureAppToastContainer === 'function'
+                ? window.ensureAppToastContainer()
+                : document.getElementById('appToastContainer');
             const variant = TOAST_VARIANTS[type] || type || 'info';
             if (!container || typeof bootstrap === 'undefined' || !bootstrap.Toast) {
                 console.warn('[toast]', message);

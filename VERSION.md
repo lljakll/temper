@@ -19,6 +19,14 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.921](#v0921)
+- [v0.920](#v0920)
+- [v0.919](#v0919)
+- [v0.918](#v0918)
+- [v0.917](#v0917)
+- [v0.916](#v0916)
+- [v0.915](#v0915)
+- [v0.914](#v0914)
 - [v0.913](#v0913)
 - [v0.912](#v0912)
 - [v0.911](#v0911)
@@ -119,6 +127,209 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.921
+
+**Data-only backups exclude system tables (`app_version`, `audit_log`)** — 2026-08-14
+
+> No schema update required for this release (backup/restore process only).  
+> **Patch file (history row):** `updates/20260814_0921_data_backup_exclude_system_tables.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.921
+
+- **Data-only backups** (SQL, CSV, and auto-backup) no longer include `app_version` or `audit_log`.
+- **Roles** and all other operational tables remain in the data-only dump.
+- **Restore** of a data-only backup leaves existing `app_version` history intact (older dumps that still contain those tables are also skipped at restore time). `audit_log` is likewise left intact.
+- **Full (schema + data)** backups and Database Maintenance full restore are unchanged.
+- Create, download, and restore flows are otherwise unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.921**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.920 | `updates/20260814_0921_data_backup_exclude_system_tables.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.920 patches, then this process patch |
+
+---
+
+## v0.920
+
+**Import `sequence:` → Ref #; simplify already-used warning** — 2026-08-14
+
+> No schema update required for this release (ledger UI only).  
+> **Patch file (history row):** `updates/20260814_0920_import_sequence_ref_warning.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.920
+
+- **Import from Text:** metadata keys `sequence:` and `ref:` are recognized in addition to `reference:` and populate the Ref # field.
+- **Ref # field warning:** contribution-range advisory is no longer shown. When the number is already used, the only message under the field is yellow **Already Used** (no icon, no transaction id, no extra wording). Confirm-on-save for reuse is unchanged.
+- Other transaction form behavior and toasts are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.920**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.919 | `updates/20260814_0920_import_sequence_ref_warning.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.919 patches, then this process patch |
+
+---
+
+## v0.919
+
+**Ledger portfolio viewer: narrower modal, clearer close, wheel page-turn** — 2026-08-14
+
+> No schema update required for this release (ledger UI only).  
+> **Patch file (history row):** `updates/20260814_0919_ledger_portfolio_narrow_wheel.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.919
+
+- **Modal width:** portfolio dialog is about **25% narrower** (~75vw) so side backdrop remains visible and click-outside-to-close is easier. Viewport height, static selector panes, and fit-height default zoom are unchanged.
+- **Close control:** the header X is a larger outlined button (`bi-x-lg`) instead of the default small Bootstrap close glyph.
+- **Scroll-wheel page turning:** with a multi-page PDF selected, the wheel over the main preview pane goes to the next page (down) or previous page (up). The wheel does not zoom or scroll page content in that pane.
+- Document list icons, page thumbnails, Download, paperclip indicator, filters, sort, and infinite scroll are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.919**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.918 | `updates/20260814_0919_ledger_portfolio_narrow_wheel.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.918 patches, then this process patch |
+
+---
+
+## v0.918
+
+**Ledger portfolio viewer: viewport modal, page panel, fit-height zoom** — 2026-08-14
+
+> No schema update required for this release (ledger UI only).  
+> **Patch file (history row):** `updates/20260814_0918_ledger_portfolio_viewer_refine.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.918
+
+- **Modal size:** attachment portfolio dialog fills the viewport height (and nearly full width).
+- **Static selector panes:** document list is a fixed 248px column; the PDF page panel is a fixed 148px column. The preview pane takes the remaining space. Selector widths are not percentage/flex-grown.
+- **Document list:** each file uses a large type-only icon (PDF / JPG / PNG / TXT / DOC, etc.) plus a clearly wrapped filename (no tiny inline text-sized icons).
+- **PDF page panel:** multi-page PDFs show a page list with thumbnails, Prev/Next, and the first page selected by default.
+- **Default zoom:** preview fits the page to the pane (height, capped by width) so no scrollbar appears until the user zooms in. Zoom − / + / Fit on the toolbar.
+- Paperclip indicator, download, images, unsupported-type info, filters, sort, and infinite scroll are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.918**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.917 | `updates/20260814_0918_ledger_portfolio_viewer_refine.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.917 patches, then this process patch |
+
+---
+
+## v0.917
+
+**Ledger attachment paperclip + portfolio viewer** — 2026-08-14
+
+> No schema update required for this release (ledger UI/API only).  
+> **Patch file (history row):** `updates/20260814_0917_ledger_attachment_portfolio.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.917
+
+- **Ledger list:** rows that have attachments show a **paperclip** icon (count badge when more than one). Individual filenames are not listed in the table.
+- **Portfolio viewer:** clicking the paperclip opens a modal with a left sidebar of all attached documents and a main display pane.
+  - **PDF:** first page is rendered in the pane with Prev/Next page navigation.
+  - **Images** (jpg, png, etc.): displayed directly.
+  - **Other types:** file information plus a clear Download button.
+  - Toolbar **Download** always applies to the currently selected document.
+- Indicator and viewer work with **infinite scroll**, column **filters**, and **sorting** (attachment count is included on each list page).
+- Existing transaction form document list / single-file preview, upload, and delete behavior is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.917**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.916 | `updates/20260814_0917_ledger_attachment_portfolio.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.916 patches, then this process patch |
+
+---
+
+## v0.916
+
+**Ledger attachment upload size follows PHP (20 MB)** — 2026-08-14
+
+> No schema update required for this release (upload validation only).  
+> **Patch file (history row):** `updates/20260814_0916_attachment_upload_size.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.916
+
+- Removed the hard-coded **2 MB** application cap on transaction attachments (`ledgerMaxDocumentBytes()`).
+- Allowed size is now the **effective PHP upload ceiling**: the smaller of `upload_max_filesize` and `post_max_size` (fallback 20 MB if PHP reports unlimited/unreadable).
+- Rejection message reports the **actual** limit (no longer always “2 MB”).
+- Files rejected by PHP (`UPLOAD_ERR_INI_SIZE` / `FORM_SIZE`) now show that size message instead of “Please select a file to upload” (empty `tmp_name` is checked after the size error codes).
+- Directory PHP settings (`.htaccess` / `.user.ini`, and `deploy/temper.conf`) set `upload_max_filesize=20M` and `post_max_size=32M` so 10–20 MB files are not cut off by the previous 8 MB `post_max_size`.
+- File-type, MIME, empty-file, and other attachment validation is unchanged. Existing attached documents are unaffected.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.916**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.915 | `updates/20260814_0916_attachment_upload_size.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.915 patches, then this process patch |
+
+---
+
+## v0.915
+
+**Toast stacking above modals + ledger document upload file detection** — 2026-08-12
+
+> No schema update required for this release (UI/API only).  
+> **Patch file (history row):** `updates/20260812_0915_toast_zindex_and_doc_upload.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.915
+
+- **Toasts site-wide:** `#appToastContainer` is reparented to `document.body` and given z-index **10900** so success/error/warning toasts appear **above any open Bootstrap modal** (and below the idle session-timeout layer at 20050). Users can read messages without closing the modal first.
+- **Ledger document upload:** Upload now resolves the live file input at click time, builds multipart `FormData` with field `tx_document` (explicit filename), and no longer fails with “Please select a file to upload” when a file is already chosen. Server accepts `tx_document` (preferred) or legacy `document`.
+- Multi-select filters, dirty-form protection, validations, and other upload/attachment rules are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.915**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.914 | `updates/20260812_0915_toast_zindex_and_doc_upload.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.914 patches, then this process patch |
+
+---
+
+## v0.914
+
+**Ledger auto-filter dropdown layout & display cleanup** — 2026-08-11
+
+> No schema update required for this release (ledger UI/API only).  
+> **Patch file (history row):** `updates/20260811_0914_ledger_filter_dropdown_layout.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.914
+
+- Fixed Excel-style filter dropdown **checkbox visibility**: list rows no longer use Bootstrap `form-check` float/negative-margin (which clipped checkboxes inside the scroll area). Checkboxes stay fully visible and left-aligned.
+- Filter list items are **single-line** (`white-space: nowrap`); long values do not wrap.
+- Each filter dropdown is **resizable** (CSS `resize` + visible drag cue) so users can widen/tall-en the panel.
+- Value list supports **horizontal and vertical scrolling** when content exceeds the current panel size.
+- **Account** filter list shows **account name only** (CoA number removed from labels).
+- **Fund** filter list shows **fund name only** (fund code removed from labels).
+- Other columns keep meaningful display values only (status title-case labels, currency-formatted amounts, date tree day numbers, blanks as `(Blanks)`).
+- Multi-select, (Select All), live search, server-side filtering, active-filter indicators, and Clear all filters are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.914**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.913 | `updates/20260811_0914_ledger_filter_dropdown_layout.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.913 patches, then this process patch |
 
 ---
 
