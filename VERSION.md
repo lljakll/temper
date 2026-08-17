@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.923](#v0923)
+- [v0.922](#v0922)
 - [v0.921](#v0921)
 - [v0.920](#v0920)
 - [v0.919](#v0919)
@@ -127,6 +129,54 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.923
+
+**Ledger Add attachments, save-upload, and deposit budget default** — 2026-08-16
+
+> No schema update required for this release (Ledger modal behavior only).  
+> **Patch file (history row):** `updates/20260816_0923_ledger_add_attachments_deposit_budget.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.923
+
+- **Add Transaction** now shows the Documents / file-upload controls so attachments can be chosen during create, not only after a later Edit.
+- Files queued or still sitting in the file picker are **uploaded automatically after Save** (they are no longer discarded). A confirmation is not required; a toast reports upload success or failure.
+- **Deposits** (debit to an asset / cash-bank account, with no asset credit) no longer auto-fill the Budget dropdown. The user can still pick a budget manually. Expense-style entries still get the date-based default.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.923**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.922 | `updates/20260816_0923_ledger_add_attachments_deposit_budget.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.922 patches, then this process patch |
+
+---
+
+## v0.922
+
+**Ledger keyboard shortcuts and View → Edit** — 2026-08-16
+
+> No schema update required for this release (Ledger UI / hotkeys only).  
+> **Patch file (history row):** `updates/20260816_0922_ledger_hotkeys_view_edit.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.922
+
+- **Ledger leader-key hotkeys** match Lookup maintenance pages: press `;` then a command (ignored while typing in a field).
+- Supported commands: focus first column filter, clear all filters, Add Transaction, View selected, Edit selected, close the current modal, Import from Text, add a line in Add/Edit.
+- **Ctrl+S / ⌘S** saves only while the Add/Edit transaction modal is the top modal; otherwise the browser “Save Page” shortcut is left alone.
+- While the **View** modal is open, `;` then `e` (or the new **Edit** button) switches to Edit for the same transaction when the user has write permission. Cleared/reconciled transactions still use budget-only edit.
+- Shortcuts are discoverable via the keyboard-icon help popover (same feel as Lookup pages).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.922**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.921 | `updates/20260816_0922_ledger_hotkeys_view_edit.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.921 patches, then this process patch |
 
 ---
 

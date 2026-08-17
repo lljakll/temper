@@ -1875,9 +1875,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         if (typeof window.cleanupFragmentModals === 'function') {
             window.cleanupFragmentModals();
         }
-        // Drop lookup page hotkey listeners / banner before tearing down fragment
+        // Drop lookup / ledger page hotkey listeners / banner before tearing down fragment
         if (window.TemperLookupPage && typeof window.TemperLookupPage.disposeActive === 'function') {
             window.TemperLookupPage.disposeActive();
+        }
+        if (window.TemperLedgerPage && typeof window.TemperLedgerPage.disposeActive === 'function') {
+            window.TemperLedgerPage.disposeActive();
         }
 
         // Show loading indicator

@@ -1338,9 +1338,12 @@ $footerDb->close();
             if (typeof window.TemperDirtyForms !== 'undefined') {
                 window.TemperDirtyForms.clearAll();
             }
-            // Dispose lookup page hotkey listeners / banner before fragment swap
+            // Dispose lookup / ledger page hotkey listeners / banner before fragment swap
             if (window.TemperLookupPage && typeof window.TemperLookupPage.disposeActive === 'function') {
                 window.TemperLookupPage.disposeActive();
+            }
+            if (window.TemperLedgerPage && typeof window.TemperLedgerPage.disposeActive === 'function') {
+                window.TemperLedgerPage.disposeActive();
             }
             // Tear down body-mounted page modals before replacing #main-content
             if (typeof window.cleanupFragmentModals === 'function') {
