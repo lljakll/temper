@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.925](#v0925)
+- [v0.924](#v0924)
 - [v0.923](#v0923)
 - [v0.922](#v0922)
 - [v0.921](#v0921)
@@ -129,6 +131,53 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.925
+
+**Backup page lists every file in `storage/backups` on load** — 2026-08-18
+
+> No schema update required for this release (Backup page listing only).  
+> **Patch file (history row):** `updates/20260818_0925_backup_list_existing_on_load.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.925
+
+- The Backup page scans `storage/backups` when it loads and shows **every** existing backup file in **Saved backups** (the previous 12-item cap is removed).
+- Restore archives (`restored_*.sql` / `.zip`) that already sit in that directory are included, with download / unlock / delete unchanged.
+- Newly created backups still appear after generation (page reload after Create).
+- Backup creation and file contents are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.925**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.924 | `updates/20260818_0925_backup_list_existing_on_load.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.924 patches, then this process patch |
+
+---
+
+## v0.924
+
+**Ledger modal Ctrl/Cmd hotkeys, paperclip refresh, and single-save attach** — 2026-08-18
+
+> No schema update required for this release (Ledger Add/Edit modal behavior only).  
+> **Patch file (history row):** `updates/20260818_0924_ledger_modal_hotkeys_attach_save.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.924
+
+- **Add/Edit hotkeys** use **Ctrl+key** (⌘+key on Mac) instead of the `;` leader. They work while a form field (including Date) has focus. Inside the modal they override other key capture except cut, copy, paste, and select-all.
+- After an attachment is uploaded on Save, the **paperclip** appears on that ledger row immediately (no manual page or list refresh).
+- A file sitting in the picker when the user clicks **Save** is included in that one save/upload sequence. It no longer rides along on the transaction POST, which had caused a second insert and a duplicate Reference # error.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.924**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.923 | `updates/20260818_0924_ledger_modal_hotkeys_attach_save.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.923 patches, then this process patch |
 
 ---
 

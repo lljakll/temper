@@ -1,0 +1,160 @@
+
+
+
+
+2026-01-18 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-01-18 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+
+2026-01-25 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-01-25 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-01-31 * "INTEREST DEPOSIT" 
+  FMB: Checking Account                         85.54 USD
+  Income:200500-Refunds-Rebates-Interest            -85.54 USD
+
+
+
+2026-02-01 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+
+
+2026-02-08 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        400.00 USD
+  Online Contributions                -400.00 USD
+
+2026-02-08 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+
+
+2026-02-15 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-02-15 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+
+
+2026-02-22 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        400.00 USD
+  Online Contributions                -400.00 USD
+
+2026-02-22 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-02-28 * "INTEREST DEPOSIT" 
+  FMB: Checking Account                         66.26 USD
+  Income:200500-Refunds-Rebates-Interest            -66.26 USD
+
+
+
+2026-03-01 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-03-01 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+
+
+2026-03-08 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-03-08 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-03-15 note FMB: Checking Account "Offering is Cash only will deposit with nextweeks deposit"
+
+2026-03-15 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+
+
+2026-03-22 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-03-29 * "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-03-29 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-03-31 * "INTEREST DEPOSIT" 
+  FMB: Checking Account                         68.48 USD
+  Income:200500-Refunds-Rebates-Interest            -68.48 USD
+
+2026-04-05 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-04-12 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                         15.00 USD
+  Online Contributions                 -15.00 USD
+
+
+
+2026-04-12 * "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-04-19 ! "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-04-26 ! "Deposit - Bank Transfer"
+  FMB: Checking Account                        200.00 USD
+  Online Contributions                -200.00 USD
+
+2026-04-26 ! "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-04-26 ! "DEPOSIT"
+  sequence: 260013
+  memo: "4/19, 4/26 Offerings included"
+  FMB: Checking Account                       1320.00 USD
+  General Contributions              -1320.00 USD
+
+2026-05-03 ! "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-05-10 ! "TITHE.LY   TITHE.LY CCD"
+  FMB: Checking Account                        100.00 USD
+  Online Contributions                -100.00 USD
+
+2026-05-10 ! "DEPOSIT"
+  sequence: 260014
+  memo: "5/03, 5/10 Offerings included"
+  FMB: Checking Account                       2704.00 USD ; 350 in love offerings for Donna Y.
+  FMB: Checking Account - HH    100.00 USD
+  General Contributions              -2804.00 USD
+
+2026-05-17 ! "DEPOSIT"
+  sequence: 260015
+  FMB: Checking Account                        779.00 USD
+  General Contributions               -779.00 USD

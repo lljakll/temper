@@ -1714,15 +1714,15 @@ require_once __DIR__ . '/../includes/permissions.php';
     <!-- Top Action Buttons -->
     <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar align-items-center">
         <?php if ($canWriteLedger): ?>
-        <button type="button" id="addTxBtn" class="btn btn-primary" title="Add Transaction (; then a)">
+        <button type="button" id="addTxBtn" class="btn btn-primary" title="Add Transaction (Ctrl+A)">
             <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">Add Transaction</span><span class="d-sm-none">Add</span>
         </button>
         <?php endif; ?>
-        <button type="button" id="viewTxBtn" class="btn btn-outline-secondary" disabled title="View selected (; then v)">
+        <button type="button" id="viewTxBtn" class="btn btn-outline-secondary" disabled title="View selected (Ctrl+V)">
             <i class="bi bi-eye"></i> View
         </button>
         <?php if ($canWriteLedger): ?>
-        <button type="button" id="editTxBtn" class="btn btn-outline-secondary" disabled title="Edit selected (; then e)">
+        <button type="button" id="editTxBtn" class="btn btn-outline-secondary" disabled title="Edit selected (Ctrl+E)">
             <i class="bi bi-pencil"></i> Edit
         </button>
         <button type="button" id="clearTxBtn" class="btn btn-outline-warning" disabled>
@@ -1734,11 +1734,11 @@ require_once __DIR__ . '/../includes/permissions.php';
         <?php else: ?>
         <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
         <?php endif; ?>
-        <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2" title="Clear all column filters (; then c)"<?= $hasActiveFilters ? '' : ' disabled' ?>>
+        <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2" title="Clear all column filters (Ctrl+C)"<?= $hasActiveFilters ? '' : ' disabled' ?>>
             <i class="bi bi-funnel"></i> Clear all filters
         </button>
         <button type="button" class="btn btn-outline-secondary btn-sm" data-ledger-hotkey-help
-                title="Keyboard shortcuts (; then ?)" aria-label="Keyboard shortcuts">
+                title="Keyboard shortcuts (Ctrl+?)" aria-label="Keyboard shortcuts">
             <i class="bi bi-keyboard" aria-hidden="true"></i>
         </button>
         <span class="text-muted small ms-auto align-self-center" id="ledgerTotalLabel"><?= (int)$total ?> total</span>
@@ -1908,7 +1908,7 @@ foreach ($colDefs as $col):
                     </div>
                     <div class="d-flex align-items-center gap-2 ms-auto">
                         <button type="button" id="importTextBtn" class="btn btn-sm btn-outline-primary d-none"
-                                title="Paste Beancount-style text to fill this form (does not save). ; then i">
+                                title="Paste Beancount-style text to fill this form (does not save). Ctrl+I">
                             <i class="bi bi-clipboard-data"></i> <span class="d-none d-sm-inline">Import from Text</span>
                         </button>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -1969,7 +1969,7 @@ foreach ($colDefs as $col):
                     <div class="mt-2">
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <h6 class="mb-0 small">Lines <small class="text-muted">(min 2 required)</small></h6>
-                            <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary" title="Add a split line (; then l)">+ Add Line</button>
+                            <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary" title="Add a split line (Ctrl+L)">+ Add Line</button>
                         </div>
 
                         <div class="table-responsive">
@@ -2015,12 +2015,13 @@ foreach ($colDefs as $col):
                         <ul id="txDocumentsList" class="list-unstyled small mb-2"></ul>
                         <!--
                           Not a nested <form> (invalid inside #txForm); button-driven upload via fetch.
-                          name=tx_document avoids clashing with form.property "document".
+                          No name= on the file input so a selected file cannot ride along on
+                          FormData(#txForm) and trigger a second transaction write.
                           data-dirty-ignore: selecting a file is not a transaction field edit.
                         -->
                         <div id="txDocUploadForm" class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-center mb-2 d-none">
                             <input type="file" id="txDocFile" class="form-control form-control-sm"
-                                   name="tx_document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                   accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                                    multiple data-dirty-ignore>
                             <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm text-nowrap" disabled data-dirty-ignore>Upload</button>
                         </div>
@@ -2049,13 +2050,13 @@ foreach ($colDefs as $col):
                 <div class="modal-footer py-2 flex-wrap gap-2">
                     <?php if ($canWriteLedger): ?>
                     <button type="button" id="editFromViewBtn" class="btn btn-sm btn-primary d-none"
-                            title="Edit this transaction (; then e)">
+                            title="Edit this transaction (Ctrl+E)">
                         <i class="bi bi-pencil"></i> Edit
                     </button>
                     <?php endif; ?>
                     <button type="submit" id="saveBtn" class="btn btn-sm btn-primary" disabled title="Save Transaction (Ctrl+S)">Save Transaction</button>
                     <button type="button" id="resetLinesBtn" class="btn btn-sm btn-outline-secondary">Reset to 2 Lines</button>
-                    <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" title="Close (; then x, or Esc)">Cancel</button>
+                    <button type="button" id="cancelFormBtn2" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" title="Close (Ctrl+X, or Esc)">Cancel</button>
                 </div>
             </form>
         </div>
@@ -2980,8 +2981,11 @@ foreach ($colDefs as $col):
 
     function updateRowAttachmentIndicator(txId, docCount) {
         const id = parseInt(txId, 10) || 0;
-        if (!id || !txTableBody) return;
-        const row = txTableBody.querySelector('tr[data-id="' + id + '"]');
+        if (!id) return;
+        // Query live DOM — after applyMainContent the closed-over tbody is detached.
+        const body = document.getElementById('txTableBody');
+        if (!body) return;
+        const row = body.querySelector('tr[data-id="' + id + '"]');
         if (!row) return;
         const n = parseInt(docCount, 10) || 0;
         row.dataset.docCount = String(n);
@@ -2992,6 +2996,18 @@ foreach ($colDefs as $col):
             const next = tmp.querySelector('td');
             if (next) cell.replaceWith(next);
         }
+    }
+
+    function refreshAttachIndicatorAfterSwap(txId) {
+        const id = parseInt(txId, 10) || 0;
+        if (!id) return;
+        fetch('pages/ledger.php?transaction_documents=' + id)
+            .then(parseJsonResponse)
+            .then(function(data) {
+                if (!data || data.error || data.success === false) return;
+                updateRowAttachmentIndicator(id, (data.documents || []).length);
+            })
+            .catch(function() { /* list row still present; icon can appear on next load */ });
     }
 
     function setListLoading(on) {
@@ -5491,10 +5507,34 @@ foreach ($colDefs as $col):
     // Initial shadow default for empty form
     refreshReferenceSuggestion();
 
+    function buildTxSaveFormData() {
+        const fd = new FormData(form);
+        // Never send a picked-but-not-uploaded file with the transaction write.
+        // Including it made the save POST look like an upload and produced a
+        // second insert (duplicate Reference #).
+        fd.delete('tx_document');
+        fd.delete('document');
+        fd.set('action', 'save');
+        return fd;
+    }
+
+    function collectAndClearFilesForSave() {
+        const selected = getSelectedDocFiles();
+        if (selected.length) {
+            queuePendingCreateDocs(selected);
+            clearDocFileSelection();
+        }
+        return collectFilesToUploadOnSave();
+    }
+
     // Form submit (Add or Edit) — process queued attachment deletions after confirm
     if (form) {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
+            e.stopPropagation();
+            if (form.dataset.saving === '1') {
+                return;
+            }
 
             const seqVal = (document.getElementById('reference_number')?.value || '').trim();
             if (!budgetOnlyEditMode && !/^\d{6}$/.test(seqVal)) {
@@ -5588,13 +5628,18 @@ foreach ($colDefs as $col):
                     showToast('Save cancelled — Reference # not confirmed for reuse.', 'info');
                     return;
                 }
+                if (form.dataset.saving === '1') return;
+                form.dataset.saving = '1';
+                if (saveBtn) saveBtn.disabled = true;
 
-                const filesToUpload = collectFilesToUploadOnSave();
+                // Promote any file still sitting in the picker into the upload
+                // queue, then save the transaction once (without the file).
+                const filesToUpload = collectAndClearFilesForSave();
 
-                // Save transaction first; then upload queued/selected files; then delete queued attachments
+                // Save transaction first; then upload queued files; then delete queued attachments
                 fetch('pages/ledger.php' + buildQueryString(true), {
                     method: 'POST',
-                    body: new FormData(form)
+                    body: buildTxSaveFormData()
                 })
                     .then(r => r.text())
                     .then(html => {
@@ -5604,6 +5649,7 @@ foreach ($colDefs as $col):
                         if (saveOk) markTxFormClean();
 
                         if (!saveOk) {
+                            form.dataset.saving = '0';
                             applyMainContent(html);
                             if (pendingDeletes.length) {
                                 showToast('Transaction was not saved; queued attachments were not deleted.', 'warning', 6000);
@@ -5629,9 +5675,22 @@ foreach ($colDefs as $col):
                             if (upRes.fail && upRes.fail.length) {
                                 extras.push('some attachments failed: ' + upRes.fail.join('; '));
                             }
+                            const attachChanged = !!(
+                                (upRes.ok && upRes.ok.length)
+                                || (upRes.fail && upRes.fail.length)
+                                || pendingDeletes.length
+                                || (filesToUpload.length && savedId)
+                            );
+
+                            function finishSaveUi(afterHtml) {
+                                applyMainContent(afterHtml);
+                                if (attachChanged && savedId) {
+                                    refreshAttachIndicatorAfterSwap(savedId);
+                                }
+                            }
 
                             if (!pendingDeletes.length) {
-                                applyMainContent(html);
+                                finishSaveUi(html);
                                 if (extras.length) {
                                     const warn = (upRes.fail && upRes.fail.length) || (filesToUpload.length && !savedId);
                                     showToast('Transaction saved. ' + extras.join('. ') + '.', warn ? 'warning' : 'success', 6500);
@@ -5640,14 +5699,14 @@ foreach ($colDefs as $col):
                             }
                             return executeQueuedDocumentDeletion(pendingDeletes)
                                 .then(delRes => {
-                                    applyMainContent(html);
+                                    finishSaveUi(html);
                                     const delMsg = delRes.message || ((delRes.deleted_count || pendingDeletes.length) + ' attachment(s) deleted.');
                                     const more = extras.length ? (' ' + extras.join('. ') + '.') : '';
                                     const warn = upRes.fail && upRes.fail.length;
                                     showToast('Transaction saved. ' + delMsg + more, warn ? 'warning' : 'success', 6500);
                                 })
                                 .catch(delErr => {
-                                    applyMainContent(html);
+                                    finishSaveUi(html);
                                     const more = extras.length ? (' ' + extras.join('. ') + '.') : '';
                                     showToast(
                                         'Transaction saved, but attachment deletion failed: '
@@ -5660,7 +5719,14 @@ foreach ($colDefs as $col):
                     })
                     .catch(err => {
                         console.error(err);
+                        form.dataset.saving = '0';
+                        if (typeof recalcTotals === 'function') recalcTotals();
                         showToast('Save failed. See console.', 'danger');
+                    })
+                    .finally(function() {
+                        if (form && form.isConnected) {
+                            form.dataset.saving = '0';
+                        }
                     });
             });
         });
@@ -6539,14 +6605,14 @@ foreach ($colDefs as $col):
         });
     }
 
-    // ── Leader-key hotkeys (; then command) — same pattern as Lookup pages ──
-    const LEDGER_LEADER_KEY = ';';
-    const LEDGER_LEADER_TIMEOUT_MS = 2500;
+    // ── Ctrl/Cmd hotkeys (work even when a form field has focus) ──
     const ledgerPageRoot = document.querySelector('.ledger-page');
-    let ledgerLeaderActive = false;
-    let ledgerLeaderTimer = null;
-    let ledgerHotkeyBanner = null;
     let ledgerHelpPopover = null;
+
+    function ledgerModLabel() {
+        const plat = String((typeof navigator !== 'undefined' && (navigator.platform || navigator.userAgent)) || '');
+        return /Mac|iPhone|iPad|iPod/i.test(plat) ? '⌘' : 'Ctrl';
+    }
 
     function toastHotkeyUnavailable() {
         if (typeof showToast === 'function') {
@@ -6573,55 +6639,52 @@ foreach ($colDefs as $col):
         return false;
     }
 
-    function hideLedgerHotkeyBanner() {
-        if (ledgerHotkeyBanner && ledgerHotkeyBanner.parentNode) {
-            ledgerHotkeyBanner.parentNode.removeChild(ledgerHotkeyBanner);
-        }
-        ledgerHotkeyBanner = null;
+    function isStandardEditingShortcut(e) {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+        const k = String(e.key || '').toLowerCase();
+        return k === 'a' || k === 'c' || k === 'v' || k === 'x';
     }
 
-    function showLedgerHotkeyBanner() {
-        hideLedgerHotkeyBanner();
-        ledgerHotkeyBanner = document.createElement('div');
-        ledgerHotkeyBanner.className = 'temper-hotkey-banner';
-        ledgerHotkeyBanner.setAttribute('role', 'status');
-        ledgerHotkeyBanner.innerHTML =
-            'Hotkey mode — press a command (<kbd>f</kbd> filter, <kbd>a</kbd> add, <kbd>e</kbd> edit, <kbd>?</kbd> help) or <kbd>Esc</kbd>';
-        document.body.appendChild(ledgerHotkeyBanner);
+    function ledgerHotkeyLetter(e) {
+        const raw = e.key;
+        if (raw === '?' || (raw === '/' && e.shiftKey)) return '?';
+        return String(raw || '').toLowerCase();
     }
 
-    function endLedgerLeaderMode() {
-        ledgerLeaderActive = false;
-        if (ledgerLeaderTimer) {
-            clearTimeout(ledgerLeaderTimer);
-            ledgerLeaderTimer = null;
-        }
-        hideLedgerHotkeyBanner();
-    }
-
-    function startLedgerLeaderMode() {
-        ledgerLeaderActive = true;
-        if (ledgerLeaderTimer) clearTimeout(ledgerLeaderTimer);
-        showLedgerHotkeyBanner();
-        ledgerLeaderTimer = setTimeout(endLedgerLeaderMode, LEDGER_LEADER_TIMEOUT_MS);
+    function applyLedgerHotkeyTitles() {
+        const mod = ledgerModLabel();
+        const setTitle = function(el, text) {
+            if (el) el.setAttribute('title', text);
+        };
+        setTitle(addTxBtn, 'Add Transaction (' + mod + '+A)');
+        setTitle(viewTxBtn, 'View selected (' + mod + '+V)');
+        setTitle(editTxBtn, 'Edit selected (' + mod + '+E)');
+        setTitle(clearAllFiltersBtn, 'Clear all column filters (' + mod + '+C)');
+        setTitle(ledgerHelpBtn, 'Keyboard shortcuts (' + mod + '+?)');
+        setTitle(importTextBtn, 'Paste Beancount-style text to fill this form (does not save). ' + mod + '+I');
+        setTitle(addLineBtn, 'Add a split line (' + mod + '+L)');
+        setTitle(editFromViewBtn, 'Edit this transaction (' + mod + '+E)');
+        setTitle(saveBtn, 'Save Transaction (' + mod + '+S)');
+        setTitle(cancelBtn2, 'Close (' + mod + '+X, or Esc)');
     }
 
     function buildLedgerHelpHtml() {
+        const mod = ledgerModLabel();
         return (
-            '<p class="mb-2 small text-muted">Press <kbd>;</kbd> then a command '
-            + '(when not typing in a field):</p>'
+            '<p class="mb-2 small text-muted">Press <kbd>' + mod + '</kbd>+<kbd>key</kbd> '
+            + '(works while a field is focused; cut/copy/paste/select-all are left alone):</p>'
             + '<ul class="temper-lookup-hotkey-help-list">'
-            + '<li><kbd>;</kbd> <kbd>f</kbd> — Focus first column filter</li>'
-            + '<li><kbd>;</kbd> <kbd>c</kbd> — Clear all filters</li>'
-            + '<li><kbd>;</kbd> <kbd>a</kbd> — Add Transaction</li>'
-            + '<li><kbd>;</kbd> <kbd>v</kbd> — View selected</li>'
-            + '<li><kbd>;</kbd> <kbd>e</kbd> — Edit selected / switch View to Edit</li>'
-            + '<li><kbd>;</kbd> <kbd>i</kbd> — Import from Text (Add)</li>'
-            + '<li><kbd>;</kbd> <kbd>l</kbd> — Add line (Add/Edit)</li>'
-            + '<li><kbd>;</kbd> <kbd>x</kbd> — Close current modal</li>'
-            + '<li><kbd>;</kbd> <kbd>?</kbd> or <kbd>h</kbd> — This help</li>'
-            + '<li><kbd>Esc</kbd> — Cancel hotkey mode</li>'
-            + '<li><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>⌘</kbd>+<kbd>S</kbd> — Save (Add/Edit only)</li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>F</kbd> — Focus first column filter</li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>C</kbd> — Clear all filters <span class="text-muted">(when not copying)</span></li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>A</kbd> — Add Transaction <span class="text-muted">(when not select-all)</span></li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>V</kbd> — View selected <span class="text-muted">(when not pasting)</span></li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>E</kbd> — Edit selected / switch View to Edit</li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>I</kbd> — Import from Text (Add)</li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>L</kbd> — Add line (Add/Edit)</li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>X</kbd> — Close current modal <span class="text-muted">(when not cutting)</span></li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>?</kbd> or <kbd>' + mod + '</kbd>+<kbd>H</kbd> — This help</li>'
+            + '<li><kbd>' + mod + '</kbd>+<kbd>S</kbd> — Save (Add/Edit only)</li>'
+            + '<li><kbd>Esc</kbd> — Close modal</li>'
             + '</ul>'
         );
     }
@@ -6640,7 +6703,8 @@ foreach ($colDefs as $col):
     function showLedgerHotkeyHelp() {
         if (!ledgerHelpBtn || typeof bootstrap === 'undefined' || !bootstrap.Popover) {
             if (typeof showToast === 'function') {
-                showToast('Shortcuts: ; f filter · ; a add · ; e edit · ; ? help · Ctrl+S save', 'info', 5000);
+                const mod = ledgerModLabel();
+                showToast('Shortcuts: ' + mod + '+F filter · ' + mod + '+A add · ' + mod + '+E edit · ' + mod + '+? help · ' + mod + '+S save', 'info', 5000);
             }
             return;
         }
@@ -6882,49 +6946,50 @@ foreach ($colDefs as $col):
         return false;
     }
 
+    function isLedgerHotkeyCommand(letter) {
+        const k = String(letter || '').toLowerCase();
+        return k === 's' || k === 'f' || k === '/' || k === 'c' || k === 'a'
+            || k === 'v' || k === 'e' || k === 'i' || k === 'l' || k === 'x'
+            || k === '?' || k === 'h';
+    }
+
+    function consumeLedgerHotkeyEvent(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+        }
+    }
+
     function onLedgerHotkeyKeyDown(e) {
         if (!ledgerPageRoot || !ledgerPageRoot.isConnected) {
             disposeLedgerHotkeys();
             return;
         }
 
-        // Ctrl/Cmd+S: only when Add/Edit transaction modal is the top modal
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 's') {
-            if (shouldInterceptSaveShortcut()) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (ledgerLeaderActive) endLedgerLeaderMode();
-                saveFromHotkey();
-            }
+        if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+
+        const typing = isLedgerTypingTarget(e.target);
+        // Leave cut / copy / paste / select-all to the browser while editing
+        if (typing && isStandardEditingShortcut(e)) {
             return;
         }
 
-        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const letter = ledgerHotkeyLetter(e);
+        if (!isLedgerHotkeyCommand(letter)) return;
 
-        if (ledgerLeaderActive) {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                endLedgerLeaderMode();
-                return;
-            }
-            const raw = e.key;
-            if (raw === 'Shift' || raw === 'Control' || raw === 'Alt' || raw === 'Meta') return;
-            e.preventDefault();
-            endLedgerLeaderMode();
-            runLedgerHotkeyCommand(raw);
+        if (letter === 's') {
+            if (!shouldInterceptSaveShortcut()) return;
+            consumeLedgerHotkeyEvent(e);
+            saveFromHotkey();
             return;
         }
 
-        if (isLedgerTypingTarget(e.target)) return;
-
-        if (e.key === LEDGER_LEADER_KEY) {
-            e.preventDefault();
-            startLedgerLeaderMode();
-        }
+        consumeLedgerHotkeyEvent(e);
+        runLedgerHotkeyCommand(letter === '/' ? 'f' : letter);
     }
 
     function disposeLedgerHotkeys() {
-        endLedgerLeaderMode();
         disposeLedgerHelpPopover();
         document.removeEventListener('keydown', onLedgerHotkeyKeyDown, true);
         if (window.TemperLedgerPage && window.TemperLedgerPage._bound === onLedgerHotkeyKeyDown) {
@@ -6932,6 +6997,7 @@ foreach ($colDefs as $col):
         }
     }
 
+    applyLedgerHotkeyTitles();
     document.addEventListener('keydown', onLedgerHotkeyKeyDown, true);
     window.TemperLedgerPage = {
         _bound: onLedgerHotkeyKeyDown,

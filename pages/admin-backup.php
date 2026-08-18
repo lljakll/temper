@@ -41,10 +41,27 @@ function verifyCurrentUserPassword(mysqli $db, int $userId, string $password): b
 
 function backupDownloadContentType(string $filename): string {
     $kind = backupFileKind($filename);
-    if ($kind === 'data_csv') {
+    if ($kind === 'data_csv' || $kind === 'restored_csv') {
         return 'application/zip';
     }
     return 'application/sql';
+}
+
+function backupEntryClientPayload(array $backup, array $unlockedBackups): array {
+    $integrity = is_array($backup['integrity'] ?? null) ? $backup['integrity'] : [];
+    return [
+        'name' => (string)($backup['name'] ?? ''),
+        'size' => (int)($backup['size'] ?? 0),
+        'display_datetime' => (string)($backup['display_datetime'] ?? 'Unknown'),
+        'kind' => $backup['kind'] ?? null,
+        'kind_label' => (string)($backup['kind_label'] ?? backupKindLabel((string)($backup['name'] ?? ''))),
+        'checksum' => is_string($backup['checksum'] ?? null) ? $backup['checksum'] : '',
+        'unlocked' => in_array((string)($backup['name'] ?? ''), $unlockedBackups, true),
+        'integrity' => [
+            'valid' => (bool)($integrity['valid'] ?? false),
+            'summary' => (string)($integrity['summary'] ?? 'Integrity status unavailable'),
+        ],
+    ];
 }
 
 // ── Downloads ───────────────────────────────────────────────────────────────
@@ -68,6 +85,21 @@ if (isset($_GET['action'])) {
         readfile($path);
         $db->close();
         exit;
+    }
+
+    if ($action === 'list_backups') {
+        pruneUnlockedBackups($backupDir);
+        $listed = listBackupFiles($backupDir, true, null);
+        $unlocked = getUnlockedBackups();
+        $files = [];
+        foreach ($listed as $backup) {
+            $files[] = backupEntryClientPayload($backup, $unlocked);
+        }
+        sendJsonResponse([
+            'success' => true,
+            'files' => $files,
+            'count' => count($files),
+        ], $db);
     }
 
     if ($action === 'download_checksum' && isset($_GET['file'])) {
@@ -417,15 +449,14 @@ $autoState = loadAutoBackupState();
                 </button>
 
                 <div id="backupListSection">
-                <?php if (count($backups) > 0): ?>
                     <hr class="my-3">
-                    <h6 class="small fw-semibold text-uppercase text-muted mb-1">Saved Backups</h6>
+                    <h6 class="small fw-semibold text-uppercase text-muted mb-1">Saved backups</h6>
                     <p class="text-muted small mb-2">
                         <i class="bi bi-lock-fill"></i>
                         Backups are <strong>locked</strong> by default. Unlock with your password to enable deletion.
                     </p>
                     <div class="list-group list-group-flush" id="backupList">
-                        <?php foreach (array_slice($backups, 0, 12) as $backup): ?>
+                        <?php foreach ($backups as $backup): ?>
                             <?php
                                 $isUnlocked = in_array($backup['name'], $unlockedBackups, true);
                                 $integrity = is_array($backup['integrity'] ?? null) ? $backup['integrity'] : [];
@@ -507,9 +538,7 @@ $autoState = loadAutoBackupState();
                             </div>
                         <?php endforeach; ?>
                     </div>
-                <?php else: ?>
-                    <p class="text-muted small mb-0 mt-3" id="backupListEmpty">No saved backups yet.</p>
-                <?php endif; ?>
+                    <p class="text-muted small mb-0 mt-3<?= count($backups) > 0 ? ' d-none' : '' ?>" id="backupListEmpty">No saved backups yet.</p>
                 </div>
             </div>
         </div>
@@ -599,7 +628,7 @@ $autoState = loadAutoBackupState();
     const unlockSubmitBtn = document.getElementById('unlockSubmitBtn');
 
     function initBackupTooltips() {
-        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+        document.querySelectorAll('#backupList [data-bs-toggle="tooltip"]').forEach(el => {
             const existing = bootstrap.Tooltip.getInstance(el);
             if (existing) {
                 existing.dispose();
@@ -624,22 +653,97 @@ $autoState = loadAutoBackupState();
         helper.remove();
     }
 
-    document.querySelectorAll('.backup-checksum-copy').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const checksum = btn.dataset.checksum || '';
-            if (!checksum) {
-                return;
-            }
-            try {
-                await copyTextToClipboard(checksum);
-                showToast('Checksum copied to clipboard.', 'success', 2500);
-            } catch {
-                showToast('Could not copy checksum.', 'danger');
-            }
+    function escHtml(s) {
+        return String(s ?? '').replace(/[&<>"']/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
         });
-    });
+    }
 
-    initBackupTooltips();
+    function renderBackupRow(backup) {
+        const name = String(backup.name || '');
+        const checksum = String(backup.checksum || '');
+        const unlocked = !!backup.unlocked;
+        const integrity = backup.integrity || {};
+        const integrityValid = !!integrity.valid;
+        const integritySummary = String(integrity.summary || 'Integrity status unavailable');
+        const kindLabel = String(backup.kind_label || 'Backup');
+        const when = String(backup.display_datetime || 'Unknown');
+        const sizeKb = ((Number(backup.size) || 0) / 1024).toFixed(1);
+        const enc = encodeURIComponent(name);
+        const checksumBtn = checksum
+            ? '<div class="backup-checksum-line mt-1">'
+                + '<span class="text-muted">SHA256:</span> '
+                + '<button type="button" class="backup-checksum-copy font-monospace" data-checksum="'
+                + escHtml(checksum) + '" title="Click to copy checksum">'
+                + escHtml(checksum) + '</button></div>'
+            : '';
+        const checksumDl = checksum
+            ? '<a href="pages/admin-backup.php?action=download_checksum&amp;file=' + enc
+                + '" class="btn btn-outline-secondary btn-sm" title="Download checksum">'
+                + '<i class="bi bi-file-earmark-check"></i></a>'
+            : '';
+        const lockBtn = unlocked
+            ? '<button type="button" class="btn btn-outline-danger btn-sm backup-delete-btn" data-file="'
+                + escHtml(name) + '" title="Delete backup"><i class="bi bi-trash"></i></button>'
+            : '<button type="button" class="btn btn-outline-warning btn-sm backup-unlock-btn" data-file="'
+                + escHtml(name) + '" title="Unlock to delete"><i class="bi bi-unlock"></i></button>';
+        const statusBadge = unlocked
+            ? '<span class="badge bg-success-subtle text-success border border-success-subtle backup-status-badge">'
+                + '<i class="bi bi-unlock"></i> Unlocked</span>'
+            : '<span class="badge bg-secondary-subtle text-secondary border backup-status-badge">'
+                + '<i class="bi bi-lock-fill"></i> Locked</span>';
+        const integrityIcon = integrityValid
+            ? '<i class="bi bi-patch-check-fill text-success" aria-label="Integrity verified"></i>'
+            : '<i class="bi bi-x-circle-fill text-danger" aria-label="Integrity check failed"></i>';
+
+        return '<div class="list-group-item px-0 py-2 backup-row" data-file="' + escHtml(name) + '">'
+            + '<div class="d-flex justify-content-between align-items-start gap-2">'
+            + '<div class="small flex-grow-1 min-w-0">'
+            + '<div class="d-flex align-items-center gap-2 flex-wrap">'
+            + '<span class="fw-semibold">' + escHtml(name) + '</span>'
+            + '<span class="badge bg-primary-subtle text-primary border border-primary-subtle">'
+            + escHtml(kindLabel) + '</span>'
+            + '<span class="backup-integrity-badge" data-bs-toggle="tooltip" data-bs-placement="top" title="'
+            + escHtml(integritySummary) + '">' + integrityIcon + '</span>'
+            + statusBadge
+            + '</div>'
+            + '<div class="text-muted">' + escHtml(when) + ' &middot; ' + escHtml(sizeKb) + ' KB</div>'
+            + checksumBtn
+            + '</div>'
+            + '<div class="d-flex gap-1 flex-shrink-0 backup-actions">'
+            + '<a href="pages/admin-backup.php?action=download&amp;file=' + enc
+            + '" class="btn btn-outline-secondary btn-sm" title="Download backup">'
+            + '<i class="bi bi-download"></i></a>'
+            + checksumDl
+            + lockBtn
+            + '</div></div></div>';
+    }
+
+    function renderBackupList(files) {
+        const listEl = document.getElementById('backupList');
+        const emptyEl = document.getElementById('backupListEmpty');
+        if (!listEl) return;
+        const rows = Array.isArray(files) ? files : [];
+        listEl.innerHTML = rows.map(renderBackupRow).join('');
+        if (emptyEl) emptyEl.classList.toggle('d-none', rows.length > 0);
+        initBackupTooltips();
+    }
+
+    function loadSavedBackups() {
+        return fetch('pages/admin-backup.php?action=list_backups')
+            .then(r => parseJsonResponse(r))
+            .then(res => {
+                if (!res || res.error || res.success === false) {
+                    throw new Error((res && res.error) || 'Could not list backups.');
+                }
+                renderBackupList(res.files || []);
+            })
+            .catch(err => {
+                if (typeof showToast === 'function') {
+                    showToast(err.message || 'Could not load saved backups.', 'warning', 4000);
+                }
+            });
+    }
 
     function reloadPage() {
         fetch(`pages/${page}.php`)
@@ -722,18 +826,57 @@ $autoState = loadAutoBackupState();
         });
     }
 
-    document.querySelectorAll('.backup-unlock-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.getElementById('unlockBackupFile').value = btn.dataset.file;
-            document.getElementById('unlockBackupName').textContent = btn.dataset.file;
-            document.getElementById('unlockPassword').value = '';
-            if (!unlockModal) return;
-            if (unlockModalEl && typeof window.mountModalOnBody === 'function') {
-                unlockModalEl = window.mountModalOnBody(unlockModalEl);
+    const backupListSection = document.getElementById('backupListSection');
+    if (backupListSection) {
+        backupListSection.addEventListener('click', function(e) {
+            const copyBtn = e.target.closest('.backup-checksum-copy');
+            if (copyBtn) {
+                const checksum = copyBtn.dataset.checksum || '';
+                if (!checksum) return;
+                copyTextToClipboard(checksum)
+                    .then(() => showToast('Checksum copied to clipboard.', 'success', 2500))
+                    .catch(() => showToast('Could not copy checksum.', 'danger'));
+                return;
             }
-            unlockModal.show();
+            const unlockBtn = e.target.closest('.backup-unlock-btn');
+            if (unlockBtn) {
+                document.getElementById('unlockBackupFile').value = unlockBtn.dataset.file;
+                document.getElementById('unlockBackupName').textContent = unlockBtn.dataset.file;
+                document.getElementById('unlockPassword').value = '';
+                if (!unlockModal) return;
+                if (unlockModalEl && typeof window.mountModalOnBody === 'function') {
+                    unlockModalEl = window.mountModalOnBody(unlockModalEl);
+                }
+                unlockModal.show();
+                return;
+            }
+            const delBtn = e.target.closest('.backup-delete-btn');
+            if (delBtn) {
+                const file = delBtn.dataset.file;
+                if (!confirm(`Permanently delete backup "${file}"?\n\nThis action cannot be undone.`)) {
+                    return;
+                }
+                if (!confirm('Are you absolutely sure? The backup file will be removed from the server.')) {
+                    return;
+                }
+                delBtn.disabled = true;
+                postAction({ action: 'delete_backup', file })
+                    .then(res => {
+                        if (res.error) {
+                            showToast(res.error, 'danger');
+                            delBtn.disabled = false;
+                            return;
+                        }
+                        showToast(res.message, 'success');
+                        reloadPage();
+                    })
+                    .catch(() => {
+                        showToast('Delete failed. Please try again.', 'danger');
+                        delBtn.disabled = false;
+                    });
+            }
         });
-    });
+    }
 
     if (unlockForm) {
         unlockForm.addEventListener('submit', e => {
@@ -754,34 +897,6 @@ $autoState = loadAutoBackupState();
                 .finally(() => { unlockSubmitBtn.disabled = false; });
         });
     }
-
-    document.querySelectorAll('.backup-delete-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const file = btn.dataset.file;
-            if (!confirm(`Permanently delete backup "${file}"?\n\nThis action cannot be undone.`)) {
-                return;
-            }
-            if (!confirm('Are you absolutely sure? The backup file will be removed from the server.')) {
-                return;
-            }
-
-            btn.disabled = true;
-            postAction({ action: 'delete_backup', file })
-                .then(res => {
-                    if (res.error) {
-                        showToast(res.error, 'danger');
-                        btn.disabled = false;
-                        return;
-                    }
-                    showToast(res.message, 'success');
-                    reloadPage();
-                })
-                .catch(() => {
-                    showToast('Delete failed. Please try again.', 'danger');
-                    btn.disabled = false;
-                });
-        });
-    });
 
     if (restoreForm) {
         restoreForm.addEventListener('submit', e => {
@@ -830,6 +945,9 @@ $autoState = loadAutoBackupState();
                 });
         });
     }
+
+    initBackupTooltips();
+    loadSavedBackups();
 })();
 </script>
 <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-admin-backup-script');if(s){(new Function(s.textContent))();}this.remove();">

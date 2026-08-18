@@ -27,10 +27,17 @@ function safeBackupFilename(string $filename): ?string {
     if (@preg_match(
         '/^backup_(?:data_|full_)?[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}\.(?:sql|zip)$/',
         $base
-    ) !== 1) {
-        return null;
+    ) === 1) {
+        return $base;
     }
-    return $base;
+    // Uploaded restore archives written next to created backups
+    if (@preg_match(
+        '/^restored_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}_[A-Za-z0-9._-]+\.(?:sql|zip)$/',
+        $base
+    ) === 1) {
+        return $base;
+    }
+    return null;
 }
 
 /**
@@ -51,6 +58,12 @@ function backupFileKind(string $filename): ?string {
     }
     if (str_starts_with($safe, 'backup_full_') && str_ends_with($safe, '.sql')) {
         return 'full';
+    }
+    if (str_starts_with($safe, 'restored_') && str_ends_with($safe, '.zip')) {
+        return 'restored_csv';
+    }
+    if (str_starts_with($safe, 'restored_') && str_ends_with($safe, '.sql')) {
+        return 'restored_sql';
     }
     if (preg_match('/^backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}\.sql$/', $safe) === 1) {
         return 'legacy_full';
@@ -77,11 +90,17 @@ function formatBackupFilenameDatetime(string $filename): ?string {
         '/^backup_(?:data_|full_)?([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})([0-9]{2})[0-9]{2}\.(?:sql|zip)$/',
         $safe,
         $matches
-    ) !== 1) {
-        return null;
+    ) === 1) {
+        return $matches[1] . ' ' . $matches[2] . ':' . $matches[3] . ' UTC';
     }
-
-    return $matches[1] . ' ' . $matches[2] . ':' . $matches[3] . ' UTC';
+    if (@preg_match(
+        '/^restored_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})([0-9]{2})[0-9]{2}_/',
+        $safe,
+        $matches
+    ) === 1) {
+        return $matches[1] . ' ' . $matches[2] . ':' . $matches[3] . ' UTC';
+    }
+    return null;
 }
 
 function parseBackupFilenameTimestamp(string $filename): ?int {
@@ -94,7 +113,13 @@ function parseBackupFilenameTimestamp(string $filename): ?int {
         $safe,
         $matches
     ) !== 1) {
-        return null;
+        if (@preg_match(
+            '/^restored_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{6})_/',
+            $safe,
+            $matches
+        ) !== 1) {
+            return null;
+        }
     }
 
     $dt = DateTimeImmutable::createFromFormat(
@@ -132,6 +157,8 @@ function backupKindLabel(string $filename): string {
         'data_csv' => 'Data (CSV)',
         'full' => 'Full (schema + data)',
         'legacy_full' => 'Full (legacy)',
+        'restored_sql' => 'Restored (SQL)',
+        'restored_csv' => 'Restored (CSV)',
         default => 'Backup',
     };
 }
@@ -1096,14 +1123,16 @@ function inspectBackupFile(string $backupDir, string $filename, bool $ensureChec
     }
 
     $kind = backupFileKind($filename);
-    if ($kind === 'data_csv') {
+    if ($kind === 'data_csv' || $kind === 'restored_csv') {
         $integrity = inspectCsvZipBackupIntegrity($path);
     } else {
         $raw = @file_get_contents($path);
         if (!is_string($raw) || $raw === '') {
             return $failed('Could not read backup file');
         }
-        $expected = ($kind === 'data_sql') ? 'data' : (($kind === 'full' || $kind === 'legacy_full') ? 'full' : 'any');
+        $expected = ($kind === 'data_sql' || $kind === 'restored_sql')
+            ? 'data'
+            : (($kind === 'full' || $kind === 'legacy_full') ? 'full' : 'any');
         $integrity = inspectSqlBackupIntegrity($raw, $expected);
     }
 
@@ -1141,18 +1170,23 @@ function listBackupFiles(string $dir, bool $withIntegrity = true, ?string $filte
     pruneOrphanedChecksumFiles($dir);
 
     $dir = rtrim($dir, '/\\');
-    $paths = array_merge(
-        glob($dir . '/backup_*.sql', GLOB_NOSORT) ?: [],
-        glob($dir . '/backup_*.zip', GLOB_NOSORT) ?: []
-    );
+    $entries = @scandir($dir);
+    if (!is_array($entries)) {
+        return $files;
+    }
 
-    foreach ($paths as $path) {
-        if (!is_string($path) || !is_file($path) || !is_readable($path)) {
+    foreach ($entries as $name) {
+        if (!is_string($name) || $name === '.' || $name === '..') {
             continue;
         }
-
-        $name = basename($path);
+        if (str_starts_with($name, '.') || str_ends_with(strtolower($name), '.sha256')) {
+            continue;
+        }
         if (safeBackupFilename($name) === null) {
+            continue;
+        }
+        $path = $dir . '/' . $name;
+        if (!is_file($path) || !is_readable($path)) {
             continue;
         }
 

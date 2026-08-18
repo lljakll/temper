@@ -1,5 +1,3 @@
-updates/20260809_0913_ledger_excel_multiselect_filters.sql
-updates/20260811_0914_ledger_filter_dropdown_layout.sql
 updates/20260812_0915_toast_zindex_and_doc_upload.sql
 updates/20260814_0916_attachment_upload_size.sql
 updates/20260814_0917_ledger_attachment_portfolio.sql
@@ -7,3 +5,5 @@ updates/20260814_0918_ledger_portfolio_viewer_refine.sql
 updates/20260814_0919_ledger_portfolio_narrow_wheel.sql
 updates/20260814_0920_import_sequence_ref_warning.sql
 updates/20260814_0921_data_backup_exclude_system_tables.sql
+updates/20260816_0922_ledger_hotkeys_view_edit.sql
+updates/20260816_0923_ledger_add_attachments_deposit_budget.sql
