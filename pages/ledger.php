@@ -2170,44 +2170,64 @@ foreach ($colDefs as $col):
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div class="alert alert-info py-2 small mb-3" role="note">
-                    <strong>Read-only import.</strong> This tool only parses your text and fills the Add Transaction form.
-                    Nothing is written to the database until you click <strong>Save Transaction</strong> on the form
-                    (all usual balancing and validation still apply).
-                </div>
-                <p class="small text-muted mb-2">
-                    Paste a single Beancount-style ledger entry. Date on the first line, then one posting per line
-                    with an account name and signed amount (positive = debit, negative = credit). Amounts must sum to zero for a balanced entry.
-                </p>
-                <p class="small mb-1"><strong>Example format:</strong></p>
-                <pre class="small bg-body-secondary border rounded p-2 mb-3" id="importTextExample" style="white-space: pre-wrap;">2026-03-15 * "Office Depot" "Printer paper and toner"
+                <div id="importTextPastePane">
+                    <div class="alert alert-info py-2 small mb-3" role="note">
+                        <strong>Read-only import.</strong> This tool only parses your text and fills the Add Transaction form.
+                        Nothing is written to the database until you click <strong>Save Transaction</strong> on the form
+                        (all usual balancing and validation still apply).
+                    </div>
+                    <p class="small text-muted mb-2">
+                        Paste a single Beancount-style ledger entry. Date on the first line, then one posting per line
+                        with an account name and signed amount (positive = debit, negative = credit). Amounts must sum to zero for a balanced entry.
+                    </p>
+                    <p class="small mb-1"><strong>Example format:</strong></p>
+                    <pre class="small bg-body-secondary border rounded p-2 mb-3" id="importTextExample" style="white-space: pre-wrap;">2026-03-15 * "Office Depot" "Printer paper and toner"
   reference: "260150"
   check: "4521"
   ; Ordered supplies for office
   Bank Account           -87.43  ; fund: GOF
   Accounts Payable        87.43</pre>
-                <p class="small text-muted mb-2">
-                    Header: first quoted string = <strong>Pay To</strong>, second = <strong>Description</strong>.
-                    Metadata lines recognized: <code>reference:</code>, <code>ref:</code>, <code>sequence:</code>, and <code>check:</code> (others ignored).
-                    <code>;</code> comments (full-line or trailing) are appended to Description when present.
-                    Per-line fund: <code>; fund: GOF</code> or fund name. Account names must match the chart (case-insensitive).
-                </p>
-                <label class="form-label small mb-1" for="importTextArea">Ledger text</label>
-                <textarea class="form-control font-monospace" id="importTextArea" rows="12"
-                          placeholder="Paste one transaction here…"
-                          spellcheck="false" autocomplete="off"></textarea>
-                <div id="importTextErrors" class="alert alert-danger small mt-3 d-none mb-0" role="alert">
-                    <div class="fw-semibold mb-1">Could not parse / populate</div>
-                    <ul class="mb-0 ps-3" id="importTextErrorList"></ul>
+                    <p class="small text-muted mb-2">
+                        Header: first quoted string = <strong>Pay To</strong>, second = <strong>Description</strong>.
+                        Metadata lines recognized: <code>reference:</code>, <code>ref:</code>, <code>sequence:</code>, and <code>check:</code> (others ignored).
+                        <code>;</code> comments (full-line or trailing) are appended to Description when present.
+                        Per-line fund: <code>; fund: GOF</code> or fund name.
+                        Account names are matched to the chart (spacing, punctuation, case, and minor spelling differences are tolerated).
+                        If a name is unclear you will be asked to pick the account.
+                    </p>
+                    <label class="form-label small mb-1" for="importTextArea">Ledger text</label>
+                    <textarea class="form-control font-monospace" id="importTextArea" rows="12"
+                              placeholder="Paste one transaction here…"
+                              spellcheck="false" autocomplete="off"></textarea>
+                    <div id="importTextErrors" class="alert alert-danger small mt-3 d-none mb-0" role="alert">
+                        <div class="fw-semibold mb-1">Could not parse / populate</div>
+                        <ul class="mb-0 ps-3" id="importTextErrorList"></ul>
+                    </div>
+                    <div id="importTextWarnings" class="alert alert-warning small mt-3 d-none mb-0" role="status">
+                        <div class="fw-semibold mb-1">Warnings</div>
+                        <ul class="mb-0 ps-3" id="importTextWarningList"></ul>
+                    </div>
                 </div>
-                <div id="importTextWarnings" class="alert alert-warning small mt-3 d-none mb-0" role="status">
-                    <div class="fw-semibold mb-1">Warnings</div>
-                    <ul class="mb-0 ps-3" id="importTextWarningList"></ul>
+                <div id="importTextMatchPane" class="d-none">
+                    <div class="alert alert-warning py-2 small mb-3" role="note">
+                        <strong>Some account names need a match.</strong>
+                        Choose the correct account for each line, or skip the line.
+                        Suggested matches are listed first. Your pasted text is kept if you go Back.
+                    </div>
+                    <div id="importTextMatchWarnings" class="alert alert-warning small mb-3 d-none" role="status">
+                        <ul class="mb-0 ps-3" id="importTextMatchWarningList"></ul>
+                    </div>
+                    <div id="importTextMatchErrors" class="alert alert-danger small mb-3 d-none" role="alert">
+                        <ul class="mb-0 ps-3" id="importTextMatchErrorList"></ul>
+                    </div>
+                    <div id="importTextMatchRows"></div>
                 </div>
             </div>
             <div class="modal-footer py-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" id="importTextCancelBtn">Cancel</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="importTextBackBtn">Back</button>
                 <button type="button" class="btn btn-sm btn-primary" id="importTextParseBtn">Parse &amp; Populate</button>
+                <button type="button" class="btn btn-sm btn-primary d-none" id="importTextApplyMatchBtn">Apply Matches</button>
             </div>
         </div>
     </div>
@@ -2340,10 +2360,14 @@ foreach ($colDefs as $col):
     let importTextModalEl = document.getElementById('importTextModal');
     const importTextArea = document.getElementById('importTextArea');
     const importTextParseBtn = document.getElementById('importTextParseBtn');
+    const importTextBackBtn = document.getElementById('importTextBackBtn');
+    const importTextApplyMatchBtn = document.getElementById('importTextApplyMatchBtn');
     const importTextErrors = document.getElementById('importTextErrors');
     const importTextErrorList = document.getElementById('importTextErrorList');
     const importTextWarnings = document.getElementById('importTextWarnings');
     const importTextWarningList = document.getElementById('importTextWarningList');
+    /** Holds a parse that still needs account picks; paste is not discarded. */
+    let pendingImportParse = null;
 
     /**
      * Use shell helpers (footer mountModalOnBody / showFragmentModal) so ledger modals
@@ -6011,69 +6035,259 @@ foreach ($colDefs as $col):
     bindDocumentListActions();
 
     // ── Import from Text (Beancount-style paste → form only; no DB writes) ──
-    function normLookupKey(s) {
+    const IMPORT_MATCH_AUTO = 0.86;
+    const IMPORT_MATCH_AUTO_GAP = 0.10;
+    const IMPORT_MATCH_SUGGEST = 0.42;
+    const IMPORT_MATCH_MAX_SUGGEST = 8;
+    const IMPORT_TOKEN_EXPAND = {
+        acct: 'account',
+        accts: 'accounts',
+        chkg: 'checking',
+        chk: 'checking',
+        svgs: 'savings',
+        exp: 'expense',
+        rec: 'receivable',
+        liab: 'liability',
+        ap: 'accounts payable',
+        ar: 'accounts receivable'
+    };
+
+    function collapseLookupKey(s) {
         return String(s || '')
-            .trim()
             .toLowerCase()
-            .replace(/\s+/g, ' ');
+            .replace(/&/g, ' and ')
+            .replace(/[''`´]/g, '')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function normLookupKey(s) {
+        return collapseLookupKey(s);
     }
 
     function stripBeancountPath(accountName) {
         // Allow Assets:Bank Account or Bank Account — prefer full string, then last segment
         const raw = String(accountName || '').trim();
-        if (!raw.includes(':')) return [raw];
-        const parts = raw.split(':').map(p => p.trim()).filter(Boolean);
-        const last = parts.length ? parts[parts.length - 1] : raw;
-        return last && last !== raw ? [raw, last] : [raw];
+        const variants = [];
+        const push = function(v) {
+            const t = String(v || '').trim();
+            if (t && variants.indexOf(t) === -1) variants.push(t);
+        };
+        push(raw);
+        if (raw.includes(':')) {
+            const parts = raw.split(':').map(p => p.trim()).filter(Boolean);
+            if (parts.length) push(parts[parts.length - 1]);
+        }
+        return variants.length ? variants : [raw];
     }
 
-    function resolveByName(list, rawName, { alsoCode = false, label = 'account' } = {}) {
-        const candidates = stripBeancountPath(rawName);
-        for (const cand of candidates) {
-            const key = normLookupKey(cand);
-            if (!key) continue;
-            const exact = [];
-            const codeHits = [];
-            for (const item of list) {
-                if (normLookupKey(item.name) === key) exact.push(item);
-                if (alsoCode && item.code && normLookupKey(item.code) === key) codeHits.push(item);
+    function expandLookupQuery(collapsed) {
+        const tokens = String(collapsed || '').split(' ').filter(Boolean);
+        if (!tokens.length) return [];
+        const expanded = tokens.map(t => IMPORT_TOKEN_EXPAND[t] || t).join(' ');
+        const variants = [collapsed];
+        if (expanded !== collapsed) variants.push(expanded);
+        return variants;
+    }
+
+    function levenshteinDistance(a, b) {
+        const s = String(a || '');
+        const t = String(b || '');
+        const n = s.length;
+        const m = t.length;
+        if (n === 0) return m;
+        if (m === 0) return n;
+        let prev = new Array(m + 1);
+        let curr = new Array(m + 1);
+        for (let j = 0; j <= m; j++) prev[j] = j;
+        for (let i = 1; i <= n; i++) {
+            curr[0] = i;
+            const sc = s.charCodeAt(i - 1);
+            for (let j = 1; j <= m; j++) {
+                const cost = sc === t.charCodeAt(j - 1) ? 0 : 1;
+                const del = prev[j] + 1;
+                const ins = curr[j - 1] + 1;
+                const sub = prev[j - 1] + cost;
+                curr[j] = del < ins ? (del < sub ? del : sub) : (ins < sub ? ins : sub);
             }
-            if (exact.length === 1) return { ok: true, item: exact[0] };
-            if (exact.length > 1) {
-                return {
-                    ok: false,
-                    error: 'Ambiguous ' + label + ' "' + cand + '" matches: ' + exact.map(i => i.name).join(', ')
-                };
+            const tmp = prev;
+            prev = curr;
+            curr = tmp;
+        }
+        return prev[m];
+    }
+
+    function scoreStringPair(query, target) {
+        if (!query || !target) return 0;
+        if (query === target) return 1;
+        const qLen = query.length;
+        const tLen = target.length;
+        if (qLen < 2) return 0;
+
+        if (target.includes(query) || query.includes(target)) {
+            const ratio = Math.min(qLen, tLen) / Math.max(qLen, tLen);
+            if (target.startsWith(query) || query.startsWith(target)) {
+                return 0.78 + 0.20 * ratio;
             }
-            if (alsoCode && codeHits.length === 1) return { ok: true, item: codeHits[0] };
-            if (alsoCode && codeHits.length > 1) {
-                return {
-                    ok: false,
-                    error: 'Ambiguous ' + label + ' code "' + cand + '" matches: ' + codeHits.map(i => i.name).join(', ')
-                };
+            return 0.70 + 0.22 * ratio;
+        }
+
+        const qTok = query.split(' ').filter(Boolean);
+        const tTok = target.split(' ').filter(Boolean);
+        if (qTok.length && tTok.length) {
+            let matched = 0;
+            let tokenScoreSum = 0;
+            const used = new Set();
+            for (const qt of qTok) {
+                let best = 0;
+                let bestI = -1;
+                for (let i = 0; i < tTok.length; i++) {
+                    if (used.has(i)) continue;
+                    const tt = tTok[i];
+                    let s = 0;
+                    if (qt === tt) {
+                        s = 1;
+                    } else if (tt.startsWith(qt) || qt.startsWith(tt)) {
+                        s = 0.9 * Math.min(qt.length, tt.length) / Math.max(qt.length, tt.length);
+                    } else {
+                        const sim = 1 - levenshteinDistance(qt, tt) / Math.max(qt.length, tt.length);
+                        if (sim >= 0.75) s = sim;
+                    }
+                    if (s > best) {
+                        best = s;
+                        bestI = i;
+                    }
+                }
+                if (best >= 0.75 && bestI >= 0) {
+                    used.add(bestI);
+                    matched++;
+                    tokenScoreSum += best;
+                }
+            }
+            if (matched === qTok.length) {
+                const coverage = qTok.join('').length / Math.max(tTok.join('').length, 1);
+                const avg = tokenScoreSum / qTok.length;
+                return Math.min(0.98, 0.72 + 0.18 * avg + 0.08 * Math.min(1, coverage));
+            }
+            if (matched >= Math.ceil(qTok.length * 0.6) && matched >= 1) {
+                const avg = tokenScoreSum / qTok.length;
+                return 0.45 + 0.30 * avg * (matched / qTok.length);
             }
         }
-        // Fuzzy: name contains or is contained (only if unique)
-        const primary = normLookupKey(candidates[candidates.length - 1] || rawName);
-        if (primary && primary.length >= 3) {
-            const fuzzy = list.filter(item => {
-                const n = normLookupKey(item.name);
-                return n.includes(primary) || primary.includes(n);
+
+        const maxLen = Math.max(qLen, tLen);
+        if (maxLen === 0) return 0;
+        const sim = 1 - levenshteinDistance(query, target) / maxLen;
+        if (sim >= 0.72) return sim * 0.92;
+        return 0;
+    }
+
+    function scoreLookupItem(rawName, item, { alsoCode = false } = {}) {
+        const rawVariants = stripBeancountPath(rawName);
+        const queries = [];
+        rawVariants.forEach(v => {
+            expandLookupQuery(collapseLookupKey(v)).forEach(q => {
+                if (q && queries.indexOf(q) === -1) queries.push(q);
             });
-            if (fuzzy.length === 1) return { ok: true, item: fuzzy[0], fuzzy: true };
-            if (fuzzy.length > 1) {
-                return {
-                    ok: false,
-                    error: 'Ambiguous ' + label + ' "' + rawName + '" — matches: ' + fuzzy.map(i => i.name).join(', ')
-                        + '. Use the exact name from the chart.'
-                };
+        });
+        const targets = [];
+        const addTarget = function(v) {
+            const k = collapseLookupKey(v);
+            if (k && targets.indexOf(k) === -1) targets.push(k);
+        };
+        addTarget(item.name);
+        if (item.name && String(item.name).includes(':')) {
+            const parts = String(item.name).split(':').map(p => p.trim()).filter(Boolean);
+            if (parts.length > 1) {
+                addTarget(parts[parts.length - 1]);
+                addTarget(parts[0]);
             }
         }
+        if (item.coa_number) addTarget(item.coa_number);
+        if (item.coa_number && item.name) addTarget(String(item.coa_number) + ' ' + item.name);
+        if (alsoCode && item.code) addTarget(item.code);
+        let best = 0;
+        for (const q of queries) {
+            for (const t of targets) {
+                const s = scoreStringPair(q, t);
+                if (s > best) best = s;
+            }
+        }
+        return best;
+    }
+
+    function matchLookupName(list, rawName, { alsoCode = false, label = 'account' } = {}) {
+        const scored = [];
+        for (const item of list) {
+            const score = scoreLookupItem(rawName, item, { alsoCode });
+            if (score > 0) scored.push({ item, score });
+        }
+        scored.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return String(a.item.name || '').localeCompare(String(b.item.name || ''));
+        });
+        const best = scored[0] || null;
+        const displayName = String(rawName || '').trim();
+        const qKey = collapseLookupKey(stripBeancountPath(rawName)[0] || displayName);
+        const tooShort = qKey.length < 3;
+        const competitor = scored.find((s, i) => i > 0 && s.score >= IMPORT_MATCH_SUGGEST);
+        const candidates = scored
+            .filter(s => s.score >= IMPORT_MATCH_SUGGEST)
+            .slice(0, IMPORT_MATCH_MAX_SUGGEST);
+
+        let auto = false;
+        if (best) {
+            const gap = competitor ? (best.score - competitor.score) : 1;
+            const uniqueExact = best.score >= 0.999 && (!competitor || competitor.score < 0.999);
+            const confident = !tooShort && best.score >= IMPORT_MATCH_AUTO && gap >= IMPORT_MATCH_AUTO_GAP;
+            const uniqueStrong = !tooShort && best.score >= IMPORT_MATCH_AUTO && !competitor;
+            auto = uniqueExact || confident || uniqueStrong;
+        }
+
+        if (auto) {
+            return {
+                status: 'matched',
+                ok: true,
+                item: best.item,
+                score: best.score,
+                fuzzy: best.score < 0.999,
+                candidates
+            };
+        }
+
+        const ambiguous = !!(best && competitor && (best.score - competitor.score) < IMPORT_MATCH_AUTO_GAP
+            && best.score >= IMPORT_MATCH_SUGGEST);
+        let error;
+        if (!best || best.score < IMPORT_MATCH_SUGGEST) {
+            error = 'Unknown ' + label + ' "' + displayName
+                + '". Names must match existing records in the system.';
+        } else if (ambiguous) {
+            const names = scored
+                .filter(s => s.score >= IMPORT_MATCH_SUGGEST && s.score >= best.score - IMPORT_MATCH_AUTO_GAP)
+                .map(s => s.item.name);
+            error = 'Ambiguous ' + label + ' "' + displayName + '" — matches: ' + names.join(', ')
+                + '. Use the exact name from the chart.';
+        } else {
+            error = 'Uncertain ' + label + ' "' + displayName + '" (closest: '
+                + (best ? best.item.name : '') + ').';
+        }
+
         return {
+            status: ambiguous ? 'ambiguous' : 'unresolved',
             ok: false,
-            error: 'Unknown ' + label + ' "' + String(rawName || '').trim()
-                + '". Names must match existing records in the system.'
+            item: null,
+            score: best ? best.score : 0,
+            fuzzy: true,
+            candidates,
+            error
         };
+    }
+
+    function resolveByName(list, rawName, opts) {
+        const m = matchLookupName(list, rawName, opts || {});
+        if (m.status === 'matched') return { ok: true, item: m.item, fuzzy: m.fuzzy };
+        return { ok: false, error: m.error, candidates: m.candidates };
     }
 
     function parseQuotedTokens(rest) {
@@ -6365,18 +6579,13 @@ foreach ($colDefs as $col):
             );
         }
 
-        // Resolve accounts / funds
-        const resolvedLines = [];
+        // Resolve accounts / funds. Unclear accounts are collected for a picker
+        // instead of aborting the whole paste.
+        const unresolved = [];
         let sum = 0;
         for (const p of postings) {
-            const accRes = resolveByName(ledgerImportLookups.accounts, p.accountName);
-            if (!accRes.ok) {
-                errors.push('Line ' + p.lineNo + ': ' + accRes.error);
-                continue;
-            }
-            if (accRes.fuzzy) {
-                warnings.push('Line ' + p.lineNo + ': account "' + p.accountName + '" matched as "' + accRes.item.name + '" (fuzzy).');
-            }
+            const accRes = matchLookupName(ledgerImportLookups.accounts, p.accountName, { label: 'account' });
+            p.match = accRes;
 
             let fundId = '';
             if (p.fundHint) {
@@ -6388,22 +6597,21 @@ foreach ($colDefs as $col):
                     errors.push('Line ' + p.lineNo + ': ' + fRes.error + ' Use fund name or code (e.g. GOF).');
                 } else {
                     fundId = fRes.item.id;
+                    if (fRes.fuzzy) {
+                        warnings.push('Line ' + p.lineNo + ': fund "' + p.fundHint + '" matched as "' + fRes.item.name + '" (fuzzy).');
+                    }
                 }
             }
-
-            const type = p.amount > 0 ? 'debit' : 'credit';
-            const absAmt = Math.abs(p.amount);
+            p.fundId = fundId;
             sum += p.amount;
 
-            resolvedLines.push({
-                account_id: accRes.item.id,
-                fund_id: fundId,
-                // Categories follow the account (labels sync on row create); server re-resolves on save
-                natural_category_id: accRes.item.natural_category_id || '',
-                functional_category_id: accRes.item.functional_category_id || '',
-                amount: absAmt.toFixed(2),
-                type
-            });
+            if (accRes.status === 'matched') {
+                if (accRes.fuzzy) {
+                    warnings.push('Line ' + p.lineNo + ': account "' + p.accountName + '" matched as "' + accRes.item.name + '" (fuzzy).');
+                }
+            } else {
+                unresolved.push(p);
+            }
         }
 
         const ref = String(referenceVal || '').trim();
@@ -6430,7 +6638,7 @@ foreach ($colDefs as $col):
             return { ok: false, errors, warnings };
         }
 
-        // Balance check only after all postings resolved cleanly
+        // Balance check uses all parsed posting amounts (including unresolved)
         if (Math.abs(sum) >= 0.005) {
             warnings.push(
                 'Postings do not balance (signed sum = ' + sum.toFixed(2) + '). '
@@ -6438,6 +6646,26 @@ foreach ($colDefs as $col):
             );
         }
 
+        const headerData = {
+            transaction_date: dateStr,
+            pay_to: payTo,
+            description: finalDescription,
+            check_number: check,
+            reference_number: ref
+        };
+
+        if (unresolved.length) {
+            return {
+                ok: true,
+                needsResolution: true,
+                unresolved,
+                postings,
+                warnings,
+                data: headerData
+            };
+        }
+
+        const resolvedLines = postings.map(p => importLineFromAccountPosting(p, p.match.item));
         if (resolvedLines.length < 2) {
             return {
                 ok: false,
@@ -6449,14 +6677,19 @@ foreach ($colDefs as $col):
         return {
             ok: true,
             warnings,
-            data: {
-                transaction_date: dateStr,
-                pay_to: payTo,
-                description: finalDescription,
-                check_number: check,
-                reference_number: ref,
-                lines: resolvedLines
-            }
+            data: Object.assign({}, headerData, { lines: resolvedLines })
+        };
+    }
+
+    function importLineFromAccountPosting(p, accountItem) {
+        return {
+            account_id: accountItem.id,
+            fund_id: p.fundId || '',
+            // Categories follow the account (labels sync on row create); server re-resolves on save
+            natural_category_id: accountItem.natural_category_id || '',
+            functional_category_id: accountItem.functional_category_id || '',
+            amount: Math.abs(p.amount).toFixed(2),
+            type: p.amount > 0 ? 'debit' : 'credit'
         };
     }
 
@@ -6536,12 +6769,193 @@ foreach ($colDefs as $col):
         }
     }
 
+    function importAccountOptionLabel(item) {
+        const coa = String(item.coa_number || '').trim();
+        return coa ? (coa + ' · ' + item.name) : item.name;
+    }
+
+    function setImportTextStep(step) {
+        const pastePane = document.getElementById('importTextPastePane');
+        const matchPane = document.getElementById('importTextMatchPane');
+        const titleEl = document.getElementById('importTextTitle');
+        const isMatch = step === 'match';
+        if (pastePane) pastePane.classList.toggle('d-none', isMatch);
+        if (matchPane) matchPane.classList.toggle('d-none', !isMatch);
+        if (importTextParseBtn) importTextParseBtn.classList.toggle('d-none', isMatch);
+        if (importTextBackBtn) importTextBackBtn.classList.toggle('d-none', !isMatch);
+        if (importTextApplyMatchBtn) importTextApplyMatchBtn.classList.toggle('d-none', !isMatch);
+        if (titleEl) titleEl.textContent = isMatch ? 'Match accounts' : 'Import from Text';
+    }
+
+    function clearImportMatchFeedback() {
+        const errBox = document.getElementById('importTextMatchErrors');
+        const errList = document.getElementById('importTextMatchErrorList');
+        const warnBox = document.getElementById('importTextMatchWarnings');
+        const warnList = document.getElementById('importTextMatchWarningList');
+        if (errList) errList.innerHTML = '';
+        if (errBox) errBox.classList.add('d-none');
+        if (warnList) warnList.innerHTML = '';
+        if (warnBox) warnBox.classList.add('d-none');
+    }
+
+    function showImportMatchErrors(msgs) {
+        const errBox = document.getElementById('importTextMatchErrors');
+        const errList = document.getElementById('importTextMatchErrorList');
+        if (!errBox || !errList) return;
+        errList.innerHTML = (msgs || []).map(m => '<li>' + escHtml(String(m)) + '</li>').join('');
+        errBox.classList.toggle('d-none', !(msgs && msgs.length));
+    }
+
+    function showImportMatchWarnings(msgs) {
+        const warnBox = document.getElementById('importTextMatchWarnings');
+        const warnList = document.getElementById('importTextMatchWarningList');
+        if (!warnBox || !warnList) return;
+        warnList.innerHTML = (msgs || []).map(m => '<li>' + escHtml(String(m)) + '</li>').join('');
+        warnBox.classList.toggle('d-none', !(msgs && msgs.length));
+    }
+
+    function buildImportMatchAccountSelect(posting, selectId) {
+        const suggested = (posting.match && posting.match.candidates) ? posting.match.candidates : [];
+        const suggestedIds = new Set(suggested.map(s => String(s.item.id)));
+        let html = '<select class="form-select form-select-sm import-match-account" id="' + escHtml(selectId) + '"'
+            + ' data-line-no="' + String(posting.lineNo) + '">';
+        html += '<option value="">— Choose account —</option>';
+        html += '<option value="__skip__">Skip this line</option>';
+        if (suggested.length) {
+            html += '<optgroup label="Suggested matches">';
+            suggested.forEach(s => {
+                html += '<option value="' + String(s.item.id) + '">'
+                    + escHtml(importAccountOptionLabel(s.item)) + '</option>';
+            });
+            html += '</optgroup>';
+        }
+        html += '<optgroup label="All accounts">';
+        (ledgerImportLookups.accounts || []).forEach(item => {
+            if (suggestedIds.has(String(item.id))) return;
+            html += '<option value="' + String(item.id) + '">'
+                + escHtml(importAccountOptionLabel(item)) + '</option>';
+        });
+        html += '</optgroup></select>';
+        return html;
+    }
+
+    function renderImportAccountMatchPane(result) {
+        const rowsEl = document.getElementById('importTextMatchRows');
+        if (!rowsEl) return;
+        clearImportMatchFeedback();
+        const unresolved = result.unresolved || [];
+        rowsEl.innerHTML = unresolved.map((p, idx) => {
+            const amt = (p.amount > 0 ? '+' : '') + Number(p.amount).toFixed(2);
+            const side = p.amount > 0 ? 'debit' : 'credit';
+            const closest = (p.match && p.match.candidates && p.match.candidates[0])
+                ? p.match.candidates[0].item.name
+                : '';
+            const reason = p.match && p.match.status === 'ambiguous'
+                ? 'Several accounts look similar.'
+                : (closest ? ('Closest chart name: ' + closest) : 'No close chart name found.');
+            return '<div class="border rounded p-2 mb-2 import-match-row">'
+                + '<div class="d-flex justify-content-between align-items-baseline gap-2 small mb-1">'
+                + '<span><span class="text-muted">Line ' + p.lineNo + '</span> · <code>'
+                + escHtml(p.accountName) + '</code></span>'
+                + '<span class="font-monospace text-nowrap">' + escHtml(amt)
+                + ' <span class="text-muted">(' + side + ')</span></span>'
+                + '</div>'
+                + '<p class="small text-muted mb-1">' + escHtml(reason) + '</p>'
+                + buildImportMatchAccountSelect(p, 'importMatchAcct' + idx)
+                + '</div>';
+        }).join('');
+        if (result.warnings && result.warnings.length) {
+            showImportMatchWarnings(result.warnings);
+        }
+        setImportTextStep('match');
+        const firstSel = rowsEl.querySelector('select.import-match-account');
+        if (firstSel) {
+            try { firstSel.focus(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function finishImportFromParse(result) {
+        applyImportToAddForm(result.data, result.warnings || []);
+        pendingImportParse = null;
+        setImportTextStep('paste');
+    }
+
+    function applyImportAccountMatches() {
+        if (!pendingImportParse || !pendingImportParse.needsResolution) return;
+        clearImportMatchFeedback();
+        const rowsEl = document.getElementById('importTextMatchRows');
+        const selects = rowsEl ? rowsEl.querySelectorAll('select.import-match-account') : [];
+        const pickByLine = {};
+        const missing = [];
+        selects.forEach(sel => {
+            const lineNo = parseInt(sel.getAttribute('data-line-no'), 10);
+            const val = String(sel.value || '');
+            if (!val) missing.push(lineNo);
+            pickByLine[lineNo] = val;
+        });
+        if (missing.length) {
+            showImportMatchErrors(missing.map(n => 'Line ' + n + ': choose an account or skip the line.'));
+            return;
+        }
+
+        const accountsById = {};
+        (ledgerImportLookups.accounts || []).forEach(a => { accountsById[String(a.id)] = a; });
+        const lines = [];
+        const warnings = (pendingImportParse.warnings || [])
+            .filter(w => String(w).indexOf('do not balance') === -1);
+        let signedSum = 0;
+        for (const p of (pendingImportParse.postings || [])) {
+            let accountItem = null;
+            if (p.match && p.match.status === 'matched' && p.match.item) {
+                accountItem = p.match.item;
+            } else {
+                const picked = pickByLine[p.lineNo];
+                if (picked === '__skip__') {
+                    warnings.push('Line ' + p.lineNo + ': skipped ("' + p.accountName + '").');
+                    continue;
+                }
+                accountItem = accountsById[String(picked)] || null;
+                if (!accountItem) {
+                    showImportMatchErrors(['Line ' + p.lineNo + ': chosen account is not in the chart.']);
+                    return;
+                }
+                warnings.push('Line ' + p.lineNo + ': account "' + p.accountName + '" matched as "' + accountItem.name + '" (chosen).');
+            }
+            lines.push(importLineFromAccountPosting(p, accountItem));
+            signedSum += p.amount;
+        }
+        if (lines.length < 2) {
+            showImportMatchErrors(['At least two posting lines are required after skips. Un-skip a line or go Back and edit the paste.']);
+            return;
+        }
+        if (Math.abs(signedSum) >= 0.005
+            && !warnings.some(w => String(w).indexOf('do not balance') !== -1)) {
+            warnings.push(
+                'Postings do not balance (signed sum = ' + signedSum.toFixed(2) + '). '
+                + 'The form will show the imbalance; fix amounts before saving.'
+            );
+        }
+        finishImportFromParse({
+            data: Object.assign({}, pendingImportParse.data, { lines }),
+            warnings
+        });
+    }
+
+    function resetImportTextModalState() {
+        pendingImportParse = null;
+        setImportTextStep('paste');
+        const rowsEl = document.getElementById('importTextMatchRows');
+        if (rowsEl) rowsEl.innerHTML = '';
+        clearImportMatchFeedback();
+        clearImportTextFeedback();
+    }
+
     function openImportTextModal() {
         // Re-resolve in case a prior page left a body-mounted node
         importTextModalEl = document.getElementById('importTextModal') || importTextModalEl;
         if (!importTextModalEl || typeof bootstrap === 'undefined') return;
 
-        clearImportTextFeedback();
+        resetImportTextModalState();
         mountModalOnBody(importTextModalEl);
 
         // Focus textarea only after the modal is shown (avoids focusing while aria-hidden)
@@ -6577,21 +6991,48 @@ foreach ($colDefs as $col):
         const text = area ? area.value : '';
         const result = parseBeancountImportText(text);
         if (!result.ok) {
+            pendingImportParse = null;
+            setImportTextStep('paste');
             showImportTextErrors(result.errors || ['Unknown parse error.']);
             if (result.warnings && result.warnings.length) showImportTextWarnings(result.warnings);
             return;
         }
+        if (result.needsResolution) {
+            pendingImportParse = result;
+            renderImportAccountMatchPane(result);
+            return;
+        }
         // Successful parse clears the textarea inside applyImportToAddForm
-        applyImportToAddForm(result.data, result.warnings || []);
+        finishImportFromParse(result);
     }
 
     if (importTextParseBtn) {
         importTextParseBtn.addEventListener('click', runImportTextParse);
     }
+    if (importTextBackBtn) {
+        importTextBackBtn.addEventListener('click', () => {
+            setImportTextStep('paste');
+            const area = document.getElementById('importTextArea') || importTextArea;
+            if (area) {
+                try { area.focus(); } catch (e) { /* ignore */ }
+            }
+        });
+    }
+    if (importTextApplyMatchBtn) {
+        importTextApplyMatchBtn.addEventListener('click', applyImportAccountMatches);
+    }
     // Keydown on modal (delegation) so it works after reparent to body
     if (importTextModalEl) {
         importTextModalEl.addEventListener('keydown', (ev) => {
             const t = ev.target;
+            const matchPane = document.getElementById('importTextMatchPane');
+            const onMatch = matchPane && !matchPane.classList.contains('d-none');
+            if (onMatch && ev.key === 'Enter' && !ev.shiftKey && t && t.classList
+                && t.classList.contains('import-match-account')) {
+                ev.preventDefault();
+                applyImportAccountMatches();
+                return;
+            }
             if (!t || t.id !== 'importTextArea') return;
             if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
                 ev.preventDefault();
@@ -6601,7 +7042,7 @@ foreach ($colDefs as $col):
         importTextModalEl.addEventListener('hidden.bs.modal', () => {
             // Cancel / close / backdrop: clear paste + errors so next open is clean
             clearImportTextArea();
-            clearImportTextFeedback();
+            resetImportTextModalState();
         });
     }
 

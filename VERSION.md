@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.926](#v0926)
 - [v0.925](#v0925)
 - [v0.924](#v0924)
 - [v0.923](#v0923)
@@ -131,6 +132,30 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.926
+
+**Ledger Import from Text: tolerant account matching and a resolve dialog** — 2026-08-19
+
+> No schema update required for this release (Ledger Import-from-Text matching only).  
+> **Patch file (history row):** `updates/20260819_0926_import_fuzzy_account_match.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.926
+
+- Import from Text no longer requires an exact chart name. Matching is tolerant of extra spaces, punctuation, case, Beancount-style `Assets:…` paths, colon-separated chart names (`Supplies:Kitchen`), COA numbers, common abbreviations, and minor spelling differences.
+- A high-confidence unique match is applied automatically (with a fuzzy warning when the paste was not an exact name).
+- When the match is ambiguous or below the confidence threshold, the paste is **not discarded**. A **Match accounts** step lists each unclear line and lets the user pick the chart account or skip the line, then populate the Add form.
+- Sequence / ref / check / amount / fund parsing is unchanged. Manual Add/Edit entry is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.926**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.925 | `updates/20260819_0926_import_fuzzy_account_match.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.925 patches, then this process patch |
 
 ---
 
