@@ -358,8 +358,8 @@ $isDevEnv = (bool)$payload['is_development_env'];
                             <div class="flex-grow-1">
                                 <label class="form-label fw-semibold mb-1" for="cfgAutoBackupEnabled">Enable Auto-Backup</label>
                                 <p class="small text-muted mb-0">
-                                    When on, the system creates <strong>data-only</strong> backups on a schedule
-                                    (SQL, CSV, or both) under <code>storage/backups/</code>.
+                                    When on, the system creates <strong>data-only</strong> backup packages on a schedule
+                                    (SQL, CSV, or both, plus attachments and system config) under <code>storage/backups/</code>.
                                     Full schema dumps remain a manual action on Database Maintenance.
                                     Auto-backup also runs opportunistically when an administrator opens System pages,
                                     and via the CLI script <code>scripts/auto_backup.php</code> (cron).
@@ -402,9 +402,9 @@ $isDevEnv = (bool)$payload['is_development_env'];
                                     <label class="form-label fw-semibold mb-1" for="cfgAutoBackupFormat">Format</label>
                                     <select class="form-select form-select-sm" id="cfgAutoBackupFormat"
                                             <?= $autoBackupEnabled ? '' : 'disabled' ?>>
-                                        <option value="sql" <?= $autoBackupFormat === 'sql' ? 'selected' : '' ?>>SQL (data-only)</option>
-                                        <option value="csv" <?= $autoBackupFormat === 'csv' ? 'selected' : '' ?>>CSV (zip)</option>
-                                        <option value="both" <?= $autoBackupFormat === 'both' ? 'selected' : '' ?>>Both</option>
+                                        <option value="sql" <?= $autoBackupFormat === 'sql' ? 'selected' : '' ?>>SQL + files</option>
+                                        <option value="csv" <?= $autoBackupFormat === 'csv' ? 'selected' : '' ?>>CSV + files</option>
+                                        <option value="both" <?= $autoBackupFormat === 'both' ? 'selected' : '' ?>>SQL, CSV, and files</option>
                                     </select>
                                 </div>
                             </div>

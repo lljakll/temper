@@ -267,7 +267,7 @@ $exportDir = getExportsDir();
             header('HTTP/1.1 404 Not Found');
             exit;
         }
-        header('Content-Type: application/sql');
+        header('Content-Type: ' . backupDownloadContentType($safe));
         header('Content-Disposition: attachment; filename="' . $safe . '"');
         header('Content-Length: ' . filesize($path));
         readfile($path);
@@ -370,16 +370,53 @@ $exportDir = getExportsDir();
                 maintSendJson(['error' => 'Incorrect password. Full restore cancelled.'], $db);
             }
             if (!isset($_FILES['backup_file']) || $_FILES['backup_file']['error'] !== UPLOAD_ERR_OK) {
-                maintSendJson(['error' => 'Please select a valid full .sql backup file.'], $db);
+                maintSendJson(['error' => 'Please select a valid full backup (.sql or .zip).'], $db);
             }
             $upload = $_FILES['backup_file'];
             $ext = strtolower(pathinfo($upload['name'], PATHINFO_EXTENSION));
-            if ($ext !== 'sql') {
-                maintSendJson(['error' => 'Only .sql full backups are supported for schema restore.'], $db);
+            if (!in_array($ext, ['sql', 'zip'], true)) {
+                maintSendJson(['error' => 'Only .sql (legacy full dump) or .zip (full package) backups are supported for schema restore.'], $db);
             }
-            if ($upload['size'] > 80 * 1024 * 1024) {
-                maintSendJson(['error' => 'Backup file is too large (max 80 MB).'], $db);
+            if ($upload['size'] > backupRestoreMaxUploadBytes()) {
+                maintSendJson(['error' => 'Backup file is too large (max 256 MB).'], $db);
             }
+
+            if ($ext === 'zip') {
+                $archive = archiveRestoredBackupFromPath($upload['name'], $upload['tmp_name'], 'zip');
+                $restore = restoreFullFromZip($db, $upload['tmp_name']);
+                if (!$restore['success']) {
+                    logAuditAction($db, $userId, $username, 'restore_full_failed', $restore['error'] ?? '');
+                    maintSendJson(['error' => $restore['error'] ?? 'Full restore failed.'], $db);
+                }
+                logAuditAction($db, $userId, $username, 'restore_full', $upload['name']);
+                $storage = is_array($restore['storage'] ?? null) ? $restore['storage'] : [];
+                $storageRestored = (int)($storage['restored'] ?? 0);
+                $storageDirs = is_array($storage['dirs'] ?? null) ? $storage['dirs'] : [];
+                $message = 'Full schema+data restore completed.';
+                if ($storageRestored > 0 || $storageDirs !== []) {
+                    $message .= ' Restored ' . number_format($storageRestored) . ' storage file'
+                        . ($storageRestored === 1 ? '' : 's');
+                    if ($storageDirs !== []) {
+                        $message .= ' (' . implode(', ', $storageDirs) . ')';
+                    }
+                    $message .= '.';
+                } elseif (!empty($storage['skipped'])) {
+                    $message .= ' No storage files were in this backup (database only).';
+                }
+                if (!$archive['success']) {
+                    $message .= ' Warning: could not archive upload (' . ($archive['error'] ?? 'unknown') . ').';
+                } else {
+                    $message .= ' Archived as ' . $archive['filename'] . '.';
+                }
+                maintSendJson([
+                    'success' => true,
+                    'message' => $message,
+                    'archive' => $archive,
+                    'storage' => $storage,
+                    'state' => getMaintenanceState($db, $backupDir, $resetUsersRequiredEmptyTables),
+                ], $db);
+            }
+
             $raw = file_get_contents($upload['tmp_name']);
             if ($raw === false || trim($raw) === '') {
                 maintSendJson(['error' => 'Backup file is empty or unreadable.'], $db);
@@ -405,7 +442,7 @@ $exportDir = getExportsDir();
                 maintSendJson(['error' => $restore['error'] ?? 'Full restore failed.'], $db);
             }
             logAuditAction($db, $userId, $username, 'restore_full', $upload['name']);
-            $message = 'Full schema+data restore completed.';
+            $message = 'Full schema+data restore completed. On-disk attachments and config were not changed (SQL-only dump).';
             if (!$archive['success']) {
                 $message .= ' Warning: could not archive upload (' . ($archive['error'] ?? 'unknown') . ').';
             } else {
@@ -618,9 +655,9 @@ $exportDir = getExportsDir();
             </div>
             <div class="card-body">
                 <p class="text-muted small mb-2">
-                    Create a <strong>full</strong> SQL dump (DROP/CREATE + data) for all
-                    <strong><?= (int)$tableCount ?></strong> tables. Use this before structural changes
-                    or for disaster recovery. Day-to-day data exports belong under
+                    Create a <strong>full</strong> package (DROP/CREATE + data for all
+                    <strong><?= (int)$tableCount ?></strong> tables, plus attachments and system config).
+                    Use this before structural changes or for disaster recovery. Day-to-day data exports belong under
                     <a href="javascript:void(0)" onclick="loadPage('admin-backup')">Backup &amp; Restore</a>
                     (data-only).
                 </p>
@@ -661,13 +698,15 @@ $exportDir = getExportsDir();
             <div class="card-body">
                 <div class="alert alert-warning py-2 small mb-3">
                     Overwrites <strong>schema and data</strong> (DROP/CREATE tables). Password required.
+                    A zip package also replaces attachments and system configuration files.
+                    A legacy .sql dump restores the database only.
                     Prefer data-only restore when you only need row data.
                 </div>
                 <form id="fullRestoreForm" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="restore_full">
                     <div class="mb-2">
-                        <label class="form-label small fw-semibold" for="fullBackupFile">Full .sql backup</label>
-                        <input type="file" class="form-control form-control-sm" id="fullBackupFile" name="backup_file" accept=".sql" required>
+                        <label class="form-label small fw-semibold" for="fullBackupFile">Full backup (.zip package or legacy .sql)</label>
+                        <input type="file" class="form-control form-control-sm" id="fullBackupFile" name="backup_file" accept=".sql,.zip" required>
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-semibold" for="fullRestorePassword">Your password</label>
@@ -676,7 +715,7 @@ $exportDir = getExportsDir();
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="fullConfirmRestore" name="confirm_restore" value="1">
                         <label class="form-check-label small" for="fullConfirmRestore">
-                            I understand this replaces schema and all data.
+                            I understand this replaces schema, all data, and (for packages) attachments and config files.
                         </label>
                     </div>
                     <button type="submit" class="btn btn-warning btn-sm" id="fullRestoreBtn">
@@ -928,7 +967,7 @@ $exportDir = getExportsDir();
                 showToast('Please confirm full restore will replace schema and data.', 'warning');
                 return;
             }
-            if (!confirm('This will DROP/CREATE tables and reload all data. Continue?')) {
+            if (!confirm('This will DROP/CREATE tables and reload all data. Zip packages also replace attachments and system config files. Continue?')) {
                 return;
             }
             fullRestoreBtn.disabled = true;

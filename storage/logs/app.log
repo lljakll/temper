@@ -1138,3 +1138,18 @@ Stack trace:
 [19-Aug-2026 17:50:09 UTC] [AUDIT] user=jackie.adair action=ledger.created details=transaction=49 Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines).","Fund \"General Operating Fund\" $100.00."]} ip=::1
 [19-Aug-2026 17:50:23 UTC] [AUDIT] user=jackie.adair action=ledger.created details=transaction=50 Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines).","Fund \"General Operating Fund\" $100.00."]} ip=::1
 [19-Aug-2026 17:50:38 UTC] [AUDIT] user=jackie.adair action=ledger.created details=transaction=51 Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines).","Fund \"General Operating Fund\" $100.00."]} ip=::1
+[19-Aug-2026 22:08:35 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Incorrect integer value: '' for column `temper_db`.`accounts`.`natural_category_id` at row 1 in /var/www/temper/includes/backup_utils.php:1456
+Stack trace:
+#0 /var/www/temper/includes/backup_utils.php(1456): mysqli_stmt->execute()
+#1 Standard input code(179): restoreDataOnlyCsvZip()
+#2 {main}
+  thrown in /var/www/temper/includes/backup_utils.php on line 1456
+[19-Aug-2026 22:11:12 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function ledgerMaxDocumentBytes() in Standard input code:90
+Stack trace:
+#0 {main}
+  thrown in Standard input code on line 90
+[19-Aug-2026 22:11:30 UTC] PHP Fatal error:  Uncaught Error: Undefined constant "TEMPER_DEFAULT_APP_VERSION" in Command line code:1
+Stack trace:
+#0 {main}
+  thrown in Command line code on line 1
+[19-Aug-2026 22:31:44 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/app_version.php on line 885

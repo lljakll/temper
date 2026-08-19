@@ -39,14 +39,6 @@ function verifyCurrentUserPassword(mysqli $db, int $userId, string $password): b
     return password_verify($password, $row['password']);
 }
 
-function backupDownloadContentType(string $filename): string {
-    $kind = backupFileKind($filename);
-    if ($kind === 'data_csv' || $kind === 'restored_csv') {
-        return 'application/zip';
-    }
-    return 'application/sql';
-}
-
 function backupEntryClientPayload(array $backup, array $unlockedBackups): array {
     $integrity = is_array($backup['integrity'] ?? null) ? $backup['integrity'] : [];
     return [
@@ -200,7 +192,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'size' => (int)($fileMeta['size'] ?? 0),
                 'checksum' => $fileMeta['checksum'] ?? null,
                 'kind' => $fileMeta['kind'] ?? backupFileKind($name),
-                'kind_label' => backupKindLabel($name),
+                'kind_label' => (!empty($inspection['package']) && is_array($inspection['package']))
+                    ? backupPackageKindLabelFromPeek($inspection['package'], backupKindLabel($name))
+                    : backupKindLabel($name),
                 'download_url' => 'pages/admin-backup.php?action=download&file=' . urlencode($name),
                 'checksum_url' => 'pages/admin-backup.php?action=download_checksum&file=' . urlencode($name),
                 'integrity' => [
@@ -267,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!isset($_FILES['backup_file']) || $_FILES['backup_file']['error'] !== UPLOAD_ERR_OK) {
             $uploadError = $_FILES['backup_file']['error'] ?? UPLOAD_ERR_NO_FILE;
             $uploadMessages = [
-                UPLOAD_ERR_INI_SIZE => 'Backup file exceeds server upload limit.',
+                UPLOAD_ERR_INI_SIZE => 'Backup file exceeds the server upload limit. Raise PHP upload_max_filesize / post_max_size, or restore a smaller package.',
                 UPLOAD_ERR_FORM_SIZE => 'Backup file exceeds form upload limit.',
                 UPLOAD_ERR_PARTIAL => 'Backup file was only partially uploaded.',
                 UPLOAD_ERR_NO_FILE => 'Please select a valid data-only backup (.sql or .zip).',
@@ -283,20 +277,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $upload = $_FILES['backup_file'];
         $ext = strtolower(pathinfo($upload['name'], PATHINFO_EXTENSION));
         if (!in_array($ext, ['sql', 'zip'], true)) {
-            sendJsonResponse(['error' => 'Only .sql (data-only) or .zip (CSV data-only) backups are supported here. Full schema dumps are restored from Database Maintenance.'], $db);
+            sendJsonResponse(['error' => 'Only .sql (legacy data-only dump) or .zip (data package / CSV) backups are supported here. Full schema dumps are restored from Database Maintenance.'], $db);
         }
 
-        if ($upload['size'] > 50 * 1024 * 1024) {
-            sendJsonResponse(['error' => 'Backup file is too large (max 50 MB).'], $db);
-        }
-
-        $raw = file_get_contents($upload['tmp_name']);
-        if ($raw === false || $raw === '') {
-            sendJsonResponse(['error' => 'Backup file is empty or could not be read.'], $db);
+        if ($upload['size'] > backupRestoreMaxUploadBytes()) {
+            sendJsonResponse(['error' => 'Backup file is too large (max 256 MB).'], $db);
         }
 
         if ($ext === 'sql') {
-            // Reject full schema dumps on this page
+            $raw = file_get_contents($upload['tmp_name']);
+            if ($raw === false || $raw === '') {
+                sendJsonResponse(['error' => 'Backup file is empty or could not be read.'], $db);
+            }
+
+            // Reject full schema dumps on this page. Storage files are unchanged
+            // when restoring a legacy SQL-only dump.
             $cleaned = sanitizeSqlBackupContent($raw);
             $validation = validateSqlBackupContent($raw, $cleaned, 'data');
             if (!$validation['valid']) {
@@ -309,7 +304,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sendJsonResponse(['error' => $restore['error'] ?? 'Restore failed.'], $db);
             }
 
-            $message = 'Data restored successfully from SQL backup.';
+            $message = 'Data restored successfully from SQL backup. On-disk attachments and config were not changed (SQL-only dump).';
             if (!$archive['success']) {
                 $message .= ' Warning: uploaded backup could not be archived (' . ($archive['error'] ?? 'unknown') . ').';
             } else {
@@ -318,27 +313,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sendJsonResponse(['success' => true, 'message' => $message, 'archive' => $archive], $db);
         }
 
-        // CSV zip
         $tmpZip = $upload['tmp_name'];
-        $integrity = inspectCsvZipBackupIntegrity($tmpZip);
-        if (!$integrity['valid']) {
-            sendJsonResponse(['error' => $integrity['summary'] ?? 'Invalid CSV zip backup.'], $db);
+        $peek = peekBackupPackage($tmpZip);
+        if (empty($peek['valid_zip'])) {
+            sendJsonResponse(['error' => 'Not a valid zip backup.'], $db);
+        }
+        if (empty($peek['has_sql']) && empty($peek['has_csv'])) {
+            $csvIntegrity = inspectCsvZipBackupIntegrity($tmpZip);
+            sendJsonResponse(['error' => $csvIntegrity['summary'] ?? 'Zip is not a data-only backup (no database.sql or CSV tables).'], $db);
         }
 
-        $archive = archiveRestoredBackup($upload['name'], $raw, 'zip');
-        $restore = restoreDataOnlyCsvZip($db, $tmpZip);
+        $archive = archiveRestoredBackupFromPath($upload['name'], $tmpZip, 'zip');
+        $restore = restoreDataOnlyFromZip($db, $tmpZip);
         if (!$restore['success']) {
-            sendJsonResponse(['error' => $restore['error'] ?? 'CSV restore failed.'], $db);
+            sendJsonResponse(['error' => $restore['error'] ?? 'Package restore failed.'], $db);
         }
 
-        $tableList = !empty($restore['tables']) ? implode(', ', $restore['tables']) : 'tables';
-        $message = 'Data restored successfully from CSV backup (' . $tableList . ').';
+        $storage = is_array($restore['storage'] ?? null) ? $restore['storage'] : [];
+        $storageRestored = (int)($storage['restored'] ?? 0);
+        $storageDirs = is_array($storage['dirs'] ?? null) ? $storage['dirs'] : [];
+        $source = (string)($restore['source'] ?? 'package');
+        $message = 'Data restored successfully from ' . $source . ' backup package.';
+        if ($storageRestored > 0 || $storageDirs !== []) {
+            $message .= ' Restored ' . number_format($storageRestored) . ' storage file'
+                . ($storageRestored === 1 ? '' : 's');
+            if ($storageDirs !== []) {
+                $message .= ' (' . implode(', ', $storageDirs) . ')';
+            }
+            $message .= '.';
+        } elseif (!empty($storage['skipped'])) {
+            $message .= ' No storage files were in this backup (database only).';
+        }
         if (!$archive['success']) {
             $message .= ' Warning: uploaded backup could not be archived (' . ($archive['error'] ?? 'unknown') . ').';
         } else {
             $message .= ' Archived as ' . $archive['filename'] . '.';
         }
-        sendJsonResponse(['success' => true, 'message' => $message, 'archive' => $archive], $db);
+        sendJsonResponse(['success' => true, 'message' => $message, 'archive' => $archive, 'storage' => $storage], $db);
     }
 
     sendJsonResponse(['error' => 'Unknown action.'], $db);
@@ -386,7 +397,8 @@ $autoState = loadAutoBackupState();
         <h2 class="h4 mb-0">Backup &amp; Restore</h2>
         <p class="text-muted small mb-0">
             Data-only export/import for <?= htmlspecialchars(DB_NAME) ?>
-            (no schema). Full schema dumps are under
+            (no schema) plus attachments and system config files.
+            Full schema dumps are under
             <a href="javascript:void(0)" onclick="loadPage('admin-database')" class="text-decoration-none">Database Maintenance</a>.
         </p>
     </div>
@@ -428,19 +440,21 @@ $autoState = loadAutoBackupState();
             </div>
             <div class="card-body">
                 <p class="text-muted small">
-                    Export row data from <strong><?= $tableCount ?></strong> operational tables without CREATE/DROP statements.
+                    Export row data from <strong><?= $tableCount ?></strong> operational tables without CREATE/DROP statements,
+                    plus on-disk user data: transaction attachments, legacy documents, and
+                    <code>storage/config</code> (system settings).
                     <code>app_version</code> and <code>audit_log</code> are omitted so a restore keeps the current version history and audit trail.
-                    Roles and all other operational tables are included.
-                    Choose SQL (INSERT dump), CSV (zip of per-table CSVs), or both.
-                    Files are stored in <code>storage/backups/</code> and can be downloaded.
+                    Logs, exports, and existing backup files are not included.
+                    Choose the dump format inside the zip package: SQL (INSERT dump), CSV (per-table CSVs), or both.
+                    Packages are stored in <code>storage/backups/</code> and can be downloaded.
                 </p>
 
                 <div class="mb-3">
-                    <label class="form-label small fw-semibold" for="backupFormat">Format</label>
-                    <select class="form-select form-select-sm" id="backupFormat" style="max-width: 14rem;">
-                        <option value="sql" selected>SQL (data-only)</option>
-                        <option value="csv">CSV (zip)</option>
-                        <option value="both">Both SQL and CSV</option>
+                    <label class="form-label small fw-semibold" for="backupFormat">Dump format (inside zip)</label>
+                    <select class="form-select form-select-sm" id="backupFormat" style="max-width: 18rem;">
+                        <option value="sql" selected>SQL + files</option>
+                        <option value="csv">CSV + files</option>
+                        <option value="both">SQL, CSV, and files</option>
                     </select>
                 </div>
 
@@ -554,19 +568,21 @@ $autoState = loadAutoBackupState();
                     <i class="bi bi-exclamation-triangle"></i>
                     Restore will <strong>overwrite operational table data</strong> (TRUNCATE + load). Schema is not modified.
                     Existing <code>app_version</code> history and <code>audit_log</code> are left intact.
+                    A <strong>zip package</strong> also replaces attachments and system configuration files from the backup.
+                    A legacy <strong>.sql</strong> dump restores the database only (files on disk stay as they are).
                     Create a backup first. Full schema restore is only available under Database Maintenance.
                 </div>
 
                 <form id="restoreForm" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="restore">
                     <div class="mb-3">
-                        <label for="backupFile" class="form-label small fw-semibold">Data-only backup (.sql or .zip)</label>
+                        <label for="backupFile" class="form-label small fw-semibold">Data-only backup (.zip package or legacy .sql)</label>
                         <input type="file" class="form-control form-control-sm" id="backupFile" name="backup_file" accept=".sql,.zip" required>
                     </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="confirmRestore" name="confirm_restore" value="1">
                         <label class="form-check-label small" for="confirmRestore">
-                            I understand this will replace current row data in the database.
+                            I understand this will replace current row data, and package backups also replace attachments and config files.
                         </label>
                     </div>
                     <button type="submit" class="btn btn-warning btn-sm" id="restoreBtn">
@@ -905,7 +921,7 @@ $autoState = loadAutoBackupState();
                 showToast('Please confirm that you understand restore will overwrite current data.', 'warning');
                 return;
             }
-            if (!confirm('This will overwrite current table data. Continue with data-only restore?')) {
+            if (!confirm('This will overwrite current table data. Zip packages also replace attachments and system config files. Continue with data-only restore?')) {
                 return;
             }
 

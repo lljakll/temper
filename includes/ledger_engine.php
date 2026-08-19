@@ -1090,7 +1090,9 @@ function ledgerFormatBytesLabel(int $bytes): string {
 
 /**
  * Max attachment size in bytes.
- * Uses the effective PHP upload ceiling: min(upload_max_filesize, post_max_size).
+ * Uses the effective PHP upload ceiling: min(upload_max_filesize, post_max_size),
+ * capped at 20 MiB so raising PHP limits for backup-package restore does not
+ * change the ledger attachment policy.
  * Falls back to 20 MiB if PHP reports unlimited or unreadable values.
  */
 function ledgerMaxDocumentBytes(): int {
@@ -1107,7 +1109,7 @@ function ledgerMaxDocumentBytes(): int {
     if ($candidates === []) {
         return $fallback;
     }
-    return min($candidates);
+    return min(min($candidates), $fallback);
 }
 
 function ledgerDocumentTooLargeError(): string {

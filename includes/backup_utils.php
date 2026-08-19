@@ -1,6 +1,9 @@
 <?php
 /**
  * Backup / restore utilities — data-only (SQL, CSV) and full schema+data dumps.
+ * New backups are zip packages: database dump + selected storage files
+ * (attachments, system config, legacy transaction_documents).
+ * Legacy standalone .sql / CSV-only zips remain listable, downloadable, and restorable.
  * All backups live under storage/backups/ with optional .sha256 sidecars.
  *
  * Security: Prevent direct access.
@@ -11,16 +14,18 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 }
 
 require_once __DIR__ . '/storage_paths.php';
+require_once __DIR__ . '/backup_package.php';
 
 /** Auto-backup runtime state (last run), relative to backup dir. */
 const TEMPER_AUTO_BACKUP_STATE_FILE = '.auto_backup_state.json';
 
 /**
  * Allowed data-only / full backup basename patterns.
- * - Legacy full: backup_YYYY-MM-DD_HHMMSS.sql
- * - Data SQL:    backup_data_YYYY-MM-DD_HHMMSS.sql
- * - Data CSV:    backup_data_YYYY-MM-DD_HHMMSS.zip
- * - Full:        backup_full_YYYY-MM-DD_HHMMSS.sql
+ * - Legacy full:     backup_YYYY-MM-DD_HHMMSS.sql
+ * - Legacy data SQL: backup_data_YYYY-MM-DD_HHMMSS.sql
+ * - Data package:    backup_data_YYYY-MM-DD_HHMMSS.zip  (SQL and/or CSV + storage)
+ * - Full SQL:        backup_full_YYYY-MM-DD_HHMMSS.sql
+ * - Full package:    backup_full_YYYY-MM-DD_HHMMSS.zip
  */
 function safeBackupFilename(string $filename): ?string {
     $base = basename($filename);
@@ -55,6 +60,9 @@ function backupFileKind(string $filename): ?string {
     }
     if (str_starts_with($safe, 'backup_data_') && str_ends_with($safe, '.sql')) {
         return 'data_sql';
+    }
+    if (str_starts_with($safe, 'backup_full_') && str_ends_with($safe, '.zip')) {
+        return 'full';
     }
     if (str_starts_with($safe, 'backup_full_') && str_ends_with($safe, '.sql')) {
         return 'full';
@@ -154,13 +162,17 @@ function backupFullFilename(string $token): string {
 function backupKindLabel(string $filename): string {
     return match (backupFileKind($filename)) {
         'data_sql' => 'Data (SQL)',
-        'data_csv' => 'Data (CSV)',
+        'data_csv' => 'Data (package)',
         'full' => 'Full (schema + data)',
         'legacy_full' => 'Full (legacy)',
         'restored_sql' => 'Restored (SQL)',
-        'restored_csv' => 'Restored (CSV)',
+        'restored_csv' => 'Restored (package)',
         default => 'Backup',
     };
+}
+
+function backupDownloadContentType(string $filename): string {
+    return str_ends_with(strtolower($filename), '.zip') ? 'application/zip' : 'application/sql';
 }
 
 function listRecentBackupSummaries(string $dir, int $limit = 4): array {
@@ -655,47 +667,23 @@ function createDataOnlyBackup(mysqli $db, string $format = 'sql', ?string $token
     }
 
     $token = $token ?? backupTimestampToken();
-    $files = [];
-
-    if ($format === 'sql' || $format === 'both') {
-        $sql = generateDataOnlySqlBackup($db);
-        if (trim($sql) === '') {
-            return ['success' => false, 'error' => 'Data-only SQL backup generated empty content.'];
-        }
-        $saved = saveBackupArtifact(backupDataSqlFilename($token), $sql);
-        if (!$saved['success']) {
-            return $saved;
-        }
-        $files[] = [
-            'file' => $saved['file'],
-            'size' => (int)$saved['size'],
-            'checksum' => $saved['checksum'] ?? null,
-            'kind' => 'data_sql',
-        ];
+    $filename = backupDataPackageFilename($token);
+    $saved = createBackupPackage($db, 'data-only', $format, $filename);
+    if (!$saved['success']) {
+        return $saved;
     }
 
-    if ($format === 'csv' || $format === 'both') {
-        $csv = generateDataOnlyCsvZip($db);
-        if (!$csv['success']) {
-            return ['success' => false, 'error' => $csv['error'] ?? 'CSV backup failed.', 'files' => $files];
-        }
-        $saved = saveBackupArtifact(backupDataCsvFilename($token), $csv['binary']);
-        if (!$saved['success']) {
-            return ['success' => false, 'error' => $saved['error'] ?? 'CSV save failed.', 'files' => $files];
-        }
-        $files[] = [
-            'file' => $saved['file'],
-            'size' => (int)$saved['size'],
-            'checksum' => $saved['checksum'] ?? null,
-            'kind' => 'data_csv',
-        ];
-    }
+    $files = [[
+        'file' => $saved['file'],
+        'size' => (int)$saved['size'],
+        'checksum' => $saved['checksum'] ?? null,
+        'kind' => 'data_csv',
+    ]];
 
-    $names = array_map(static fn($f) => $f['file'], $files);
     return [
         'success' => true,
         'files' => $files,
-        'message' => 'Data-only backup created: ' . implode(', ', $names),
+        'message' => 'Data-only backup created: ' . $saved['file'],
     ];
 }
 
@@ -706,11 +694,8 @@ function createDataOnlyBackup(mysqli $db, string $format = 'sql', ?string $token
  */
 function createFullSchemaBackup(mysqli $db, ?string $token = null): array {
     $token = $token ?? backupTimestampToken();
-    $sql = generateFullSchemaBackup($db);
-    if (trim($sql) === '') {
-        return ['success' => false, 'error' => 'Full backup generated empty content.'];
-    }
-    $saved = saveBackupArtifact(backupFullFilename($token), $sql);
+    $filename = backupFullPackageFilename($token);
+    $saved = createBackupPackage($db, 'full', 'sql', $filename);
     if (!$saved['success']) {
         return $saved;
     }
@@ -1123,8 +1108,45 @@ function inspectBackupFile(string $backupDir, string $filename, bool $ensureChec
     }
 
     $kind = backupFileKind($filename);
-    if ($kind === 'data_csv' || $kind === 'restored_csv') {
-        $integrity = inspectCsvZipBackupIntegrity($path);
+    $isZip = $kind === 'data_csv' || $kind === 'restored_csv'
+        || ($kind === 'full' && str_ends_with(strtolower($filename), '.zip'));
+
+    if ($isZip) {
+        $peek = peekBackupPackage($path);
+        if (!empty($peek['has_sql'])) {
+            $rawSql = readBackupZipEntry($path, TEMPER_BACKUP_PACKAGE_SQL);
+            if (!is_string($rawSql) || $rawSql === '') {
+                return $failed('Package is missing a readable database.sql dump');
+            }
+            $expected = ($kind === 'full') ? 'full' : 'data';
+            $integrity = inspectSqlBackupIntegrity($rawSql, $expected);
+        } else {
+            $integrity = inspectCsvZipBackupIntegrity($path);
+        }
+
+        $storageFiles = (int)($peek['storage_files'] ?? 0);
+        $storageDirs = is_array($peek['storage_dirs'] ?? null) ? $peek['storage_dirs'] : [];
+        if ($storageFiles > 0 || $storageDirs !== []) {
+            $integrity['summary'] = rtrim((string)($integrity['summary'] ?? ''), '.')
+                . ' · ' . number_format($storageFiles) . ' storage file'
+                . ($storageFiles === 1 ? '' : 's');
+            if ($storageDirs !== []) {
+                $integrity['summary'] .= ' (' . implode(', ', $storageDirs) . ')';
+            }
+        } elseif (!empty($peek['has_sql']) || !empty($peek['has_manifest'])) {
+            $integrity['summary'] = rtrim((string)($integrity['summary'] ?? ''), '.')
+                . ' · no storage files in this package';
+        }
+        $integrity['package'] = $peek;
+        $integrity['stats'] = array_merge(
+            is_array($integrity['stats'] ?? null) ? $integrity['stats'] : [],
+            [
+                'has_sql' => !empty($peek['has_sql']),
+                'csv_files' => (int)($peek['csv_count'] ?? 0),
+                'storage_files' => $storageFiles,
+                'storage_dirs' => $storageDirs,
+            ]
+        );
     } else {
         $raw = @file_get_contents($path);
         if (!is_string($raw) || $raw === '') {
@@ -1206,13 +1228,18 @@ function listBackupFiles(string $dir, bool $withIntegrity = true, ?string $filte
 
         $filenameTimestamp = parseBackupFilenameTimestamp($name);
 
+        $kindLabel = backupKindLabel($name);
+        if (str_ends_with(strtolower($name), '.zip')) {
+            $kindLabel = backupPackageKindLabelFromPeek(peekBackupPackage($path), $kindLabel);
+        }
+
         $entry = [
             'name' => $name,
             'size' => (int)$size,
             'modified' => $filenameTimestamp ?? (int)$modified,
             'display_datetime' => formatBackupFilenameDatetime($name) ?? 'Unknown',
             'kind' => $kind,
-            'kind_label' => backupKindLabel($name),
+            'kind_label' => $kindLabel,
             'checksum' => null,
             'integrity' => [
                 'valid' => false,

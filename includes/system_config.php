@@ -86,7 +86,7 @@ function temperSystemConfigCatalog(): array {
             'default' => false,
             'type' => 'bool',
             'label' => 'Enable Auto-Backup',
-            'description' => 'When enabled, the system creates data-only backups on a schedule (SQL, CSV, or both). '
+            'description' => 'When enabled, the system creates data-only backup packages on a schedule (SQL, CSV, or both, plus attachments and system config). '
                 . 'Files are stored under storage/backups/. Full schema dumps remain a manual Database Maintenance action.',
             'group' => 'backup',
         ],
@@ -102,7 +102,7 @@ function temperSystemConfigCatalog(): array {
             'default' => 'sql',
             'type' => 'string',
             'label' => 'Auto-Backup Format',
-            'description' => 'Format for automatic data-only backups: sql (INSERT dump), csv (zip of table CSVs), or both.',
+            'description' => 'Dump format inside automatic data-only backup packages: sql (INSERT dump + files), csv (table CSVs + files), or both.',
             'group' => 'backup',
             'options' => ['sql', 'csv', 'both'],
         ],

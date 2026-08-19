@@ -1,17 +1,18 @@
-# Directory-level PHP upload ceilings for ledger/transaction attachments.
-# post_max_size must exceed upload_max_filesize so a 20 MB file plus multipart
-# form fields is not discarded before Temper sees it.
+# Directory-level PHP upload ceilings.
+# Backup packages include attachments and can exceed 20 MB; ledger attachment
+# size remains capped at 20 MB in application code.
+# post_max_size must exceed upload_max_filesize so multipart form fields fit.
 <IfModule mod_php.c>
-    php_value upload_max_filesize 20M
-    php_value post_max_size 32M
+    php_value upload_max_filesize 128M
+    php_value post_max_size 160M
 </IfModule>
 <IfModule php_module>
-    php_value upload_max_filesize 20M
-    php_value post_max_size 32M
+    php_value upload_max_filesize 128M
+    php_value post_max_size 160M
 </IfModule>
 <IfModule mod_php8.c>
-    php_value upload_max_filesize 20M
-    php_value post_max_size 32M
+    php_value upload_max_filesize 128M
+    php_value post_max_size 160M
 </IfModule>
 
 

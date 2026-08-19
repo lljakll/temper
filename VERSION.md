@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.927](#v0927)
 - [v0.926](#v0926)
 - [v0.925](#v0925)
 - [v0.924](#v0924)
@@ -132,6 +133,32 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.927
+
+**Backup packages include on-disk user data (attachments and system config)** — 2026-08-19
+
+> No schema update required for this release (backup/restore process only).  
+> **Patch file (history row):** `updates/20260819_0927_backup_include_storage_files.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.927
+
+- New **data-only** and **full** backups are **zip packages** that contain the database dump **and** selected storage files: `attachments/` (transaction documents), `config/` (system settings such as `system.json`), and legacy `transaction_documents/`.
+- Logs, exports, working scratch files, and the `backups/` directory itself are not included. Browser-only preferences (theme, font size, sidebar) are not stored on the server.
+- Restore of a zip package restores both the database and those storage files. Legacy **SQL-only** dumps (`.sql`) still restore database rows only and leave files on disk unchanged.
+- The data-only vs full distinction is unchanged: data-only omits schema and the `app_version` / `audit_log` tables; full dumps still include DROP/CREATE and every table. Both types now carry the same user-data files.
+- SQL / CSV / both remains the dump format *inside* the package (one zip, not two files). Listing, download, checksum, unlock/delete, and auto-backup flows are unchanged aside from the package contents.
+- PHP upload ceilings were raised so package restore can include attachments; ledger attachment size stays capped at 20 MB in application code.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.927**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.926 | `updates/20260819_0927_backup_include_storage_files.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.926 patches, then this process patch |
 
 ---
 
