@@ -49,12 +49,12 @@ if ($mustChangePassword) {
     $temperHomePage = 'force-password';
 }
 
-// Role display: show all role names when multi-role
-$navRoleLabel = '';
-if ($navAcl) {
-    $names = $navAcl['role_names'] ?? [($navAcl['role_name'] ?? '')];
-    $navRoleLabel = implode(', ', array_filter($names));
-}
+// Role display: active role; switcher lists assigned roles when more than one
+$navRoles = $navAcl['roles'] ?? [];
+$navActiveRoleId = (int)($navAcl['active_role_id'] ?? $navAcl['role_id'] ?? 0);
+$navActiveRoleName = (string)($navAcl['active_role_name'] ?? $navAcl['role_name'] ?? '');
+$navCanSwitchRoles = count($navRoles) > 1;
+$navRoleLabel = $navActiveRoleName;
 
 // Also run auto-archive cleanup while building shell (lightweight, once/request)
 if ($navDb instanceof mysqli) {
@@ -392,9 +392,40 @@ function temper_render_nav_links(
                     <div class="small sidebar-welcome mb-1">
                         Welcome, <strong><?= htmlspecialchars($user['name'] ?? 'User') ?></strong>
                         <?php if ($navRoleLabel !== ''): ?>
-                            <div class="text-muted" style="font-size: 0.75rem;"><?= htmlspecialchars($navRoleLabel) ?></div>
+                            <div class="sidebar-role-label" title="Active role"><?= htmlspecialchars($navRoleLabel) ?></div>
                         <?php endif; ?>
                     </div>
+                    <?php if ($navCanSwitchRoles): ?>
+                    <div class="dropup w-100 mb-2 sidebar-role-switch">
+                        <button type="button"
+                                class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1 sidebar-action-btn dropdown-toggle"
+                                id="sidebarSwitchRoleBtn"
+                                data-bs-toggle="dropdown"
+                                data-bs-popper-config='{"strategy":"fixed"}'
+                                aria-expanded="false"
+                                title="Switch role (<?= htmlspecialchars($navRoleLabel) ?>)">
+                            <i class="bi bi-person-gear" aria-hidden="true"></i>
+                            <span class="sidebar-btn-label">Switch Role</span>
+                        </button>
+                        <ul class="dropdown-menu shadow" aria-labelledby="sidebarSwitchRoleBtn">
+                            <?php foreach ($navRoles as $navRole):
+                                $rid = (int)($navRole['id'] ?? 0);
+                                $rname = (string)($navRole['name'] ?? '');
+                                $isActiveRole = $rid === $navActiveRoleId;
+                            ?>
+                            <li>
+                                <?php if ($isActiveRole): ?>
+                                <button type="button" class="dropdown-item active" aria-current="true">
+                                    <i class="bi bi-check2 me-1" aria-hidden="true"></i><?= htmlspecialchars($rname) ?>
+                                </button>
+                                <?php else: ?>
+                                <a class="dropdown-item" href="pages/switch_role.php?role_id=<?= $rid ?>"><?= htmlspecialchars($rname) ?></a>
+                                <?php endif; ?>
+                            </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                    <?php endif; ?>
                     <a href="javascript:void(0)" onclick="loadPage('profile')" class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mb-2 sidebar-action-btn" data-nav-page="profile" title="My Profile">
                         <i class="bi bi-person-circle" aria-hidden="true"></i>
                         <span class="sidebar-btn-label">My Profile</span>

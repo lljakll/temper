@@ -52,20 +52,8 @@ function beancountMassImportUserCanAccess(?array $acl): bool
             return true;
         }
     }
-    $names = $acl['role_names'] ?? [];
-    if (!is_array($names)) {
-        $names = [];
-    }
-    if (!empty($acl['role_name'])) {
-        $names[] = (string)$acl['role_name'];
-    }
-    $allowed = beancountMassImportAllowedRoleNames();
-    foreach ($names as $n) {
-        if (in_array((string)$n, $allowed, true)) {
-            return true;
-        }
-    }
-    return false;
+    $active = (string)($acl['active_role_name'] ?? $acl['role_name'] ?? '');
+    return in_array($active, beancountMassImportAllowedRoleNames(), true);
 }
 
 /**

@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.932](#v0932)
+- [v0.931](#v0931)
 - [v0.930](#v0930)
 - [v0.929](#v0929)
 - [v0.928](#v0928)
@@ -136,6 +138,55 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.932
+
+**Sidebar Switch Role button and role popout** — 2026-08-20
+
+> No schema update required for this release (sidebar role-switcher UI only).  
+> **Patch file (history row):** `updates/20260820_0932_sidebar_switch_role_popout.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.932
+
+- The sidebar no longer lists each assigned role as a link above My Profile.
+- The **active role** is shown as a label under the welcome name.
+- Users with more than one role get a **Switch Role** button. Clicking it opens a drop-up list of assigned roles; choosing one switches the session role (same as before: permissions, menu, and audit stamp).
+- Role assignment, session persistence, and `username (Role)` audit stamping are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.932**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.931 | `updates/20260820_0932_sidebar_switch_role_popout.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.931 patches, then this process patch |
+
+---
+
+## v0.931
+
+**Active role switching and role-stamped audit events** — 2026-08-20
+
+> No schema update required for this release (session active-role + audit username format).  
+> **Patch file (history row):** `updates/20260820_0931_active_role_switching.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.931
+
+- Users with more than one assigned role can choose which role is **active** for the session from the sidebar (links next to the profile / welcome block).
+- Permissions and menu visibility follow **only the active role**, not the union of all assigned roles. Role assignments themselves are unchanged.
+- The active role persists in the session across page reloads until the user switches again or logs out. Login defaults to the user’s primary role.
+- Administrator (and other super-role) access remains available by switching back to that role; last-admin protections still look at assigned roles so an admin is not locked out of their assignment.
+- New `audit_log` and `transaction_events` rows stamp the active role next to the username (`admin (Treasurer)`, `jak (Archivist)`).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.931**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.930 | `updates/20260820_0931_active_role_switching.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.930 patches, then this process patch |
 
 ---
 

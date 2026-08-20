@@ -184,6 +184,20 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .sidebar-panel .sidebar-welcome strong {
             color: var(--bs-body-color);
         }
+        .sidebar-panel .sidebar-role-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--bs-body-color);
+            line-height: 1.3;
+        }
+        .sidebar-panel .sidebar-role-switch .dropdown-toggle::after {
+            margin-left: 0.35rem;
+        }
+        .sidebar-panel .sidebar-role-switch .dropdown-menu {
+            z-index: 1080;
+            min-width: 12rem;
+            font-size: 0.875rem;
+        }
         .sidebar-panel .sidebar-version-link {
             color: var(--bs-secondary-color);
         }
@@ -376,6 +390,9 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 padding-left: 0.4rem;
                 padding-right: 0.4rem;
                 gap: 0 !important;
+            }
+            body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar .sidebar-role-switch .dropdown-toggle::after {
+                display: none;
             }
             body.sidebar-collapsed #appSidebar .nav.ms-3 {
                 margin-left: 0 !important;

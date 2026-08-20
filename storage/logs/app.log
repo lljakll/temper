@@ -1165,3 +1165,17 @@ Stack trace:
 [20-Aug-2026 04:34:43 UTC] [AUDIT] user=admin action=ledger.created details=transaction=61 Mass import: Transaction created for "BMI-DUP-A" totaling $25.00 (2 lines). {"source":"beancount_mass_import","debits":25,"credits":25,"changes":["Transaction created for \"BMI-DUP-A\" totaling $25.00 (2 lines)."]} ip=unknown
 [20-Aug-2026 04:39:49 UTC] [AUDIT] user=admin action=ledger.created details=transaction=62 Mass import: Transaction created for "GPC EFT    GPC PPD HOPE BAPTIST CHURCH" totaling $57.02 (2 lines). {"source":"beancount_mass_import","debits":57.02,"credits":57.02,"changes":["Transaction created for \"GPC EFT    GPC PPD HOPE BAPTIST CHURCH\" totaling $57.02 (2 lines).","Fund \"General Operating Fund\" $57.02."]} ip=::1
 [20-Aug-2026 04:39:49 UTC] [AUDIT] user=admin action=ledger.created details=transaction=63 Mass import: Transaction created for "GPC EFT    GPC PPD HOPE BAPTIST CHURCH" totaling $767.07 (2 lines). {"source":"beancount_mass_import","debits":767.07,"credits":767.07,"changes":["Transaction created for \"GPC EFT    GPC PPD HOPE BAPTIST CHURCH\" totaling $767.07 (2 lines).","Fund \"General Operating Fund\" $767.07."]} ip=::1
+[20-Aug-2026 11:10:49 UTC] [AUDIT] user=jackie.adair (Treasurer) action=role_switch_test details=CLI verification ip=127.0.0.1
+[20-Aug-2026 11:11:37 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/app_version.php on line 885
+[20-Aug-2026 11:14:56 UTC] [AUDIT] user=jackie.adair (Financial Secretary) action=role_switch details=Switched active role from Archivist to Financial Secretary ip=::1
+[20-Aug-2026 11:14:59 UTC] [AUDIT] user=jackie.adair (Archivist) action=role_switch details=Switched active role from Financial Secretary to Archivist ip=::1
+[20-Aug-2026 11:15:01 UTC] [AUDIT] user=jackie.adair (Financial Secretary) action=role_switch details=Switched active role from Archivist to Financial Secretary ip=::1
+[20-Aug-2026 11:15:05 UTC] [AUDIT] user=jackie.adair (Archivist) action=role_switch details=Switched active role from Financial Secretary to Archivist ip=::1
+[20-Aug-2026 11:15:07 UTC] [AUDIT] user=jackie.adair (Financial Secretary) action=role_switch details=Switched active role from Archivist to Financial Secretary ip=::1
+[20-Aug-2026 11:15:27 UTC] [AUDIT] user=jackie.adair (Member) action=role_switch details=Switched active role from Financial Secretary to Member ip=::1
+[20-Aug-2026 11:15:34 UTC] [AUDIT] user=jackie.adair (Treasurer) action=role_switch details=Switched active role from Member to Treasurer ip=::1
+[20-Aug-2026 11:15:37 UTC] [AUDIT] user=jackie.adair (Member) action=role_switch details=Switched active role from Treasurer to Member ip=::1
+[20-Aug-2026 11:15:41 UTC] [AUDIT] user=jackie.adair (Treasurer) action=role_switch details=Switched active role from Member to Treasurer ip=::1
+[20-Aug-2026 11:33:10 UTC] [AUDIT] user=jackie.adair (Financial Secretary) action=role_switch details=Switched active role from Archivist to Financial Secretary ip=::1
+[20-Aug-2026 11:33:14 UTC] [AUDIT] user=jackie.adair (Member) action=role_switch details=Switched active role from Financial Secretary to Member ip=::1
+[20-Aug-2026 11:33:17 UTC] [AUDIT] user=jackie.adair (Treasurer) action=role_switch details=Switched active role from Member to Treasurer ip=::1

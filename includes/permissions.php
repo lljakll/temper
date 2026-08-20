@@ -3,8 +3,9 @@
  * Role-based access control (RBAC) for Temper.
  *
  * Permissions are stored as a JSON array on roles.permissions.
- * Users may have multiple roles (user_roles) plus additive custom_permissions.
- * Special permission "*" grants full access (Administrator).
+ * Users may have multiple assigned roles (user_roles) plus additive custom_permissions.
+ * Only one assigned role is active per session; access follows that role (not a union).
+ * Special permission "*" grants full access (Administrator) when that role is active.
  *
  * Security: Prevent direct access to this helper file.
  */
@@ -367,6 +368,128 @@ function getUserRoles(mysqli $db, int $userId): array {
 }
 
 /**
+ * Primary assigned role (is_primary flag, else first in the list).
+ *
+ * @param list<array{id:int,name:string,description:?string,permissions:list<string>,is_primary:bool,is_system:bool}> $roles
+ * @return array{id:int,name:string,description:?string,permissions:list<string>,is_primary:bool,is_system:bool}|null
+ */
+function pickPrimaryUserRole(array $roles): ?array {
+    if ($roles === []) {
+        return null;
+    }
+    foreach ($roles as $role) {
+        if (!empty($role['is_primary'])) {
+            return $role;
+        }
+    }
+    return $roles[0];
+}
+
+/**
+ * Persist the session's active role (id + display name).
+ */
+function setSessionActiveRole(int $roleId, string $roleName): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        return;
+    }
+    $_SESSION['active_role_id'] = $roleId;
+    $_SESSION['active_role_name'] = $roleName;
+}
+
+function getSessionActiveRoleId(): ?int {
+    if (session_status() === PHP_SESSION_NONE) {
+        return null;
+    }
+    $id = (int)($_SESSION['active_role_id'] ?? 0);
+    return $id > 0 ? $id : null;
+}
+
+/**
+ * Active role for ACL: the session selection if it is still assigned, otherwise primary.
+ * When resolving the logged-in user, the session is updated if the stored role is missing or stale.
+ *
+ * @param list<array{id:int,name:string,description:?string,permissions:list<string>,is_primary:bool,is_system:bool}> $roles
+ * @return array{id:int,name:string,description:?string,permissions:list<string>,is_primary:bool,is_system:bool}
+ */
+function resolveActiveRoleForUser(int $userId, array $roles): array {
+    $primary = pickPrimaryUserRole($roles);
+    if ($primary === null) {
+        return [
+            'id' => 0,
+            'name' => 'Unknown',
+            'description' => null,
+            'permissions' => [],
+            'is_primary' => true,
+            'is_system' => false,
+        ];
+    }
+
+    $isCurrent = session_status() !== PHP_SESSION_NONE
+        && isset($_SESSION['user_id'])
+        && (int)$_SESSION['user_id'] === $userId;
+
+    if (!$isCurrent) {
+        return $primary;
+    }
+
+    $sessionId = getSessionActiveRoleId();
+    if ($sessionId !== null) {
+        foreach ($roles as $role) {
+            if ((int)$role['id'] === $sessionId) {
+                $_SESSION['active_role_name'] = (string)$role['name'];
+                return $role;
+            }
+        }
+    }
+
+    setSessionActiveRole((int)$primary['id'], (string)$primary['name']);
+    return $primary;
+}
+
+/**
+ * Switch the logged-in user's active role to one of their assigned roles.
+ *
+ * @return string|null Error message, or null on success
+ */
+function switchUserActiveRole(mysqli $db, int $userId, int $roleId): ?string {
+    if ($roleId <= 0) {
+        return 'Select a role.';
+    }
+    $isCurrent = session_status() !== PHP_SESSION_NONE
+        && isset($_SESSION['user_id'])
+        && (int)$_SESSION['user_id'] === $userId;
+    if (!$isCurrent) {
+        return 'You can only switch your own active role.';
+    }
+
+    $roles = getUserRoles($db, $userId);
+    foreach ($roles as $role) {
+        if ((int)$role['id'] === $roleId) {
+            setSessionActiveRole((int)$role['id'], (string)$role['name']);
+            clearUserAclCache();
+            return null;
+        }
+    }
+    return 'That role is not assigned to your account.';
+}
+
+/**
+ * True if the user is assigned the Administrator role (or a * permission role),
+ * regardless of which role is currently active in a session.
+ */
+function userHasAdministratorAssignment(mysqli $db, int $userId): bool {
+    foreach (getUserRoles($db, $userId) as $role) {
+        if (($role['name'] ?? '') === 'Administrator') {
+            return true;
+        }
+        if (in_array('*', $role['permissions'] ?? [], true)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Replace a user's role assignments. First role_id is primary; also updates users.role_id.
  *
  * @param list<int> $roleIds
@@ -428,13 +551,16 @@ function setUserRoles(mysqli $db, int $userId, array $roleIds): ?string {
 }
 
 /**
- * Load active user ACL: multi-role union + custom permissions.
+ * Load active user ACL: single active role + custom permissions.
+ *
+ * Assigned roles are unchanged (role_names / roles). Effective permissions come
+ * from the session's active role only (primary role when resolving another user).
  *
  * @return array{
  *   id:int,username:string,first_name:string,last_name:string,email:string,phone:?string,
  *   is_active:int|bool,must_change_password:bool,role_id:int,role_name:string,
- *   role_names:list<string>,roles:list<array>,custom_permissions:list<string>,
- *   permissions:list<string>,display_name:string
+ *   role_names:list<string>,roles:list<array>,active_role_id:int,active_role_name:string,
+ *   custom_permissions:list<string>,permissions:list<string>,display_name:string
  * }|null
  */
 function loadUserAcl(mysqli $db, int $userId): ?array {
@@ -445,8 +571,13 @@ function loadUserAcl(mysqli $db, int $userId): ?array {
         $cache = [];
         $generation = $currentGen;
     }
-    if (array_key_exists($userId, $cache)) {
-        return $cache[$userId];
+    $sessionRoleKey = 0;
+    if (session_status() !== PHP_SESSION_NONE && isset($_SESSION['user_id']) && (int)$_SESSION['user_id'] === $userId) {
+        $sessionRoleKey = (int)($_SESSION['active_role_id'] ?? 0);
+    }
+    $cacheKey = $userId . ':' . $sessionRoleKey;
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
     }
 
     ensureUsersRolesSchema($db);
@@ -471,31 +602,25 @@ function loadUserAcl(mysqli $db, int $userId): ?array {
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if (!$row) {
-        $cache[$userId] = null;
+        $cache[$cacheKey] = null;
         return null;
     }
 
     $roles = getUserRoles($db, $userId);
     if ($roles === []) {
-        $cache[$userId] = null;
+        $cache[$cacheKey] = null;
         return null;
     }
 
-    $merged = [];
     $roleNames = [];
-    $primary = $roles[0];
     foreach ($roles as $role) {
         $roleNames[] = $role['name'];
-        if ($role['is_primary']) {
-            $primary = $role;
-        }
-        if ($role['name'] === 'Administrator' || in_array('*', $role['permissions'], true)) {
-            $merged = ['*'];
-            break;
-        }
-        foreach ($role['permissions'] as $p) {
-            $merged[] = $p;
-        }
+    }
+
+    $active = resolveActiveRoleForUser($userId, $roles);
+    $merged = $active['permissions'] ?? [];
+    if (($active['name'] ?? '') === 'Administrator' || in_array('*', $merged, true)) {
+        $merged = ['*'];
     }
 
     $custom = decodeRolePermissions($row['custom_permissions'] ?? '[]');
@@ -506,22 +631,19 @@ function loadUserAcl(mysqli $db, int $userId): ?array {
     }
     $merged = array_values(array_unique($merged));
 
-    // Administrator role always full access
-    if (in_array('Administrator', $roleNames, true) && !in_array('*', $merged, true)) {
-        $merged = ['*'];
-    }
-
     $row['id'] = (int)$row['id'];
-    $row['role_id'] = (int)($primary['id'] ?? $row['role_id']);
-    $row['role_name'] = $primary['name'] ?? ($roleNames[0] ?? 'Unknown');
+    $row['role_id'] = (int)($active['id'] ?? $row['role_id']);
+    $row['role_name'] = (string)($active['name'] ?? ($roleNames[0] ?? 'Unknown'));
     $row['role_names'] = $roleNames;
     $row['roles'] = $roles;
+    $row['active_role_id'] = (int)($active['id'] ?? 0);
+    $row['active_role_name'] = $row['role_name'];
     $row['custom_permissions'] = $custom;
     $row['permissions'] = $merged;
     $row['phone'] = $row['phone'] ?? null;
     $row['must_change_password'] = !empty($row['must_change_password']);
     $row['display_name'] = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')) ?: $row['username'];
-    $cache[$userId] = $row;
+    $cache[$cacheKey] = $row;
     return $row;
 }
 
@@ -555,15 +677,13 @@ function currentUserHasPermission(mysqli $db, string $permission): bool {
 }
 
 /**
- * True if user is Administrator (role name or full * permission).
+ * True if the user's *active* role is Administrator (or grants *).
+ * Last-admin / assignment checks should use userHasAdministratorAssignment().
  */
 function userIsAdministrator(mysqli $db, int $userId): bool {
     $acl = loadUserAcl($db, $userId);
     if (!$acl) {
         return false;
-    }
-    if (in_array('Administrator', $acl['role_names'] ?? [], true)) {
-        return true;
     }
     if (($acl['role_name'] ?? '') === 'Administrator') {
         return true;
@@ -795,7 +915,7 @@ function countActiveAdministrators(mysqli $db, ?int $excludeUserId = null): int 
             if ($excludeUserId !== null && $uid === $excludeUserId) {
                 continue;
             }
-            if (userIsAdministrator($db, $uid)) {
+            if (userHasAdministratorAssignment($db, $uid)) {
                 $count++;
             }
         }
@@ -1104,7 +1224,7 @@ function archiveExpiredForcePasswordUsers(mysqli $db): int {
     );
     foreach ($ids as $id) {
         // Never archive the last active administrator
-        if (userIsAdministrator($db, $id) && countActiveAdministrators($db, $id) < 1) {
+        if (userHasAdministratorAssignment($db, $id) && countActiveAdministrators($db, $id) < 1) {
             continue;
         }
         $upd->bind_param('i', $id);

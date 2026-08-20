@@ -54,9 +54,60 @@ function ensureAuditLogTable(mysqli $db): void {
     $done = true;
 }
 
+/** audit_log.username / transaction_events.username column width. */
+const TEMPER_AUDIT_USERNAME_MAX_LEN = 50;
+
+/**
+ * Format actor username with the session's active role: `admin (Treasurer)`.
+ * Only stamps the logged-in actor. Truncates to the username column width.
+ */
+function temperStampUsernameWithActiveRole(string $username, ?int $userId = null): string {
+    $username = trim($username);
+    if ($username === '' || strcasecmp($username, 'system') === 0) {
+        return $username;
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return $username;
+    }
+
+    $sessionUserId = (int)($_SESSION['user_id'] ?? 0);
+    $sessionUsername = (string)($_SESSION['username'] ?? '');
+    $role = trim((string)($_SESSION['active_role_name'] ?? ''));
+    if ($sessionUserId <= 0 || $role === '') {
+        return $username;
+    }
+
+    $isActor = false;
+    if ($userId !== null && (int)$userId === $sessionUserId) {
+        $isActor = true;
+    } elseif ($sessionUsername !== '' && (
+        $username === $sessionUsername
+        || str_starts_with($username, $sessionUsername . ' (')
+    )) {
+        $isActor = true;
+    }
+    if (!$isActor) {
+        return $username;
+    }
+
+    $bare = $sessionUsername !== '' ? $sessionUsername : $username;
+    $suffix = ' (' . $role . ')';
+    $stamped = $bare . $suffix;
+    $max = TEMPER_AUDIT_USERNAME_MAX_LEN;
+    if (strlen($stamped) <= $max) {
+        return $stamped;
+    }
+    $keep = $max - strlen($suffix);
+    if ($keep < 1) {
+        return substr($stamped, 0, $max);
+    }
+    return substr($bare, 0, $keep) . $suffix;
+}
+
 function logAuditAction(mysqli $db, ?int $userId, string $username, string $action, string $details = ''): void {
     ensureAuditLogTable($db);
 
+    $username = temperStampUsernameWithActiveRole($username, $userId);
     $ip = $_SERVER['REMOTE_ADDR'] ?? null;
     $stmt = $db->prepare('INSERT INTO audit_log (user_id, username, action, details, ip_address) VALUES (?, ?, ?, ?, ?)');
     $stmt->bind_param('issss', $userId, $username, $action, $details, $ip);

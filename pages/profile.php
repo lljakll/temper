@@ -119,7 +119,8 @@ if ($llRow) {
 } else {
     $createdAt = null;
 }
-$roleLabel = implode(', ', $profile['role_names'] ?? [($profile['role_name'] ?? '')]);
+$activeRoleName = (string)($profile['active_role_name'] ?? $profile['role_name'] ?? '');
+$assignedRoleNames = $profile['role_names'] ?? [($profile['role_name'] ?? '')];
 ?>
 
 <?php if ($success || $error): ?>
@@ -156,13 +157,17 @@ $roleLabel = implode(', ', $profile['role_names'] ?? [($profile['role_name'] ?? 
                     <dt class="col-sm-4 text-muted">Phone</dt>
                     <dd class="col-sm-8"><?= $phone ? htmlspecialchars($phone) : '—' ?></dd>
 
-                    <dt class="col-sm-4 text-muted">Role<?= (count($profile['role_names'] ?? []) > 1) ? 's' : '' ?></dt>
+                    <dt class="col-sm-4 text-muted">Role<?= (count($assignedRoleNames) > 1) ? 's' : '' ?></dt>
                     <dd class="col-sm-8">
-                        <?php foreach (($profile['role_names'] ?? [$profile['role_name']]) as $rn): ?>
-                            <span class="badge text-bg-primary-subtle text-primary border me-1">
-                                <?= htmlspecialchars((string)$rn) ?>
+                        <?php foreach ($assignedRoleNames as $rn): ?>
+                            <?php $isActive = ((string)$rn === $activeRoleName); ?>
+                            <span class="badge <?= $isActive ? 'text-bg-primary' : 'text-bg-primary-subtle text-primary border' ?> me-1">
+                                <?= htmlspecialchars((string)$rn) ?><?= $isActive && count($assignedRoleNames) > 1 ? ' · active' : '' ?>
                             </span>
                         <?php endforeach; ?>
+                        <?php if (count($assignedRoleNames) > 1): ?>
+                            <div class="text-muted small mt-1">Use <strong>Switch Role</strong> in the sidebar to change the active role.</div>
+                        <?php endif; ?>
                     </dd>
 
                     <dt class="col-sm-4 text-muted">Last login</dt>

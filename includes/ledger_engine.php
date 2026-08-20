@@ -495,6 +495,9 @@ function ledgerLogEvent(
     array $details = []
 ): void {
     ledgerRequireTables($db);
+    if (function_exists('temperStampUsernameWithActiveRole')) {
+        $username = temperStampUsernameWithActiveRole($username, $userId);
+    }
     $json = $details ? json_encode($details, JSON_UNESCAPED_UNICODE) : null;
     $stmt = $db->prepare(
         'INSERT INTO transaction_events (transaction_detail_id, event_type, user_id, username, summary, details)

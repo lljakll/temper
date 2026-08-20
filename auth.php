@@ -393,6 +393,13 @@ function login($username, $password) {
             } else {
                 unset($_SESSION['must_change_password']);
             }
+            $assignedRoles = getUserRoles($db, (int)$user['id']);
+            $primaryRole = pickPrimaryUserRole($assignedRoles);
+            if ($primaryRole) {
+                setSessionActiveRole((int)$primaryRole['id'], (string)$primaryRole['name']);
+            } else {
+                unset($_SESSION['active_role_id'], $_SESSION['active_role_name']);
+            }
             touchAuthSession();
 
             $update = $db->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
