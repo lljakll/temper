@@ -19,6 +19,7 @@ const TEMPER_PERMISSION_CATALOG = [
     'page.dashboard' => 'View dashboard',
     'page.ledger' => 'View ledger',
     'page.ledger.write' => 'Create/edit ledger transactions',
+    'page.ledger.mass_import' => 'Mass import ledger transactions (temporary Beancount loader)',
     'page.reports' => 'View reports',
     'page.budget' => 'View budgets',
     'page.budget.write' => 'Create/edit budgets',
@@ -76,6 +77,7 @@ function temperDefaultRoles(): array {
             'description' => 'Church treasurer — full financial operations',
             'permissions' => [
                 'page.dashboard', 'page.ledger', 'page.ledger.write',
+                'page.ledger.mass_import',
                 'page.reports', 'page.budget', 'page.budget.write', 'page.tasks',
                 'admin.access', 'admin.lookups',
                 'profile.self',
@@ -96,6 +98,7 @@ function temperDefaultRoles(): array {
             'description' => 'Finance manager with access to financial data and budgets',
             'permissions' => [
                 'page.dashboard', 'page.ledger', 'page.ledger.write',
+                'page.ledger.mass_import',
                 'page.reports', 'page.budget', 'page.budget.write', 'page.tasks',
                 'admin.access', 'admin.lookups',
                 'profile.self',
@@ -107,6 +110,7 @@ function temperDefaultRoles(): array {
             'permissions' => [
                 'page.dashboard', 'page.ledger', 'page.reports', 'page.budget',
                 'admin.access', 'admin.lookups', 'archive.import',
+                'page.ledger.mass_import',
                 'profile.self',
             ],
         ],

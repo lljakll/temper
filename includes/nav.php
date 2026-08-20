@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/permissions.php';
+require_once __DIR__ . '/beancount_mass_import.php';
 
 // Central session check (shell nav)
 requireLogin();
@@ -19,6 +20,7 @@ function navCan(array $perms, string $permission): bool {
 
 $canDashboard = navCan($navPerms, 'page.dashboard');
 $canLedger = navCan($navPerms, 'page.ledger');
+$canLedgerImport = $navAcl && beancountMassImportUserCanAccess($navAcl);
 $canReports = navCan($navPerms, 'page.reports');
 $canBudget = navCan($navPerms, 'page.budget');
 $canTasks = navCan($navPerms, 'page.tasks');
@@ -136,7 +138,8 @@ function temper_render_nav_links(
     bool $canDatabase,
     bool $canLookups,
     bool $canUsers,
-    bool $canConfig = false
+    bool $canConfig = false,
+    bool $canLedgerImport = false
 ): void {
 ?>
         <ul class="nav flex-column w-100">
@@ -150,10 +153,33 @@ function temper_render_nav_links(
             <?php endif; ?>
             <?php if ($canLedger): ?>
             <li class="nav-item">
+                <?php if ($canLedgerImport): ?>
+                <a class="nav-link" data-bs-toggle="collapse" href="#ledgerCollapse" role="button" aria-expanded="false" aria-controls="ledgerCollapse" title="Ledger">
+                    <i class="bi bi-currency-dollar" aria-hidden="true"></i>
+                    <span class="sidebar-label">Ledger</span>
+                </a>
+                <div class="collapse" id="ledgerCollapse">
+                    <ul class="nav flex-column ms-3">
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('ledger')" class="nav-link" data-nav-page="ledger" title="Ledger">
+                                <i class="bi bi-journal-text" aria-hidden="true"></i>
+                                <span class="sidebar-label">Ledger</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('ledger_import')" class="nav-link" data-nav-page="ledger_import" title="Import">
+                                <i class="bi bi-box-arrow-in-down" aria-hidden="true"></i>
+                                <span class="sidebar-label">Import</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <?php else: ?>
                 <a href="javascript:void(0)" onclick="loadPage('ledger')" class="nav-link" data-nav-page="ledger" title="Ledger">
                     <i class="bi bi-currency-dollar" aria-hidden="true"></i>
                     <span class="sidebar-label">Ledger</span>
                 </a>
+                <?php endif; ?>
             </li>
             <?php endif; ?>
             <?php if ($canReports): ?>
@@ -331,7 +357,8 @@ function temper_render_nav_links(
                     $canDatabase,
                     $canLookups,
                     $canUsers,
-                    $canConfig
+                    $canConfig,
+                    $canLedgerImport
                 ); ?>
 
                 <!-- Bottom: footer note + version + user info + logout -->

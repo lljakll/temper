@@ -19,6 +19,9 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.930](#v0930)
+- [v0.929](#v0929)
+- [v0.928](#v0928)
 - [v0.927](#v0927)
 - [v0.926](#v0926)
 - [v0.925](#v0925)
@@ -133,6 +136,83 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.930
+
+**Mass Import: same-batch duplicates stay in review; amount weighs more; live re-check** — 2026-08-20
+
+> No schema update required for this release (Mass Import duplicate logic/UI only).  
+> **Patch file (history row):** `updates/20260820_0930_mass_import_duplicate_refine.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.930
+
+- Same-batch duplicates are still flagged in the import list, but they no longer open the side-by-side modal. The detail pane has a **Legitimate / Allow** checkbox so they can be reviewed, edited, marked acceptable, and imported with Confirm.
+- The side-by-side resolution modal runs **only** when an importing transaction matches one already in the ledger.
+- Amount is a strong confirming/disconfirming factor. Substantially different amounts (e.g. $700 vs $69) are not treated as duplicates even if date, ref, or other fields are similar. Date, Ref #, and Check # remain primary when amounts are compatible.
+- Editing date, ref, check, amount, payee, accounts, etc. in the detail pane re-runs duplicate detection against the rest of the paste and the ledger and updates list flags immediately.
+- Flow, permissions, and menu placement are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.930**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.929 | `updates/20260820_0930_mass_import_duplicate_refine.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.929 patches, then this process patch |
+
+---
+
+## v0.929
+
+**Mass Import Parse and Clear buttons actually run** — 2026-08-20
+
+> No schema update required for this release (SPA script bootstrap only).  
+> **Patch file (history row):** `updates/20260820_0929_mass_import_button_handlers.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.929
+
+- Mass Import is loaded as an AJAX fragment. A normal `<script>` tag is not executed after `innerHTML` injection, so **Parse** and **Clear** did nothing.
+- The page now uses the same `text/plain` init-script + onload bootstrap as Ledger and other SPA pages, so Parse runs the Beancount parser and advances to review (or shows errors), and Clear empties the paste box.
+- No change to Mass Import flow, role checks, or menu placement.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.929**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.928 | `updates/20260820_0929_mass_import_button_handlers.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.928 patches, then this process patch |
+
+---
+
+## v0.928
+
+**Beancount Mass Import under Ledger (temporary historical loader)** — 2026-08-19
+
+> No schema update required for this release (Mass Import is a self-contained page + permission data).  
+> **Patch file (history row):** `updates/20260819_0928_beancount_mass_import.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.928
+
+- New **Mass Import** function (separate from the Add Transaction **Import from Text** modal; not a button on the main Ledger page).
+- Ledger sidebar is an accordion for permitted roles: **Ledger** (main view) and **Import**. Export is not included yet.
+- Restricted to **Administrator**, **Treasurer**, **Finance Manager**, and **Archivist** (permission `page.ledger.mass_import`, plus those role names). Financial Secretary and other roles do not see Import.
+- Paste a block of Beancount transactions → parse into a dated review queue with the existing fuzzy account/fund matching applied automatically.
+- Two-pane review: list (Date, Ref #, Amount, Pay To) and a correction panel. Corrections stay in the queue until Confirm / Import.
+- Confirm writes non-duplicates in one batch. Flagged duplicates (vs ledger and vs other items in the same paste) are resolved in a side-by-side modal; each confirmed item is written immediately. Unresolved duplicates cannot remain when the process finishes.
+- Imports transactions only (no attachments). Accounts, funds, and budgets must already exist.
+- Module is isolated in `includes/beancount_mass_import.php` + `pages/ledger_import.php` so it can be deleted after historical load.
+- Patch also appends `page.ledger.mass_import` to Treasurer, Finance Manager, and Archivist role JSON when missing (no table DDL).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.928**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.927 | `updates/20260819_0928_beancount_mass_import.sql` (records version; grants mass-import permission on named roles; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.927 patches, then this process patch |
 
 ---
 

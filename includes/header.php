@@ -1837,7 +1837,22 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
     window.setActiveNav = function(page) {
         if (!page) return;
         document.querySelectorAll('[data-nav-page]').forEach(function(a) {
-            a.classList.toggle('active', a.getAttribute('data-nav-page') === page);
+            var on = a.getAttribute('data-nav-page') === page;
+            a.classList.toggle('active', on);
+            if (on) {
+                var parent = a.closest('.collapse');
+                while (parent) {
+                    parent.classList.add('show');
+                    var id = parent.id;
+                    if (id) {
+                        document.querySelectorAll('[href="#' + id + '"], [data-bs-target="#' + id + '"]').forEach(function(t) {
+                            t.setAttribute('aria-expanded', 'true');
+                            t.classList.remove('collapsed');
+                        });
+                    }
+                    parent = parent.parentElement ? parent.parentElement.closest('.collapse') : null;
+                }
+            }
         });
     };
 
