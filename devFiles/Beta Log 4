@@ -1,0 +1,194 @@
+TEMPER — Beta Test Log
+Hope Baptist Church  •  Church Treasurer System  •  Internal Dev Use
+Tester:
+ Jak
+Session Date(s):
+ 20260818
+App Version Observed:
+0.921 / _0.921_______
+Session Focus / Notes:
+ Input Flow and Ease/Minor Input Inconsistencies
+
+Quick capture while testing. One entry per issue or desired improvement. Keep notes brief — details can be expanded when dropping into the thread.
+
+
+#1 - 2026-08-17 - Ledger/Add Txn - Minor
+Expected: Hot keys to work in add txn box
+Actual: Open txn add box auto activates date field disabling hotkeys
+Notes / Context / Interpretation: Change hotkey system to use ctrl+<hotkey>.  Override all other system key capturing except cut/copy/paste/select all
+
+Complete - 20260818
+
+
+#2 - 2026-08-17 - Ledger - Minor
+Expected: Attachment paperclip to display when attachment is uploaded and saved.
+Actual: Only displays after ledger refresh.
+Notes / Context / Interpretation:
+
+Complete: 20260818
+
+
+#3 - 2026-08-17 - Ledger/Add Txn - Minor
+Expected: When I don’t upload a file, it auto saves the transaction and the file without warning or interaction.
+Actual: There is a double save that complains about duplicate ref# since the upload is counted as a save in that logic and creates the transaction with the data, then the actual transaction save logic fires.
+Notes / Context / Interpretation:
+
+Complete: 20260818
+
+
+#4 - 2026-08-18 - Backup - Minor
+Expected: List all backups in the storage/backups directory in the page on load
+Actual: Saved backups list is empty until a backup is created, then only that backup is shown.  None of the existing backups are listed.
+Notes / Context / Interpretation:
+
+Complete: 20260818
+
+
+#5 - 2026-08-19 - Ledger/Add Txn/Import Txn - Minor
+Expected: Translate imported transaction blocks of text with good account matching
+Actual: exact matching of accounts is needed, requiring extensive processing of legacy text file.
+Notes / Context / Interpretation: Need adequate fuzzy logic and maybe a matching dialog function to prevent losing work.
+
+Complete: working
+
+
+#6 - 2026-08-17 - Backup - Minor
+Expected: Add a backup feature that also backs up attachments and other non-db user data in storage including settings and profile preferences.
+Actual: Only the DB is backed up.  The attachments and configs are not.
+Notes / Context / Interpretation: Not an issue while in dev due to git repo commits, but in prod, you will not have git commits so no real back up of files in the storage system
+
+Complete: In Testing 19 Aug 26
+
+
+#7 - 2026-08-17 - Ledger/Add Txn - Minor
+Expected: Comprehensive import system that will pull mass transactions allow selection of  beancount transactions
+Actual: no mass import.  Single transaction only
+Notes / Context / Interpretation: This should be a separate import function.  Not a part of the ledger add transaction system.  It should only be expected to import the transactions.  Attachments should be expected to be added separately via the ledger transaction edit system.  We may add an add attachment button on the main ledger screen that will allow you to select a file and add the attachment directly.
+
+Beancount implemented and undergoing testing (20260820), Mass Bank Import.  Both Dirty and removable.  AWT implementation of Full system with templating.
+
+Complete: OPEN
+
+#8 - 2026-08-17 - Settings/Users - Minor
+Expected: User can change their role to between user assigned roles and the system will adjust permissions and access accordingly
+Actual: Not implemented.  All assigned roles exist under one session.
+Notes / Context / Interpretation: Ex.  The same user has Treasurer and Archivist Roles.  He can select between the two by clicking the role link near his profile in the sidebar.  That changes permissions from Treasurer to Archivist and he now has access to appropriate archivist roles instead of treasurer roles.
+
+Complete: Testing
+
+
+#9 - 2026-08-17 - Backup/Restore - Minor
+Expected:
+Actual:
+Notes / Context / Interpretation: Optional app improvement (if you want it)
+We can make Temper degrade more gracefully when ZipArchive is missing:
+Allow a DB-only backup even if zip is unavailable
+Show a clearer message on restore (“Zip extension required to restore this backup”) instead of the generic “Not a valid zip backup”
+Want a prompt for that graceful-degradation work, or is installing php-zip on the machine enough for now?
+
+
+Complete:
+
+#11 - 2026-08-24 - attachments - Minor
+Expected: When an attachment is deleted or the ref number is changed in the transaction, the folder should be deleted or changed.  Also, when all transactions are cleared in the Database Maintenance admin settings, all attachments should also be removed from the drive.
+Actual: The attachment is removed from the record entry, but the actual file persists and does not change name.  A duplicate is created if a ref number changes.  When all transactions are cleared, the attachments remain.
+Notes / Context / Interpretation: These are extreme scenarios only usable when the transactions are not cleared or posted or when the entire database is being purged for whatever reason.  The attachments should not be able to be changed due to audit trails if the transactions are reconciled or cleared.
+
+Complete: Seems to work after testing single txn delete attachment and clear all txns.
+
+
+#10 - 2026-08-17 - Import Bank Export - Feature
+Expected: Use the following format to mass import bank transactions.  All transactions will include FMB:Checking Account and Imbalance as the second account.  Credits should increase the FMB and decrease the Imbalance Accounts, Debits should increase the Imbalance and decrease the FMB account.  For this specific importer, we are assuming the db is clear.  We will modify this to include duplicate checking and account assignment for future imports but for now it is functional not future proof.  This importer will not assign reference numbers.  They will be manually inputted after import before any attachments are processed.  Again this is a temporary importer so be sure to modularize it so we can remove it later in favor of a comprehensive import and templating system as we planned earlier.  The below sampling includes the headers, and one of each Credit and Debit transactions.  Some data (Account Name) will not be used.  These are all being processed against FMB: Checking Account.  Fund will be assigned after processing during refinement.
+"Account Name","Processed Date","Description","Check Number","Credit or Debit","Amount"
+"ADV ELIT        2805",2026-08-20,"DBT CRD 1346 08/19/26 DBVBJQIQ THE TIRE STORE NASHVILLE     GA C#4352",,"Debit",491.31
+"ADV ELIT        2805",2026-08-19,"DEPOSIT",,"Credit",120720.00
+
+Actual:
+Notes / Context / Interpretation:
+Removal inventory (TEMP_BANK_EXPORT_IMPORTER)
+
+
+Use this later to delete the importer without touching core ledger logic.
+
+
+New files — delete entirely
+┌─────────────────────────────────┬───────────────────────────────────────────┐
+│ File                            │ Role                                      │
+├─────────────────────────────────┼───────────────────────────────────────────┤
+│ includes/bank_export_import.php │ Parser, account lookup, write batch       │
+├─────────────────────────────────┼───────────────────────────────────────────┤
+│ pages/ledger_bank_export.php    │ SPA page (paste/upload, preview, confirm) │
+└─────────────────────────────────┴───────────────────────────────────────────┘
+
+
+Existing files — revert only flagged sections
+┌─────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ File            │ What was added                                                                                                                                                                                 │
+├─────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ includes/nav    │ require of bank_export_import.php; $canBankExportImport; extra temper_render_nav_links parameter; accordion condition || $canBankExportImport; Bank Export nav item; matching call-site        │
+│ .php            │ argument                                                                                                                                                                                       │
+└─────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+Do not revert as part of importer removal (release history, not importer logic)
+• config.php (APP_VERSION 0.934)
+• includes/app_version.php (TEMPER_DEFAULT_APP_VERSION)
+• VERSION.md (v0.934 notes)
+• updates/20260825_0934_bank_export_import.sql and the app_version row it inserted
+
+
+Untouched on purpose
+• includes/ledger_engine.php, pages/ledger.php
+• includes/beancount_mass_import.php, pages/ledger_import.php
+• includes/permissions.php (no new permission; mass-import grant stays for Beancount)
+
+
+
+Complete: YES-PENDING REMOVAL
+
+
+
+#12 - 2026-08-25 - Ledger / Add-Edit Transaction - Enhancement - Minor
+Expected:
+Date and other input fields are wide enough that typed values (especially the full year in Date) remain visible. Budget may stay partially visible in the closed control; full text appears when the dropdown is open. Debit and Credit amounts display and re-format as currency when the field loses focus (not bare decimals only).
+Actual:
+Date field is too narrow (year is clipped while typing). Some other fields leave text partially hidden. Debit/Credit show plain decimals without currency formatting after blur.
+Notes / Context / Interpretation:
+Review all Add/Edit transaction inputs for reasonable visible width. Budget does not need full string visible when closed. Currency formatting should apply on blur for Debit/Credit.
+Completion Status:
+
+#13 - 2026-08-25 - Ledger / Add-Edit Transaction - Enhancement - Minor
+Expected:
+Accounts dropdown is grouped by Account Type with clear delimiters (e.g. "---------"), sorted by COA number within each group, with the temporary 000000 account listed last.
+Actual:
+Accounts appear as a flat list without type grouping or deliberate COA ordering; temporary account is not forced last.
+Notes / Context / Interpretation:
+Grouping improves speed when picking accounts on long CoAs. Temporary account is only used sporadically and should not sort into the main sequence.
+
+Completion Status:
+
+
+
+#14 - 2026-08-25 - Ledger - Enhancement - Minor
+Expected:
+A toggle on the ledger, inline with the action buttons but to their right, sets the default double-click behavior on a row to either View or Edit. Selection persists as the user’s default until changed.
+Actual:
+Double-click behavior is fixed (or not user-selectable); no toolbar control to choose View vs Edit as the default.
+Notes / Context / Interpretation:
+Sometimes the user wants quick View; sometimes quick Edit. Toggle avoids constantly using the explicit buttons or changing habits.
+
+Completion Status:
+
+TEMPLATE
+
+
+
+
+#<##> - yyyy-mm-dd - <page/action> - <category> - <severity>
+Expected:
+Actual:
+Notes / Context / Interpretation:
+
+Completion Status:
+
+

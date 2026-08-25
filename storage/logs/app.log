@@ -1797,3 +1797,37 @@ Stack trace:
 [25-Aug-2026 01:19:27 UTC] [AUDIT] user=admin (Administrator) action=ledger.created details=transaction=192 Bank export import: Transaction created for "DEPOSIT" totaling $243.00 (2 lines). {"source":"bank_export_import","bank_direction":"credit","debits":243,"credits":243,"changes":["Transaction created for \"DEPOSIT\" totaling $243.00 (2 lines)."]} ip=::1
 [25-Aug-2026 01:19:27 UTC] [AUDIT] user=admin (Administrator) action=ledger.created details=transaction=193 Bank export import: Transaction created for "TITHE.LY   TITHE.LY CCD" totaling $100.00 (2 lines). {"source":"bank_export_import","bank_direction":"credit","debits":100,"credits":100,"changes":["Transaction created for \"TITHE.LY   TITHE.LY CCD\" totaling $100.00 (2 lines)."]} ip=::1
 [25-Aug-2026 01:19:27 UTC] [AUDIT] user=admin (Administrator) action=ledger.bank_export_import details=191 FMB Checking transaction(s) imported from bank-export CSV (no funds, no Ref #). ip=::1
+[25-Aug-2026 03:33:37 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Table 'temper_db.workflow_events' doesn't exist in /var/www/temper/includes/backup_utils.php:1289
+Stack trace:
+#0 /var/www/temper/includes/backup_utils.php(1289): mysqli->next_result()
+#1 /var/www/temper/includes/backup_utils.php(1320): executeSqlMultiQuery()
+#2 /var/www/temper/includes/backup_package.php(747): restoreDataOnlySql()
+#3 /var/www/temper/pages/admin-backup.php(327): restoreDataOnlyFromZip()
+#4 {main}
+  thrown in /var/www/temper/includes/backup_utils.php on line 1289
+[25-Aug-2026 03:33:47 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Table 'temper_db.workflow_events' doesn't exist in /var/www/temper/includes/backup_utils.php:1289
+Stack trace:
+#0 /var/www/temper/includes/backup_utils.php(1289): mysqli->next_result()
+#1 /var/www/temper/includes/backup_utils.php(1320): executeSqlMultiQuery()
+#2 /var/www/temper/includes/backup_package.php(747): restoreDataOnlySql()
+#3 /var/www/temper/pages/admin-backup.php(327): restoreDataOnlyFromZip()
+#4 {main}
+  thrown in /var/www/temper/includes/backup_utils.php on line 1289
+[25-Aug-2026 03:34:20 UTC] [AUDIT] user=admin (Administrator) action=clear_transactions details=Tables: transaction_documents, transaction_events, transaction_lines, transaction_details ip=::1
+[25-Aug-2026 03:34:20 UTC] [AUDIT] user=admin (Administrator) action=clear_transactions_attachment_files details=Purged 0 attachment file(s) from storage. ip=::1
+[25-Aug-2026 03:34:20 UTC] [AUDIT] user=admin (Administrator) action=clear_transactions_completed details={"transaction_documents":"truncated","transaction_events":"truncated","transaction_lines":"truncated","transaction_details":"truncated","attachment_storage":{"success":true,"deleted_files":0,"deleted_dirs":1,"errors":[],"attachments":{"success":true,"deleted_files":0,"deleted_dirs":0,"errors":[]},"transaction_documents":{"success":true,"deleted_files":0,"deleted_dirs":1,"errors":[]}}} ip=::1
+[25-Aug-2026 03:34:36 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/budget_utils.php on line 190
+[25-Aug-2026 03:34:54 UTC] PHP Fatal error:  Uncaught mysqli_sql_exception: Table 'temper_db.workflow_events' doesn't exist in /var/www/temper/includes/backup_utils.php:1289
+Stack trace:
+#0 /var/www/temper/includes/backup_utils.php(1289): mysqli->next_result()
+#1 /var/www/temper/includes/backup_utils.php(1320): executeSqlMultiQuery()
+#2 /var/www/temper/includes/backup_package.php(747): restoreDataOnlySql()
+#3 /var/www/temper/pages/admin-backup.php(327): restoreDataOnlyFromZip()
+#4 {main}
+  thrown in /var/www/temper/includes/backup_utils.php on line 1289
+[25-Aug-2026 03:36:31 UTC] PHP Warning:  preg_match(): Allocation of JIT memory failed, PCRE JIT will be disabled. This is likely caused by security restrictions. Either grant PHP permission to allocate executable memory, or set pcre.jit=0 in /var/www/temper/includes/ledger_engine.php on line 159
+[25-Aug-2026 03:36:31 UTC] [AUDIT] user=admin (Administrator) action=ledger.updated details=transaction=192 Transaction updated (6 changes). {"debits":243,"credits":243,"changes":["Reference # changed from \"—\" to \"260001\".","Description updated.","Added Fund \"General Operating Fund\" (FMB: Checking Account) debit $243.00.","Added Account \"General Contributions\" credit $243.00.","Removed Account \"FMB: Checking Account\" debit $243.00.","Removed Account \"Imbalance\" credit $243.00."]} ip=::1
+[25-Aug-2026 03:36:31 UTC] [AUDIT] user=admin (Administrator) action=ledger.document_uploaded details=transaction=192 Attachment "260001-20260104-Weekly Deposit.pdf" added. {"doc_id":1,"original_filename":"260001-20260104-Weekly Deposit.pdf"} ip=::1
+[25-Aug-2026 10:10:43 UTC] [AUDIT] user=admin (Administrator) action=user_update details=Updated user id=2 username=jackie.adair roles=[1,8,9,2,7,3,6] must_change=0 custom_perms=0 ip=::1
+[25-Aug-2026 10:11:17 UTC] [AUDIT] user=jackie.adair (Archivist) action=role_switch details=Switched active role from Administrator to Archivist ip=::1
+[25-Aug-2026 10:35:04 UTC] [AUDIT] user=jackie.adair (Administrator) action=system_config_update details=Updated: developer_mode=true ip=::1

@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.936](#v0936)
 - [v0.935](#v0935)
 - [v0.934](#v0934)
 - [v0.933](#v0933)
@@ -141,6 +142,23 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.936
+
+**Ledger Add/Edit form layout, account grouping, currency amounts, and double-click toggle** — 2026-08-25
+
+> No schema update required for this release (Ledger UI polish only).  
+> **Patch file (history row):** `updates/20260825_0936_ledger_form_layout_dblclick.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.936
+
+- Add/Edit transaction: Date (and other clipped typed fields) are wide enough that the full value, including the year, stays visible while typing. Budget may still truncate when closed.
+- Accounts dropdown is grouped by Account Type with a `---------` delimiter between groups, sorted by COA number within each group; the temporary `000000` account is last.
+- Debit and Credit line amounts display as currency and reformat to currency when the input loses focus.
+- Ledger toolbar: View/Edit toggle to the right of the action buttons sets the default double-click action on a row. Choice persists in the browser until changed. Cleared/reconciled Edit rules are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.936**. Setup baseline remains **0.900**.
 
 ---
 

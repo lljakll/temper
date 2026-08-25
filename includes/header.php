@@ -1214,6 +1214,15 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             .ledger-action-bar .btn {
                 flex: 1 1 calc(50% - 0.25rem);
             }
+            .ledger-action-bar .ledger-dblclick-toggle {
+                flex: 1 1 100%;
+            }
+            .ledger-action-bar .ledger-dblclick-toggle .btn {
+                flex: 0 1 auto;
+            }
+        }
+        .ledger-dblclick-toggle {
+            flex: 0 0 auto;
         }
 
         /* ── Dashboard cards ─────────────────────────────────────────────── */

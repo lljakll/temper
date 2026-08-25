@@ -1624,6 +1624,21 @@ require_once __DIR__ . '/../includes/permissions.php';
     $naturalLookup = [];
     $functionalLookup = [];
 
+    $accountTypeOrder = ['asset', 'liability', 'equity', 'income', 'expense'];
+    $accountTypeLabels = [
+        'asset' => 'Asset',
+        'liability' => 'Liability',
+        'equity' => 'Equity',
+        'income' => 'Income',
+        'expense' => 'Expense',
+    ];
+    $accountsByType = [];
+    foreach ($accountTypeOrder as $typeKey) {
+        $accountsByType[$typeKey] = [];
+    }
+    $otherTypeAccounts = [];
+    $tempZeroAccounts = [];
+
     $aopt = '';
     if ($ar) {
         while ($a = $ar->fetch_assoc()) {
@@ -1635,7 +1650,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             $funId = $a['functional_category_id'] !== null && $a['functional_category_id'] !== ''
                 ? (int)$a['functional_category_id'] : 0;
             $acctType = strtolower(trim((string)($a['account_type'] ?? '')));
-            $accountsLookup[] = [
+            $row = [
                 'id' => (int)$a['id'],
                 'name' => $a['name'],
                 'normal_balance' => $a['normal_balance'],
@@ -1646,16 +1661,92 @@ require_once __DIR__ . '/../includes/permissions.php';
                 'natural_name' => $natName,
                 'functional_name' => $funName,
             ];
-            $nb = htmlspecialchars($a['normal_balance']);
-            $aopt .= '<option value="' . (int)$a['id'] . '"'
-                . ' data-normal-balance="' . $nb . '"'
-                . ' data-account-type="' . htmlspecialchars($acctType) . '"'
-                . ' data-coa-number="' . htmlspecialchars($coa) . '"'
-                . ' data-natural-id="' . ($natId > 0 ? $natId : '') . '"'
-                . ' data-functional-id="' . ($funId > 0 ? $funId : '') . '"'
-                . ' data-natural-name="' . htmlspecialchars($natName) . '"'
-                . ' data-functional-name="' . htmlspecialchars($funName) . '"'
-                . '>' . htmlspecialchars($a['name']) . ' (' . $nb . ')</option>';
+            $accountsLookup[] = $row;
+            if ($coa === '000000') {
+                $tempZeroAccounts[] = $row;
+            } elseif (isset($accountsByType[$acctType])) {
+                $accountsByType[$acctType][] = $row;
+            } else {
+                $otherTypeAccounts[] = $row;
+            }
+        }
+    }
+
+    $sortAccountsByCoa = static function (array &$rows): void {
+        usort($rows, static function ($a, $b) {
+            $ac = (string)($a['coa_number'] ?? '');
+            $bc = (string)($b['coa_number'] ?? '');
+            $aEmpty = ($ac === '');
+            $bEmpty = ($bc === '');
+            if ($aEmpty !== $bEmpty) {
+                return $aEmpty ? 1 : -1;
+            }
+            $c = strnatcasecmp($ac, $bc);
+            if ($c !== 0) {
+                return $c;
+            }
+            $n = strcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? ''));
+            if ($n !== 0) {
+                return $n;
+            }
+            return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
+        });
+    };
+    $buildAccountOptionHtml = static function (array $row): string {
+        $nb = htmlspecialchars((string)($row['normal_balance'] ?? ''));
+        $natId = $row['natural_category_id'] !== '' ? (int)$row['natural_category_id'] : 0;
+        $funId = $row['functional_category_id'] !== '' ? (int)$row['functional_category_id'] : 0;
+        return '<option value="' . (int)$row['id'] . '"'
+            . ' data-normal-balance="' . $nb . '"'
+            . ' data-account-type="' . htmlspecialchars((string)($row['account_type'] ?? '')) . '"'
+            . ' data-coa-number="' . htmlspecialchars((string)($row['coa_number'] ?? '')) . '"'
+            . ' data-natural-id="' . ($natId > 0 ? $natId : '') . '"'
+            . ' data-functional-id="' . ($funId > 0 ? $funId : '') . '"'
+            . ' data-natural-name="' . htmlspecialchars((string)($row['natural_name'] ?? '—')) . '"'
+            . ' data-functional-name="' . htmlspecialchars((string)($row['functional_name'] ?? '—')) . '"'
+            . '>' . htmlspecialchars((string)($row['name'] ?? '')) . ' (' . $nb . ')</option>';
+    };
+
+    $accountSelectGroups = [];
+    foreach ($accountTypeOrder as $typeKey) {
+        if ($accountsByType[$typeKey] === []) {
+            continue;
+        }
+        $sortAccountsByCoa($accountsByType[$typeKey]);
+        $accountSelectGroups[] = [
+            'label' => $accountTypeLabels[$typeKey],
+            'rows' => $accountsByType[$typeKey],
+        ];
+    }
+    if ($otherTypeAccounts !== []) {
+        $sortAccountsByCoa($otherTypeAccounts);
+        $accountSelectGroups[] = [
+            'label' => 'Other',
+            'rows' => $otherTypeAccounts,
+        ];
+    }
+    if ($tempZeroAccounts !== []) {
+        $sortAccountsByCoa($tempZeroAccounts);
+        $accountSelectGroups[] = [
+            'label' => '',
+            'rows' => $tempZeroAccounts,
+        ];
+    }
+    $groupIndex = 0;
+    foreach ($accountSelectGroups as $group) {
+        if ($groupIndex > 0) {
+            $aopt .= '<option disabled value="">---------</option>';
+        }
+        $groupIndex++;
+        $groupLabel = (string)($group['label'] ?? '');
+        if ($groupLabel !== '') {
+            $aopt .= '<optgroup label="' . htmlspecialchars($groupLabel) . '">';
+        }
+        foreach ($group['rows'] as $row) {
+            $aopt .= $buildAccountOptionHtml($row);
+        }
+        if ($groupLabel !== '') {
+            $aopt .= '</optgroup>';
         }
     }
     $fopt = '<option value="">—</option>';
@@ -1785,6 +1876,19 @@ require_once __DIR__ . '/../includes/permissions.php';
         <?php else: ?>
         <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
         <?php endif; ?>
+        <div class="d-flex align-items-center gap-1 ledger-dblclick-toggle"
+             title="Default action when double-clicking a transaction row">
+            <span class="small text-muted text-nowrap d-none d-sm-inline">Double-click</span>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Double-click row action">
+                <input type="radio" class="btn-check" name="ledgerDblClickMode" id="ledgerDblClickView"
+                       value="view" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ledgerDblClickView">View</label>
+                <input type="radio" class="btn-check" name="ledgerDblClickMode" id="ledgerDblClickEdit"
+                       value="edit" autocomplete="off"<?= $canWriteLedger ? '' : ' disabled' ?>>
+                <label class="btn btn-outline-secondary<?= $canWriteLedger ? '' : ' disabled' ?>" for="ledgerDblClickEdit"
+                       <?= $canWriteLedger ? '' : 'title="Read-only access — Edit is unavailable"' ?>>Edit</label>
+            </div>
+        </div>
         <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2" title="Clear all column filters (Ctrl+C)"<?= $hasActiveFilters ? '' : ' disabled' ?>>
             <i class="bi bi-funnel"></i> Clear all filters
         </button>
@@ -1799,8 +1903,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         <div class="card flex-grow-1 d-flex flex-column ledger-tx-list mb-0" style="min-height:0;">
             <div class="card-header py-2 d-flex flex-wrap align-items-center gap-2 flex-shrink-0">
                 <strong>Transactions</strong>
-                <small class="text-muted d-none d-md-inline">(double-click or View to open; checkbox / Ctrl / Shift for multi-select)</small>
-                <small class="text-muted d-md-none">(double-tap to view)</small>
+                <small class="text-muted d-none d-md-inline">(double-click uses the View/Edit toggle; checkbox / Ctrl / Shift for multi-select)</small>
+                <small class="text-muted d-md-none">(double-tap uses the View/Edit toggle)</small>
             </div>
             <div class="card-body p-0 d-flex flex-column" style="flex:1 1 auto; min-height:0;">
                 <div class="table-responsive ledger-table-scroll" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
@@ -1970,11 +2074,11 @@ foreach ($colDefs as $col):
                     <input type="hidden" name="lines_json" id="lines_json">
 
                     <div class="row g-2">
-                        <div class="col-6 col-sm-4 col-md-2 col-xl-1">
+                        <div class="col-6 col-sm-auto col-md-3 col-xl-2 tx-date-col">
                             <label class="form-label small mb-1">Date *</label>
                             <input type="date" class="form-control form-control-sm" name="transaction_date" id="transaction_date" required>
                         </div>
-                        <div class="col-6 col-sm-4 col-md-2 col-xl-1">
+                        <div class="col-6 col-sm-auto col-md-2 col-xl-2 tx-ref-col">
                             <label class="form-label small mb-1" for="reference_number">
                                 Ref # *
                                 <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
@@ -1992,15 +2096,15 @@ foreach ($colDefs as $col):
                             <div class="form-text small text-warning d-none" id="referenceReuseWarn" style="font-size:0.7rem;"></div>
                             <input type="hidden" name="allow_reference_reuse" id="allow_reference_reuse" value="0">
                         </div>
-                        <div class="col-6 col-sm-8 col-md-3 col-xl-2">
+                        <div class="col-12 col-sm-6 col-md-4 col-xl-3">
                             <label class="form-label small mb-1">Pay To</label>
                             <input type="text" class="form-control form-control-sm" name="pay_to" id="pay_to" placeholder="Vendor or person">
                         </div>
-                        <div class="col-6 col-sm-4 col-md-2 col-xl-1">
+                        <div class="col-6 col-sm-4 col-md-3 col-xl-2">
                             <label class="form-label small mb-1">Check #</label>
                             <input type="text" class="form-control form-control-sm" name="check_number" id="check_number">
                         </div>
-                        <div class="col-12 col-sm-8 col-md-4 col-xl-2">
+                        <div class="col-12 col-sm-8 col-md-4 col-xl-3">
                             <label class="form-label small mb-1" for="budget_id">Budget</label>
                             <select class="form-select form-select-sm" name="budget_id" id="budget_id"
                                     data-bs-toggle="tooltip" data-bs-placement="top"
@@ -2011,7 +2115,7 @@ foreach ($colDefs as $col):
                             <div class="form-text small text-warning d-none lh-sm" id="budgetStatusWarn" style="font-size:0.7rem;"></div>
                             <input type="hidden" name="allow_budget_out_of_period" id="allow_budget_out_of_period" value="0">
                         </div>
-                        <div class="col-12 col-sm-6 col-md-4 col-xl-3">
+                        <div class="col-12">
                             <label class="form-label small mb-1">Description</label>
                             <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Transaction description">
                         </div>
@@ -2031,8 +2135,8 @@ foreach ($colDefs as $col):
                                         <th>Fund</th>
                                         <th>Natural</th>
                                         <th>Functional</th>
-                                        <th class="text-end text-primary" style="width:100px">Debit</th>
-                                        <th class="text-end text-success" style="width:100px">Credit</th>
+                                        <th class="text-end text-primary tx-amt-col">Debit</th>
+                                        <th class="text-end text-success tx-amt-col">Credit</th>
                                         <th style="width:30px"></th>
                                     </tr>
                                 </thead>
@@ -2049,12 +2153,32 @@ foreach ($colDefs as $col):
                                 font-size: 0.875rem;
                                 max-width: 9rem;
                             }
+                            #txFormModal .tx-date-col {
+                                min-width: 11.5rem;
+                            }
+                            #txFormModal #transaction_date {
+                                min-width: 11.5rem;
+                            }
+                            #txFormModal .tx-ref-col {
+                                min-width: 7.5rem;
+                            }
+                            #txFormModal #reference_number {
+                                min-width: 6.75rem;
+                            }
+                            #txLinesTable th.tx-amt-col,
+                            #txLinesTable td:has(.line-amount) {
+                                width: 8.25rem;
+                                min-width: 8.25rem;
+                            }
+                            #txLinesTable .line-amount {
+                                min-width: 7.5rem;
+                            }
                         </style>
 
                         <div class="d-flex flex-wrap gap-2 gap-md-3 align-items-center small">
-                            <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">0.00</span></div>
-                            <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">0.00</span></div>
-                            <div><strong>Diff:</strong> <span id="diff" class="fw-bold">0.00</span></div>
+                            <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">$0.00</span></div>
+                            <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">$0.00</span></div>
+                            <div><strong>Diff:</strong> <span id="diff" class="fw-bold">$0.00</span></div>
                             <div id="balanceStatus" class="text-muted"></div>
                         </div>
                     </div>
@@ -2350,6 +2474,55 @@ foreach ($colDefs as $col):
     const clearTxBtn = document.getElementById('clearTxBtn');
     const reconcileTxBtn = document.getElementById('reconcileTxBtn');
     const clearAllFiltersBtn = document.getElementById('clearAllFiltersBtn');
+    const dblClickViewRadio = document.getElementById('ledgerDblClickView');
+    const dblClickEditRadio = document.getElementById('ledgerDblClickEdit');
+    const DBLCLICK_STORAGE_KEY = 'temperLedgerDblClickAction';
+
+    function readStoredDblClickAction() {
+        try {
+            const v = localStorage.getItem(DBLCLICK_STORAGE_KEY);
+            if (v === 'edit' || v === 'view') return v;
+        } catch (e) { /* ignore */ }
+        return 'view';
+    }
+
+    function persistDblClickAction(action) {
+        const v = action === 'edit' ? 'edit' : 'view';
+        try { localStorage.setItem(DBLCLICK_STORAGE_KEY, v); } catch (e) { /* ignore */ }
+        return v;
+    }
+
+    function getDblClickAction() {
+        const stored = readStoredDblClickAction();
+        if (stored === 'edit' && canWriteLedger) return 'edit';
+        return 'view';
+    }
+
+    function syncDblClickToggleUi() {
+        const action = getDblClickAction();
+        if (dblClickViewRadio) dblClickViewRadio.checked = (action === 'view');
+        if (dblClickEditRadio) {
+            dblClickEditRadio.disabled = !canWriteLedger;
+            dblClickEditRadio.checked = (action === 'edit');
+        }
+    }
+
+    syncDblClickToggleUi();
+    if (dblClickViewRadio) {
+        dblClickViewRadio.addEventListener('change', function() {
+            if (dblClickViewRadio.checked) persistDblClickAction('view');
+        });
+    }
+    if (dblClickEditRadio) {
+        dblClickEditRadio.addEventListener('change', function() {
+            if (!canWriteLedger) {
+                persistDblClickAction('view');
+                syncDblClickToggleUi();
+                return;
+            }
+            if (dblClickEditRadio.checked) persistDblClickAction('edit');
+        });
+    }
 
     const selectAll = document.getElementById('selectAll');
     const txTableBody = document.getElementById('txTableBody');
@@ -3374,11 +3547,40 @@ foreach ($colDefs as $col):
         updateListFooter();
     }
 
+    function parseLineAmount(val) {
+        if (val == null || val === '') return 0;
+        if (typeof val === 'number') {
+            return Number.isFinite(val) && val > 0 ? val : 0;
+        }
+        let s = String(val).trim();
+        if (!s) return 0;
+        s = s.replace(/[^0-9.\-]/g, '');
+        if (!s || s === '-' || s === '.') return 0;
+        const firstDot = s.indexOf('.');
+        if (firstDot !== -1) {
+            s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '');
+        }
+        const n = parseFloat(s);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    function formatLineAmountDisplay(val) {
+        const n = parseLineAmount(val);
+        if (n <= 0) return '';
+        return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function formatLineAmountEditable(val) {
+        const n = parseLineAmount(val);
+        if (n <= 0) return '';
+        return n.toFixed(2);
+    }
+
     function getLineAmountAndType(row) {
         const debIn = row.querySelector('.line-debit-amt');
         const credIn = row.querySelector('.line-credit-amt');
-        const deb = parseFloat(debIn?.value || '0') || 0;
-        const cred = parseFloat(credIn?.value || '0') || 0;
+        const deb = parseLineAmount(debIn?.value);
+        const cred = parseLineAmount(credIn?.value);
         // Debit/Credit is chosen by which column has the amount (not locked to account type)
         if (cred > 0 && deb <= 0) return { amount: cred, type: 'credit' };
         if (deb > 0 && cred <= 0) return { amount: deb, type: 'debit' };
@@ -3434,10 +3636,11 @@ foreach ($colDefs as $col):
         });
         const diff = deb - cred;
 
-        document.getElementById('totalDebits').textContent = deb.toFixed(2);
-        document.getElementById('totalCredits').textContent = cred.toFixed(2);
+        document.getElementById('totalDebits').textContent = formatLineAmountDisplay(deb) || '$0.00';
+        document.getElementById('totalCredits').textContent = formatLineAmountDisplay(cred) || '$0.00';
         const dEl = document.getElementById('diff');
-        dEl.textContent = diff.toFixed(2);
+        const diffAbs = Math.abs(diff);
+        dEl.textContent = (diff < -0.005 ? '-' : '') + (formatLineAmountDisplay(diffAbs) || '$0.00');
         dEl.className = (Math.abs(diff) < 0.005) ? 'fw-bold text-success' : 'fw-bold text-danger';
 
         const lineCount = linesBody.querySelectorAll('tr').length;
@@ -3525,16 +3728,30 @@ foreach ($colDefs as $col):
                 recalcTotals();
             });
         }
-        if (debIn) debIn.addEventListener('input', () => {
-            if (credIn && parseFloat(debIn.value || '0') > 0) credIn.value = '';
-            row.dataset.lineType = parseFloat(debIn.value || '0') > 0 ? 'debit' : (row.dataset.lineType || '');
-            recalcTotals();
-        });
-        if (credIn) credIn.addEventListener('input', () => {
-            if (debIn && parseFloat(credIn.value || '0') > 0) debIn.value = '';
-            row.dataset.lineType = parseFloat(credIn.value || '0') > 0 ? 'credit' : (row.dataset.lineType || '');
-            recalcTotals();
-        });
+        function bindAmountInput(input, other, typeName) {
+            if (!input) return;
+            input.addEventListener('input', () => {
+                if (other && parseLineAmount(input.value) > 0) other.value = '';
+                row.dataset.lineType = parseLineAmount(input.value) > 0 ? typeName : (row.dataset.lineType || '');
+                recalcTotals();
+            });
+            input.addEventListener('focus', () => {
+                if (input.readOnly || input.disabled) return;
+                const n = parseLineAmount(input.value);
+                input.value = n > 0 ? formatLineAmountEditable(n) : '';
+            });
+            input.addEventListener('blur', () => {
+                const n = parseLineAmount(input.value);
+                input.value = n > 0 ? formatLineAmountDisplay(n) : '';
+                if (n > 0) {
+                    if (other) other.value = '';
+                    row.dataset.lineType = typeName;
+                }
+                recalcTotals();
+            });
+        }
+        bindAmountInput(debIn, credIn, 'debit');
+        bindAmountInput(credIn, debIn, 'credit');
         if (remBtn) remBtn.addEventListener('click', () => {
             row.remove();
             recalcTotals();
@@ -3556,10 +3773,10 @@ foreach ($colDefs as $col):
             <td><span class="line-cat-label line-natural-label" title="">—</span></td>
             <td><span class="line-cat-label line-functional-label" title="">—</span></td>
             <td>
-                <input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder=""${ro}>
+                <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
             </td>
             <td>
-                <input type="number" step="0.01" min="0.01" class="form-control form-control-sm line-amount line-credit-amt text-end font-monospace" placeholder=""${ro}>
+                <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-credit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
             </td>
             <td><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
         `;
@@ -3575,12 +3792,13 @@ foreach ($colDefs as $col):
             const debIn = row.querySelector('.line-debit-amt');
             const credIn = row.querySelector('.line-credit-amt');
             if (prefill.amount !== undefined && prefill.amount !== '') {
+                const formatted = formatLineAmountDisplay(prefill.amount);
                 const t = String(prefill.type || '').toLowerCase();
                 if (t === 'credit') {
-                    credIn.value = prefill.amount;
+                    credIn.value = formatted;
                     row.dataset.lineType = 'credit';
                 } else {
-                    debIn.value = prefill.amount;
+                    debIn.value = formatted;
                     row.dataset.lineType = 'debit';
                 }
             }
@@ -5899,7 +6117,7 @@ foreach ($colDefs as $col):
             afterSelectionChanged();
         });
 
-        // Double-click row → read-only View modal (not Edit)
+        // Double-click row → View or Edit per toolbar toggle (Edit still respects cleared/reconciled rules)
         txTableBody.addEventListener('dblclick', function(e) {
             if (e.target.closest('.ledger-attach-btn')) {
                 e.preventDefault();
@@ -5918,7 +6136,11 @@ foreach ($colDefs as $col):
             lastAnchorRow = row;
             syncSelectAllState();
             afterSelectionChanged();
-            openViewForId(id);
+            if (getDblClickAction() === 'edit' && canWriteLedger) {
+                openEditForId(id);
+            } else {
+                openViewForId(id);
+            }
         });
     }
 
