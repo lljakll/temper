@@ -19,6 +19,9 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.935](#v0935)
+- [v0.934](#v0934)
+- [v0.933](#v0933)
 - [v0.932](#v0932)
 - [v0.931](#v0931)
 - [v0.930](#v0930)
@@ -138,6 +141,65 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.935
+
+**Fix Bank Export Preview “unexpected server response”** — 2026-08-25
+
+> No schema update required for this release (CSV parse / JSON response fix only).  
+> **Patch file (history row):** `updates/20260825_0935_bank_export_preview_json.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.935
+
+- Preview on the temporary Bank Export importer failed with “unexpected server response” because PHP 8.4 deprecation notices from `fgetcsv()` (missing `$escape` argument) were printed into the JSON body when `display_errors` is on, so the client could not parse the reply.
+- `fgetcsv()` now passes length, separator, enclosure, and escape explicitly. POST JSON replies also start an output buffer so stray notices cannot leak in front of the payload.
+- Import flow is otherwise unchanged. `TEMP_BANK_EXPORT_IMPORTER` flags remain.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.935**. Setup baseline remains **0.900**.
+
+---
+
+## v0.934
+
+**Temporary FMB Checking Bank Export mass importer** — 2026-08-25
+
+> No schema update required for this release (temporary CSV importer only).  
+> **Patch file (history row):** `updates/20260825_0934_bank_export_import.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.934
+
+- Adds a temporary, self-contained **Bank Export** importer under Ledger (accordion, alongside Ledger and Beancount Import).
+- Access is limited to Administrator, Treasurer, Finance Manager, and Archivist (reuses `page.ledger.mass_import`).
+- Accepts bank-export CSV (`Account Name`, `Processed Date`, `Description`, `Check Number`, `Credit or Debit`, `Amount`). Account Name is ignored; every row posts to **FMB: Checking Account** vs existing **Imbalance**.
+- Credit (money in) debits Checking / credits Imbalance; Debit (money out) credits Checking / debits Imbalance. No funds, no Reference #, no duplicate check, no attachments.
+- Paste or file-upload → preview → confirm write. Marked `TEMP_BANK_EXPORT_IMPORTER` for later removal; Beancount Mass Import and Import-from-Text are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.934**. Setup baseline remains **0.900**.
+
+---
+
+## v0.933
+
+**Keep attachment files in sync with ledger records and full transaction purge** — 2026-08-24
+
+> No schema update required for this release (file-sync + audit behavior only).  
+> **Patch file (history row):** `updates/20260824_0933_attachment_file_sync.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.933
+
+- Deleting an attachment on an **editable** (pending) transaction now removes the on-disk file as well as the database row, including leftover copies under the Reference # folder, numeric-id folder, or legacy `transaction_documents/{id}/`. Empty folders are removed. The transaction audit trail records the file deletion.
+- Changing **Ref #** on an editable transaction moves the attachment files to the new Reference # folder **before** the stored Ref # is updated, so files stay linked. Old folders are not left behind. The move is recorded in the transaction audit trail (`document_relocated`).
+- Database Maintenance **Clear All Transactions** and **Clear All Financial Data** also purge on-disk transaction attachment files (`storage/attachments/` and legacy `storage/transaction_documents/`).
+- Cleared or reconciled transactions remain immutable: attachment files cannot be deleted or renamed/moved, and no file-related audit events (`document_uploaded`, `document_deleted`, `document_relocated`) are written for them.
+- Upload, view/download, ledger paperclip indicator, and the portfolio viewer are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.933**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.932 | `updates/20260824_0933_attachment_file_sync.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.932 patches, then this process patch |
 
 ---
 

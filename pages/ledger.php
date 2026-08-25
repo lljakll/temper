@@ -1119,6 +1119,10 @@ require_once __DIR__ . '/../includes/permissions.php';
                     'original_filename' => $doc['original_filename'] ?? '',
                 ];
                 $delName = basename((string)($doc['original_filename'] ?? 'file'));
+                $fileDeleted = !empty($del['file_deleted']);
+                $summary = $fileDeleted
+                    ? ('Attachment "' . $delName . '" removed (file deleted from storage).')
+                    : ('Attachment "' . $delName . '" removed.');
                 try {
                     ledgerLogEvent(
                         $db,
@@ -1126,8 +1130,15 @@ require_once __DIR__ . '/../includes/permissions.php';
                         'document_deleted',
                         (int)$actor['id'],
                         $actor['username'] ?? 'system',
-                        'Attachment "' . $delName . '" removed.',
-                        ['doc_id' => $docId, 'original_filename' => $delName]
+                        $summary,
+                        [
+                            'doc_id' => $docId,
+                            'original_filename' => $delName,
+                            'stored_filename' => $del['stored_filename'] ?? ($doc['stored_filename'] ?? ''),
+                            'file_deleted' => $fileDeleted,
+                            'storage_paths' => $del['deleted_paths'] ?? [],
+                            'folder' => $del['folder'] ?? null,
+                        ]
                     );
                 } catch (Throwable $e) {
                     error_log('ledger delete audit failed: ' . $e->getMessage());
@@ -1437,17 +1448,34 @@ require_once __DIR__ . '/../includes/permissions.php';
                         } else {
                             $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
                             $budgetBind = $budgetId !== null ? (string)$budgetId : null;
+
+                            // Move files before updating the stored Reference # so paths stay resolvable.
+                            $relocResult = null;
+                            $needsReloc = $ref !== null && (
+                                ($oldRef !== '' && preg_match('/^\d{6}$/', $oldRef) && $oldRef !== $ref)
+                                || ($oldRef === '' || !preg_match('/^\d{6}$/', $oldRef))
+                            );
+                            if ($needsReloc) {
+                                $relocResult = ledgerRelocateTransactionAttachments(
+                                    $db,
+                                    $tx_id,
+                                    ($oldRef !== '' && preg_match('/^\d{6}$/', $oldRef)) ? $oldRef : (string)$tx_id,
+                                    $ref
+                                );
+                                if (empty($relocResult['success'])) {
+                                    $relocErr = implode('; ', $relocResult['errors'] ?? []);
+                                    $error = 'Could not move attachment files to the new Reference # folder'
+                                        . ($relocErr !== '' ? ': ' . $relocErr : '.');
+                                }
+                            }
+
+                            if (!empty($error)) {
+                                // Relocate failed; do not change the stored Reference #.
+                            } else {
                             $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, description=?, budget_id=? WHERE id=?");
                             $upd->bind_param("ssssssi", $d, $c, $p, $ref, $description, $budgetBind, $tx_id);
                             if ($upd->execute()) {
                                 $upd->close();
-
-                                // Keep attachment files with the Reference # folder when it changes
-                                if ($oldRef !== '' && preg_match('/^\d{6}$/', $oldRef) && $ref !== null && $oldRef !== $ref) {
-                                    ledgerRelocateAttachmentFolder($oldRef, $ref);
-                                } elseif (($oldRef === '' || !preg_match('/^\d{6}$/', $oldRef)) && $ref !== null) {
-                                    ledgerRelocateAttachmentFolder((string)$tx_id, $ref);
-                                }
 
                                 $describe = ledgerDescribeTransactionUpdate(
                                     $db,
@@ -1476,6 +1504,28 @@ require_once __DIR__ . '/../includes/permissions.php';
                                     $lins->execute();
                                 }
                                 $lins->close();
+                                if ($relocResult && !empty($relocResult['moved'])) {
+                                    $movedCount = count($relocResult['moved']);
+                                    $fromFolder = (string)($relocResult['from_folder'] ?? $oldRef);
+                                    $toFolder = (string)($relocResult['to_folder'] ?? $ref);
+                                    $relocSummary = $movedCount === 1
+                                        ? ('Moved 1 attachment file from ' . $fromFolder . ' to ' . $toFolder . '.')
+                                        : ('Moved ' . $movedCount . ' attachment files from ' . $fromFolder . ' to ' . $toFolder . '.');
+                                    ledgerLogEvent(
+                                        $db,
+                                        $tx_id,
+                                        'document_relocated',
+                                        $actor ? (int)$actor['id'] : null,
+                                        $actor['username'] ?? 'system',
+                                        $relocSummary,
+                                        [
+                                            'from_folder' => $fromFolder,
+                                            'to_folder' => $toFolder,
+                                            'count' => $movedCount,
+                                            'files' => $relocResult['moved'],
+                                        ]
+                                    );
+                                }
                                 ledgerLogEvent(
                                     $db,
                                     $tx_id,
@@ -1495,6 +1545,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 $error = "Update failed: " . $db->error;
                                 $upd->close();
                             }
+                            } // relocate succeeded
                         }
                     } else {
                         $createdBy = $actor ? (int)$actor['id'] : null;
@@ -3758,7 +3809,21 @@ foreach ($colDefs as $col):
         }
         if (type === 'document_deleted') {
             const name = details.original_filename || (summary.match(/:\s*(.+)$/) || [])[1];
-            if (name) return 'Attachment "' + name + '" removed.';
+            if (name) {
+                return details.file_deleted
+                    ? ('Attachment "' + name + '" removed (file deleted from storage).')
+                    : ('Attachment "' + name + '" removed.');
+            }
+        }
+        if (type === 'document_relocated') {
+            const from = details.from_folder || '';
+            const to = details.to_folder || '';
+            const n = Array.isArray(details.files) ? details.files.length : (Number(details.count) || 0);
+            if (from && to) {
+                const label = n === 1 ? 'Moved 1 attachment file' : ('Moved ' + n + ' attachment files');
+                return label + ' from ' + from + ' to ' + to + '.';
+            }
+            if (summary) return summary;
         }
         if (type === 'validated') {
             if (details.validated_by_name) {

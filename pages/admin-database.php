@@ -502,6 +502,25 @@ $exportDir = getExportsDir();
             }
             $message = getClearSuccessMessage($postAction, $categoriesRestored);
 
+            if (in_array($postAction, ['clear_transactions', 'clear_all_financial'], true)) {
+                $filePurge = purgeTransactionAttachmentFiles();
+                $results['attachment_storage'] = $filePurge;
+                $deletedFiles = (int)($filePurge['deleted_files'] ?? 0);
+                logAuditAction(
+                    $db,
+                    $userId,
+                    $username,
+                    $postAction . '_attachment_files',
+                    'Purged ' . $deletedFiles . ' attachment file(s) from storage.'
+                    . (!empty($filePurge['errors']) ? ' Errors: ' . implode('; ', $filePurge['errors']) : '')
+                );
+                if (!empty($filePurge['errors'])) {
+                    $message .= ' Warning: some attachment files could not be removed from storage.';
+                } else {
+                    $message .= ' Removed ' . $deletedFiles . ' attachment file(s) from storage.';
+                }
+            }
+
             logAuditAction($db, $userId, $username, $postAction . '_completed', json_encode($results));
             echo json_encode([
                 'success' => true,
@@ -797,7 +816,7 @@ $exportDir = getExportsDir();
                 </div>
 
                 <p class="text-muted small mt-3 mb-0">
-                    Affects: accounts, budget_lines, budgets, functional_categories, funds, natural_categories, tasks, transaction_details, transaction_lines.
+                    Affects: accounts, budget_lines, budgets, functional_categories, funds, natural_categories, tasks, transaction_details, transaction_lines, transaction_documents, transaction_events, and on-disk attachment files.
                 </p>
             </div>
         </div>
@@ -1001,12 +1020,12 @@ $exportDir = getExportsDir();
     };
 
     const actionWarnings = {
-        clear_transactions: 'This will permanently delete all transaction lines and transaction details.',
+        clear_transactions: 'This will permanently delete all transaction lines, transaction details, and on-disk attachment files.',
         clear_tasks: 'This will permanently delete all tasks.',
         clear_budgets: 'This will permanently delete all budget lines and budgets.',
         clear_accounts_funds: 'This will permanently delete all accounts and funds.',
         clear_categories: 'This will permanently delete all natural and functional categories, then restore default example categories.',
-        clear_all_financial: 'This will permanently delete ALL financial data including transactions, budgets, accounts, funds, categories, and tasks, then restore default example categories.',
+        clear_all_financial: 'This will permanently delete ALL financial data including transactions, budgets, accounts, funds, categories, tasks, and on-disk attachment files, then restore default example categories.',
         reset_users: 'This will delete ALL users, recreate only admin/password, restore default category examples, download the audit log, clear the audit log, and log you out.',
     };
 

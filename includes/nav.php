@@ -4,6 +4,8 @@ require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../auth.php';
 require_once __DIR__ . '/permissions.php';
 require_once __DIR__ . '/beancount_mass_import.php';
+// TEMP_BANK_EXPORT_IMPORTER — remove when historical bank data load is complete
+require_once __DIR__ . '/bank_export_import.php';
 
 // Central session check (shell nav)
 requireLogin();
@@ -21,6 +23,8 @@ function navCan(array $perms, string $permission): bool {
 $canDashboard = navCan($navPerms, 'page.dashboard');
 $canLedger = navCan($navPerms, 'page.ledger');
 $canLedgerImport = $navAcl && beancountMassImportUserCanAccess($navAcl);
+// TEMP_BANK_EXPORT_IMPORTER — remove when historical bank data load is complete
+$canBankExportImport = $navAcl && bankExportImportUserCanAccess($navAcl);
 $canReports = navCan($navPerms, 'page.reports');
 $canBudget = navCan($navPerms, 'page.budget');
 $canTasks = navCan($navPerms, 'page.tasks');
@@ -139,7 +143,8 @@ function temper_render_nav_links(
     bool $canLookups,
     bool $canUsers,
     bool $canConfig = false,
-    bool $canLedgerImport = false
+    bool $canLedgerImport = false,
+    bool $canBankExportImport = false // TEMP_BANK_EXPORT_IMPORTER — remove when historical bank data load is complete
 ): void {
 ?>
         <ul class="nav flex-column w-100">
@@ -153,7 +158,7 @@ function temper_render_nav_links(
             <?php endif; ?>
             <?php if ($canLedger): ?>
             <li class="nav-item">
-                <?php if ($canLedgerImport): ?>
+                <?php if ($canLedgerImport || $canBankExportImport): /* TEMP_BANK_EXPORT_IMPORTER: || $canBankExportImport */ ?>
                 <a class="nav-link" data-bs-toggle="collapse" href="#ledgerCollapse" role="button" aria-expanded="false" aria-controls="ledgerCollapse" title="Ledger">
                     <i class="bi bi-currency-dollar" aria-hidden="true"></i>
                     <span class="sidebar-label">Ledger</span>
@@ -166,12 +171,23 @@ function temper_render_nav_links(
                                 <span class="sidebar-label">Ledger</span>
                             </a>
                         </li>
+                        <?php if ($canLedgerImport): ?>
                         <li class="nav-item">
                             <a href="javascript:void(0)" onclick="loadPage('ledger_import')" class="nav-link" data-nav-page="ledger_import" title="Import">
                                 <i class="bi bi-box-arrow-in-down" aria-hidden="true"></i>
                                 <span class="sidebar-label">Import</span>
                             </a>
                         </li>
+                        <?php endif; ?>
+                        <?php if ($canBankExportImport): ?>
+                        <!-- TEMP_BANK_EXPORT_IMPORTER — remove when historical bank data load is complete -->
+                        <li class="nav-item">
+                            <a href="javascript:void(0)" onclick="loadPage('ledger_bank_export')" class="nav-link" data-nav-page="ledger_bank_export" title="Bank Export">
+                                <i class="bi bi-file-earmark-spreadsheet" aria-hidden="true"></i>
+                                <span class="sidebar-label">Bank Export</span>
+                            </a>
+                        </li>
+                        <?php endif; ?>
                     </ul>
                 </div>
                 <?php else: ?>
@@ -358,7 +374,8 @@ function temper_render_nav_links(
                     $canLookups,
                     $canUsers,
                     $canConfig,
-                    $canLedgerImport
+                    $canLedgerImport,
+                    $canBankExportImport // TEMP_BANK_EXPORT_IMPORTER — remove when historical bank data load is complete
                 ); ?>
 
                 <!-- Bottom: footer note + version + user info + logout -->

@@ -247,6 +247,92 @@ function deleteStorageFile(string $path): array {
     return ['success' => true];
 }
 
+/**
+ * Delete files and nested directories under a storage subdirectory, leaving the
+ * subdirectory itself in place. Restricted to transaction attachment locations.
+ *
+ * @return array{success:bool,deleted_files:int,deleted_dirs:int,errors:list<string>}
+ */
+function emptyStorageSubdir(string $subdir): array {
+    $allowed = ['attachments', 'transaction_documents'];
+    $subdir = str_replace('\\', '/', trim($subdir, '/\\'));
+    $result = [
+        'success' => true,
+        'deleted_files' => 0,
+        'deleted_dirs' => 0,
+        'errors' => [],
+    ];
+    if (!in_array($subdir, $allowed, true)) {
+        $result['success'] = false;
+        $result['errors'][] = 'Refusing to empty storage subdirectory: ' . $subdir;
+        return $result;
+    }
+
+    $storageRoot = rtrim((string)(realpath(getStoragePath()) ?: getStoragePath()), '/\\');
+    $dir = $storageRoot . '/' . $subdir;
+    if (!is_dir($dir)) {
+        return $result;
+    }
+    $dirReal = realpath($dir);
+    if ($dirReal === false || !str_starts_with($dirReal, $storageRoot)) {
+        $result['success'] = false;
+        $result['errors'][] = 'Attachment storage path is not under the storage root.';
+        return $result;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dirReal, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($iterator as $fileInfo) {
+        if (!$fileInfo instanceof SplFileInfo) {
+            continue;
+        }
+        $path = $fileInfo->getPathname();
+        $pathReal = realpath($path) ?: $path;
+        if ($pathReal === $dirReal || !str_starts_with($pathReal, $dirReal . DIRECTORY_SEPARATOR)) {
+            continue;
+        }
+        if ($fileInfo->isDir()) {
+            if (@rmdir($path)) {
+                $result['deleted_dirs']++;
+            } else {
+                $result['success'] = false;
+                $result['errors'][] = 'Could not remove directory ' . $path;
+            }
+        } else {
+            if (@unlink($path)) {
+                $result['deleted_files']++;
+            } else {
+                $result['success'] = false;
+                $result['errors'][] = 'Could not delete file ' . $path;
+            }
+        }
+    }
+
+    return $result;
+}
+
+/**
+ * Remove all on-disk transaction attachment files (preferred + legacy locations).
+ * Leaves the empty attachments / transaction_documents directories in place.
+ *
+ * @return array{success:bool,deleted_files:int,deleted_dirs:int,errors:list<string>,attachments:array,transaction_documents:array}
+ */
+function purgeTransactionAttachmentFiles(): array {
+    $attachments = emptyStorageSubdir('attachments');
+    $legacy = emptyStorageSubdir('transaction_documents');
+    $errors = array_merge($attachments['errors'] ?? [], $legacy['errors'] ?? []);
+    return [
+        'success' => !empty($attachments['success']) && !empty($legacy['success']),
+        'deleted_files' => (int)($attachments['deleted_files'] ?? 0) + (int)($legacy['deleted_files'] ?? 0),
+        'deleted_dirs' => (int)($attachments['deleted_dirs'] ?? 0) + (int)($legacy['deleted_dirs'] ?? 0),
+        'errors' => $errors,
+        'attachments' => $attachments,
+        'transaction_documents' => $legacy,
+    ];
+}
+
 function getStorageDiagnostics(): array {
     $root = resolveStorageRoot(true);
 

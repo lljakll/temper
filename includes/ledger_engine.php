@@ -445,44 +445,378 @@ function ledgerAttachmentDir(string $folderKey): string {
 }
 
 /**
- * Move attachment files when Reference # changes (or from legacy id folder → YY####).
+ * Storage roots that may hold transaction attachment files.
+ *
+ * @return list<string>
  */
-function ledgerRelocateAttachmentFolder(string $fromKey, string $toKey): void {
-    if ($fromKey === '' || $toKey === '' || $fromKey === $toKey) {
+function ledgerAttachmentStorageRoots(): array {
+    $roots = [getTransactionDocumentsDir()];
+    $legacy = rtrim(resolveStorageRoot()['path'], '/\\') . '/transaction_documents';
+    $roots[] = $legacy;
+    return array_values(array_unique($roots));
+}
+
+/**
+ * Directories that may contain files for a transaction (ref folder, id folder, legacy).
+ *
+ * @return list<string>
+ */
+function ledgerAttachmentSearchDirs(int $transactionId, ?string $referenceNumber = null): array {
+    $dirs = [];
+    $ref = ledgerNormalizeReferenceNumber($referenceNumber);
+    if ($ref !== '' && preg_match('/^\d{6}$/', $ref)) {
+        $dirs[] = ledgerAttachmentDir($ref);
+    }
+    $dirs[] = ledgerAttachmentDir((string)$transactionId);
+    $legacyRoot = rtrim(resolveStorageRoot()['path'], '/\\') . '/transaction_documents';
+    $dirs[] = $legacyRoot . '/' . $transactionId;
+    return array_values(array_unique($dirs));
+}
+
+function ledgerPathIsUnderAttachmentStorage(string $path): bool {
+    $candidate = $path;
+    $real = realpath($candidate);
+    if ($real === false) {
+        $parent = realpath(dirname($candidate));
+        if ($parent === false) {
+            return false;
+        }
+        $real = $parent . DIRECTORY_SEPARATOR . basename($candidate);
+    }
+    foreach (ledgerAttachmentStorageRoots() as $root) {
+        $rootReal = realpath($root);
+        if ($rootReal === false) {
+            continue;
+        }
+        if ($real === $rootReal || str_starts_with($real, $rootReal . DIRECTORY_SEPARATOR)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function ledgerAttachmentRelativePath(string $absPath): string {
+    $root = rtrim((string)(realpath(getStoragePath()) ?: getStoragePath()), '/\\');
+    $norm = str_replace('\\', '/', $absPath);
+    $rootNorm = str_replace('\\', '/', $root);
+    if (str_starts_with($norm, $rootNorm . '/')) {
+        return substr($norm, strlen($rootNorm) + 1);
+    }
+    $parent = basename(dirname($norm));
+    $base = basename($norm);
+    return $parent !== '' && $parent !== '.' ? ($parent . '/' . $base) : $base;
+}
+
+function ledgerRemoveEmptyAttachmentDir(string $dir): void {
+    if (!is_dir($dir) || !ledgerPathIsUnderAttachmentStorage($dir)) {
         return;
+    }
+    $real = realpath($dir);
+    if ($real === false) {
+        return;
+    }
+    foreach (ledgerAttachmentStorageRoots() as $root) {
+        $rootReal = realpath($root);
+        if ($rootReal !== false && $real === $rootReal) {
+            return;
+        }
+    }
+    $left = @scandir($real);
+    if (is_array($left) && count(array_diff($left, ['.', '..'])) === 0) {
+        @rmdir($real);
+    }
+}
+
+/**
+ * Whether attachment files (and file-related audit events) may change.
+ * Cleared / reconciled transactions are immutable, including their files and audit trail.
+ */
+function ledgerTransactionAllowsAttachmentFileChanges(mysqli $db, int $transactionId): bool {
+    if ($transactionId <= 0) {
+        return false;
+    }
+    $stmt = $db->prepare('SELECT status FROM transaction_details WHERE id = ? LIMIT 1');
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('i', $transactionId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return false;
+    }
+    return ledgerIsEditable($row);
+}
+
+/**
+ * Locate every on-disk copy of a stored attachment filename for a transaction.
+ *
+ * @return list<string> Absolute paths
+ */
+function ledgerFindDocumentFiles(
+    int $transactionId,
+    string $storedFilename,
+    ?string $referenceNumber = null
+): array {
+    $safe = basename($storedFilename);
+    if ($safe === '' || $safe === '.' || $safe === '..') {
+        return [];
+    }
+    $found = [];
+    foreach (ledgerAttachmentSearchDirs($transactionId, $referenceNumber) as $dir) {
+        $path = $dir . '/' . $safe;
+        if (!is_file($path) || !ledgerPathIsUnderAttachmentStorage($path)) {
+            continue;
+        }
+        $real = realpath($path);
+        $key = $real !== false ? $real : $path;
+        $found[$key] = $real !== false ? $real : $path;
+    }
+    return array_values($found);
+}
+
+/**
+ * Move one attachment file. Never leaves an unlinked duplicate behind:
+ * if copy succeeds but the source cannot be removed, the copy is discarded.
+ *
+ * @return array{success:bool,already?:bool,copied?:bool,deduped?:bool,error?:string}
+ */
+function ledgerMoveAttachmentFile(string $src, string $dst): array {
+    if (!is_file($src) || !ledgerPathIsUnderAttachmentStorage($src)) {
+        return ['success' => false, 'error' => 'Source file is missing or outside attachment storage.'];
+    }
+    if (!ledgerPathIsUnderAttachmentStorage(dirname($dst))) {
+        return ['success' => false, 'error' => 'Destination is outside attachment storage.'];
+    }
+    if (is_file($dst)) {
+        $srcReal = realpath($src);
+        $dstReal = realpath($dst);
+        if ($srcReal !== false && $dstReal !== false && $srcReal === $dstReal) {
+            return ['success' => true, 'already' => true];
+        }
+        if (@filesize($src) === @filesize($dst) && @md5_file($src) === @md5_file($dst)) {
+            if (!@unlink($src) && is_file($src)) {
+                return ['success' => false, 'error' => 'Duplicate destination exists; could not remove original.'];
+            }
+            return ['success' => true, 'deduped' => true];
+        }
+        return ['success' => false, 'error' => 'Destination already exists with a different file.'];
+    }
+    $dstDir = dirname($dst);
+    if (!is_dir($dstDir) && !@mkdir($dstDir, 0775, true)) {
+        return ['success' => false, 'error' => 'Could not create destination directory.'];
+    }
+    if (@rename($src, $dst) && is_file($dst)) {
+        return ['success' => true];
+    }
+    if (@copy($src, $dst) && is_file($dst)) {
+        if (!@unlink($src) && is_file($src)) {
+            @unlink($dst);
+            return ['success' => false, 'error' => 'Copied file but could not remove original.'];
+        }
+        return ['success' => true, 'copied' => true];
+    }
+    return ['success' => false, 'error' => 'Failed to move attachment file.'];
+}
+
+/**
+ * Move attachment files from one folder key to another (legacy helper).
+ * Prefer ledgerRelocateTransactionAttachments() so id/legacy folders are included.
+ *
+ * @return array{success:bool,moved:list<array>,errors:list<string>,from_folder:string,to_folder:string}
+ */
+function ledgerRelocateAttachmentFolder(string $fromKey, string $toKey): array {
+    $empty = [
+        'success' => true,
+        'moved' => [],
+        'errors' => [],
+        'from_folder' => $fromKey,
+        'to_folder' => $toKey,
+    ];
+    if ($fromKey === '' || $toKey === '' || $fromKey === $toKey) {
+        return $empty;
     }
     $from = ledgerAttachmentDir($fromKey);
     $to = ledgerAttachmentDir($toKey);
     if (!is_dir($from)) {
-        return;
+        return $empty;
     }
-    if (!is_dir($to) && !@mkdir($to, 0775, true)) {
-        return;
-    }
+    $moved = [];
+    $errors = [];
     $items = @scandir($from);
     if (!is_array($items)) {
-        return;
+        return $empty;
     }
     foreach ($items as $name) {
         if ($name === '.' || $name === '..') {
             continue;
         }
         $src = $from . '/' . $name;
+        if (!is_file($src)) {
+            continue;
+        }
         $dst = $to . '/' . $name;
-        if (is_file($src)) {
-            if (!is_file($dst)) {
-                @rename($src, $dst) || @copy($src, $dst);
-            }
-            if (is_file($dst) && is_file($src) && realpath($src) !== realpath($dst)) {
-                @unlink($src);
+        $result = ledgerMoveAttachmentFile($src, $dst);
+        if (empty($result['success'])) {
+            $errors[] = $name . ': ' . ($result['error'] ?? 'move failed');
+            continue;
+        }
+        if (empty($result['already'])) {
+            $moved[] = [
+                'filename' => $name,
+                'from' => ledgerAttachmentRelativePath($src),
+                'to' => ledgerAttachmentRelativePath($dst),
+            ];
+        }
+    }
+    ledgerRemoveEmptyAttachmentDir($from);
+    return [
+        'success' => $errors === [],
+        'moved' => $moved,
+        'errors' => $errors,
+        'from_folder' => $fromKey,
+        'to_folder' => $toKey,
+    ];
+}
+
+/**
+ * Move a transaction's on-disk attachments to the folder for $toReference.
+ * Searches the previous Reference # folder, the numeric-id folder, and legacy
+ * storage/transaction_documents/{id}/. Only allowed while the transaction is editable.
+ *
+ * @return array{success:bool,moved:list<array>,errors:list<string>,from_folder:?string,to_folder:string}
+ */
+function ledgerRelocateTransactionAttachments(
+    mysqli $db,
+    int $transactionId,
+    ?string $fromReference,
+    string $toReference
+): array {
+    $toRef = ledgerNormalizeReferenceNumber($toReference);
+    $fromRef = ledgerNormalizeReferenceNumber($fromReference);
+    $fromFolder = ($fromRef !== '' && preg_match('/^\d{6}$/', $fromRef))
+        ? $fromRef
+        : (string)$transactionId;
+
+    $fail = static function (string $error) use ($fromFolder, $toRef): array {
+        return [
+            'success' => false,
+            'moved' => [],
+            'errors' => [$error],
+            'from_folder' => $fromFolder,
+            'to_folder' => $toRef,
+        ];
+    };
+
+    if ($transactionId <= 0) {
+        return $fail('Invalid transaction.');
+    }
+    if ($toRef === '' || !preg_match('/^\d{6}$/', $toRef)) {
+        return $fail('Destination Reference # is not a valid YY#### folder.');
+    }
+    if (!ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)) {
+        return $fail('This transaction is read-only (cleared or reconciled); attachment files cannot be moved.');
+    }
+
+    $toDir = ledgerAttachmentDir($toRef);
+    $idDir = ledgerAttachmentDir((string)$transactionId);
+    $legacyDir = rtrim(resolveStorageRoot()['path'], '/\\') . '/transaction_documents/' . $transactionId;
+
+    $sourceDirs = [];
+    if ($fromRef !== '' && preg_match('/^\d{6}$/', $fromRef) && $fromRef !== $toRef) {
+        $sourceDirs[] = ledgerAttachmentDir($fromRef);
+    }
+    if ($idDir !== $toDir) {
+        $sourceDirs[] = $idDir;
+    }
+    $sourceDirs[] = $legacyDir;
+    $sourceDirs = array_values(array_unique($sourceDirs));
+
+    $wanted = [];
+    foreach (ledgerFetchDocuments($db, $transactionId) as $doc) {
+        $fn = basename((string)($doc['stored_filename'] ?? ''));
+        if ($fn !== '' && $fn !== '.' && $fn !== '..') {
+            $wanted[$fn] = true;
+        }
+    }
+
+    $moved = [];
+    $errors = [];
+    $exclusiveOldRef = false;
+    if ($fromRef !== '' && preg_match('/^\d{6}$/', $fromRef) && $fromRef !== $toRef) {
+        $exclusiveOldRef = ledgerReferenceUsage($db, $fromRef, $transactionId) === null;
+        $fromDir = ledgerAttachmentDir($fromRef);
+        if ($exclusiveOldRef && is_dir($fromDir) && !is_dir($toDir)) {
+            if (@rename($fromDir, $toDir) && is_dir($toDir)) {
+                $items = @scandir($toDir);
+                if (is_array($items)) {
+                    foreach ($items as $name) {
+                        if ($name === '.' || $name === '..') {
+                            continue;
+                        }
+                        if (is_file($toDir . '/' . $name)) {
+                            $moved[] = [
+                                'filename' => $name,
+                                'from' => 'attachments/' . $fromRef . '/' . $name,
+                                'to' => 'attachments/' . $toRef . '/' . $name,
+                            ];
+                        }
+                    }
+                }
             }
         }
     }
-    // Remove empty source directory
-    $left = @scandir($from);
-    if (is_array($left) && count(array_diff($left, ['.', '..'])) === 0) {
-        @rmdir($from);
+
+    foreach ($sourceDirs as $fromDir) {
+        if (!is_dir($fromDir)) {
+            continue;
+        }
+        $isIdOrLegacy = ($fromDir === $idDir || $fromDir === $legacyDir);
+        $items = @scandir($fromDir);
+        if (!is_array($items)) {
+            continue;
+        }
+        foreach ($items as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            $src = $fromDir . '/' . $name;
+            if (!is_file($src)) {
+                continue;
+            }
+            if (!$isIdOrLegacy && !$exclusiveOldRef && $wanted !== [] && empty($wanted[$name])) {
+                continue;
+            }
+            $dst = $toDir . '/' . $name;
+            $srcReal = realpath($src);
+            $dstReal = is_file($dst) ? realpath($dst) : false;
+            if ($srcReal !== false && $dstReal !== false && $srcReal === $dstReal) {
+                continue;
+            }
+            $result = ledgerMoveAttachmentFile($src, $dst);
+            if (empty($result['success'])) {
+                $errors[] = $name . ': ' . ($result['error'] ?? 'move failed');
+                continue;
+            }
+            if (empty($result['already'])) {
+                $moved[] = [
+                    'filename' => $name,
+                    'from' => ledgerAttachmentRelativePath($src),
+                    'to' => ledgerAttachmentRelativePath($dst),
+                ];
+            }
+        }
+        ledgerRemoveEmptyAttachmentDir($fromDir);
     }
+
+    return [
+        'success' => $errors === [],
+        'moved' => $moved,
+        'errors' => $errors,
+        'from_folder' => $fromFolder,
+        'to_folder' => $toRef,
+    ];
 }
 
 function ledgerLogEvent(
@@ -495,6 +829,19 @@ function ledgerLogEvent(
     array $details = []
 ): void {
     ledgerRequireTables($db);
+
+    // File-related audit events are only allowed while the transaction is still editable.
+    static $fileEventTypes = ['document_uploaded', 'document_deleted', 'document_relocated'];
+    if (in_array($eventType, $fileEventTypes, true)
+        && !ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)
+    ) {
+        error_log(
+            'ledgerLogEvent: refusing ' . $eventType
+            . ' on locked transaction ' . $transactionId
+        );
+        return;
+    }
+
     if (function_exists('temperStampUsernameWithActiveRole')) {
         $username = temperStampUsernameWithActiveRole($username, $userId);
     }
@@ -1259,8 +1606,14 @@ function ledgerStoreDocument(
             'error' => 'Set a Reference # (YY####) on the transaction before uploading attachments.',
         ];
     }
-    // Migrate any legacy id-folder files into the reference folder on first new upload
-    ledgerRelocateAttachmentFolder((string)$transactionId, $reference);
+    if (!ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)) {
+        return [
+            'success' => false,
+            'error' => 'This transaction is read-only (cleared or reconciled); documents cannot be uploaded.',
+        ];
+    }
+    // Migrate any leftover id/legacy-folder files into the reference folder on upload
+    ledgerRelocateTransactionAttachments($db, $transactionId, (string)$transactionId, $reference);
 
     $folderKey = ledgerAttachmentFolderKey($reference, $transactionId);
     $dir = ledgerAttachmentDir($folderKey);
@@ -1403,7 +1756,7 @@ function ledgerFetchDocument(mysqli $db, int $documentId): ?array {
     $stmt = $db->prepare(
         'SELECT d.id, d.transaction_detail_id, d.stored_filename, d.original_filename, d.mime_type,
                 d.file_size, d.uploaded_by_user_id, d.created_at,
-                t.reference_number
+                t.reference_number, t.status
          FROM transaction_documents d
          LEFT JOIN transaction_details t ON t.id = d.transaction_detail_id
          WHERE d.id = ? LIMIT 1'
@@ -1416,7 +1769,8 @@ function ledgerFetchDocument(mysqli $db, int $documentId): ?array {
 }
 
 /**
- * Delete a document row and its file. Caller must enforce editability / auth.
+ * Delete a document row and its file. Refuses cleared/reconciled transactions.
+ * Removes every on-disk copy under attachment storage, then the database row.
  */
 function ledgerDeleteDocument(mysqli $db, int $documentId): array {
     ledgerRequireTables($db);
@@ -1426,8 +1780,35 @@ function ledgerDeleteDocument(mysqli $db, int $documentId): array {
     }
 
     $txId = (int)$doc['transaction_detail_id'];
+    if (!ledgerIsEditable($doc) || !ledgerTransactionAllowsAttachmentFileChanges($db, $txId)) {
+        return [
+            'success' => false,
+            'error' => 'This transaction is read-only (cleared or reconciled); documents cannot be deleted.',
+        ];
+    }
+
     $ref = ledgerNormalizeReferenceNumber($doc['reference_number'] ?? null);
-    $path = ledgerResolveDocumentPath($txId, $doc['stored_filename'], preg_match('/^\d{6}$/', $ref) ? $ref : null);
+    $refOrNull = preg_match('/^\d{6}$/', $ref) ? $ref : null;
+    $paths = ledgerFindDocumentFiles($txId, (string)$doc['stored_filename'], $refOrNull);
+
+    $deletedPaths = [];
+    foreach ($paths as $path) {
+        if (!is_file($path)) {
+            continue;
+        }
+        if (!ledgerPathIsUnderAttachmentStorage($path)) {
+            return ['success' => false, 'error' => 'Attachment file is outside storage; refusing to delete.'];
+        }
+        if (!@unlink($path) && is_file($path)) {
+            return [
+                'success' => false,
+                'error' => 'Could not delete attachment file from storage.',
+                'transaction_detail_id' => $txId,
+            ];
+        }
+        $deletedPaths[] = ledgerAttachmentRelativePath($path);
+        ledgerRemoveEmptyAttachmentDir(dirname($path));
+    }
 
     $stmt = $db->prepare('DELETE FROM transaction_documents WHERE id = ? LIMIT 1');
     if (!$stmt) {
@@ -1446,16 +1827,16 @@ function ledgerDeleteDocument(mysqli $db, int $documentId): array {
         return ['success' => false, 'error' => 'Document not found.'];
     }
 
-    if ($path && is_file($path)) {
-        @unlink($path);
-    }
-
     return [
         'success' => true,
         'id' => $documentId,
         'transaction_detail_id' => $txId,
         'original_filename' => $doc['original_filename'] ?? '',
-        'reference_number' => preg_match('/^\d{6}$/', $ref) ? $ref : null,
+        'stored_filename' => $doc['stored_filename'] ?? '',
+        'reference_number' => $refOrNull,
+        'file_deleted' => $deletedPaths !== [],
+        'deleted_paths' => $deletedPaths,
+        'folder' => $refOrNull !== null ? $refOrNull : (string)$txId,
     ];
 }
 
