@@ -3,6 +3,7 @@
 
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/budget_utils.php';
+require_once __DIR__ . '/../includes/fund_utils.php';
 
     budgetEnsureSimplifiedSchema($db);
 
@@ -15,16 +16,8 @@ require_once __DIR__ . '/../includes/budget_utils.php';
         $report = $_GET['report'] ?? '';
         $response = ['error' => 'Unknown report'];
 
-        // Shared helpers
-        $fundBalanceSql = "
-            SELECT COALESCE(SUM(
-                CASE WHEN tl.type = 'debit' THEN tl.amount ELSE -tl.amount END
-            ), 0) AS balance
-            FROM transaction_lines tl
-            JOIN accounts a ON a.id = tl.account_id AND a.normal_balance = 'debit'
-            JOIN transaction_details td ON td.id = tl.transaction_detail_id
-            WHERE tl.fund_id = ?
-        ";
+        // Shared helpers — fund tags on asset (and liability) lines are ignored
+        $fundBalanceSql = fundBalanceSelectSql();
 
         try {
             if ($report === 'fund-balances') {
@@ -383,25 +376,9 @@ require_once __DIR__ . '/../includes/budget_utils.php';
 
                 $balBefore = $db->prepare($fundBalanceSql . " AND td.transaction_date < ?");
                 $balAsOf   = $db->prepare($fundBalanceSql . " AND td.transaction_date <= ?");
-                // Cash-only movements so beginning + inflows - outflows = ending balance
-                $inflowQ   = $db->prepare("
-                    SELECT COALESCE(SUM(tl.amount), 0) AS total
-                    FROM transaction_lines tl
-                    JOIN transaction_details td ON td.id = tl.transaction_detail_id
-                    JOIN accounts a ON a.id = tl.account_id
-                    WHERE tl.fund_id = ?
-                      AND a.normal_balance = 'debit' AND tl.type = 'debit'
-                      AND td.transaction_date >= ? AND td.transaction_date <= ?
-                ");
-                $outflowQ  = $db->prepare("
-                    SELECT COALESCE(SUM(tl.amount), 0) AS total
-                    FROM transaction_lines tl
-                    JOIN transaction_details td ON td.id = tl.transaction_detail_id
-                    JOIN accounts a ON a.id = tl.account_id
-                    WHERE tl.fund_id = ?
-                      AND a.normal_balance = 'debit' AND tl.type = 'credit'
-                      AND td.transaction_date >= ? AND td.transaction_date <= ?
-                ");
+                // Income/expense/equity movements so beginning + inflows - outflows = ending
+                $inflowQ   = $db->prepare(fundPeriodInflowsSelectSql());
+                $outflowQ  = $db->prepare(fundPeriodOutflowsSelectSql());
 
                 $rows = [];
                 while ($f = $res->fetch_assoc()) {
@@ -517,7 +494,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
                         <i class="bi bi-wallet2 fs-3 text-primary me-3 mt-1"></i>
                         <div class="flex-grow-1">
                             <h6 class="card-title mb-1">Fund Balances Report</h6>
-                            <p class="card-text small text-muted mb-0">Current balances for all funds with subtotals by restriction type (WODR / WDR).</p>
+                            <p class="card-text small text-muted mb-0">Current balances for all funds with subtotals by restriction type (WODR / WDR). Asset-account fund tags are ignored.</p>
                         </div>
                     </div>
                 </div>
@@ -858,7 +835,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
             });
             if (!data.rows.length) rows = '<tr><td colspan="4" class="text-center text-muted py-3">No funds match the selected filters.</td></tr>';
             return `
-                <div class="small text-muted mb-2">Generated ${data.generated} &bull; As of ${data.as_of}</div>
+                <div class="small text-muted mb-2">Generated ${data.generated} &bull; As of ${data.as_of}. Fund tags on asset accounts are ignored.</div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle mb-0">
                         <thead class="table-dark"><tr><th>Fund</th><th>Code</th><th>Type</th><th class="text-end">Balance</th></tr></thead>
@@ -943,7 +920,7 @@ require_once __DIR__ . '/../includes/budget_utils.php';
             });
             if (!data.rows.length) rows = '<tr><td colspan="5" class="text-center text-muted py-3">No restricted funds match the selected filters.</td></tr>';
             return `
-                <div class="small text-muted mb-2">Generated ${data.generated} &bull; Period ${data.period_start} to ${data.as_of}</div>
+                <div class="small text-muted mb-2">Generated ${data.generated} &bull; Period ${data.period_start} to ${data.as_of}. Fund tags on asset accounts are ignored.</div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle mb-0">
                         <thead class="table-dark"><tr><th>Fund</th><th class="text-end">Beginning</th><th class="text-end">Inflows</th><th class="text-end">Outflows</th><th class="text-end">Ending Balance</th></tr></thead>

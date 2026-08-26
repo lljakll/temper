@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.937](#v0937)
 - [v0.936](#v0936)
 - [v0.935](#v0935)
 - [v0.934](#v0934)
@@ -142,6 +143,23 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.937
+
+**Fund tagging: ignore asset-account tags when computing fund balances** — 2026-08-25
+
+> No schema update required for this release (fund-balance calculation rule only).  
+> **Patch file (history row):** `updates/20260825_0937_fund_tag_asset_ignored.sql`  
+> **Schema version:** `20260801_0901_account_type_classification` *(carried forward)*  
+> **Min app version:** 0.937
+
+- Fund balances (dashboard, Fund Balances report, Restricted Funds inflows/outflows) ignore fund tags on Asset accounts (Checking, cash/bank, and any `account_type = asset`).
+- Only income, expense, and equity / net assets (WODR and WDR) lines change a fund: income or Net Assets – WDR credits increase it; expense or Net Assets – WDR (release) debits decrease it.
+- Asset lines may still store a fund tag; it has no effect on fund balances. Ledger Add/Edit help text and a muted Fund dropdown on asset lines make this visible.
+- Ledger posting, cleared/reconciled behavior, and non-fund reports are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.937**. Setup baseline remains **0.900**.
 
 ---
 

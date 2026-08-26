@@ -2132,7 +2132,7 @@ foreach ($colDefs as $col):
                                 <thead class="table-light">
                                     <tr>
                                         <th>Account *</th>
-                                        <th>Fund</th>
+                                        <th title="Fund tags on asset accounts do not affect fund balances. Tag the income, expense, or net assets line.">Fund</th>
                                         <th>Natural</th>
                                         <th>Functional</th>
                                         <th class="text-end text-primary tx-amt-col">Debit</th>
@@ -2173,8 +2173,14 @@ foreach ($colDefs as $col):
                             #txLinesTable .line-amount {
                                 min-width: 7.5rem;
                             }
+                            #txLinesTable .line-fund.line-fund-ignored {
+                                opacity: 0.65;
+                            }
                         </style>
 
+                        <p class="form-text small text-muted mb-1" style="font-size:0.7rem;">
+                            Fund tags on asset accounts (Checking, cash/bank) do not affect fund balances — tag the income, expense, or net assets (WODR/WDR) line.
+                        </p>
                         <div class="d-flex flex-wrap gap-2 gap-md-3 align-items-center small">
                             <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">$0.00</span></div>
                             <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">$0.00</span></div>
@@ -3696,7 +3702,21 @@ foreach ($colDefs as $col):
      * Pull Natural / Functional class labels from the selected account option
      * (same pattern as budget page — read-only, not user-editable).
      */
+    function syncLineFundHint(row) {
+        const sel = row.querySelector('.line-account');
+        const fund = row.querySelector('.line-fund');
+        if (!fund) return;
+        const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+        const acctType = (opt && opt.value ? String(opt.dataset.accountType || '') : '').toLowerCase();
+        const ignored = acctType === 'asset';
+        fund.classList.toggle('line-fund-ignored', ignored);
+        fund.title = ignored
+            ? 'Fund tags on asset accounts do not affect fund balances. Tag the income, expense, or net assets line instead.'
+            : 'Tag this line’s fund. Only income, expense, and net assets (equity) lines change fund balances.';
+    }
+
     function syncLineCategoryLabels(row) {
+        syncLineFundHint(row);
         const sel = row.querySelector('.line-account');
         const natEl = row.querySelector('.line-natural-label');
         const funEl = row.querySelector('.line-functional-label');

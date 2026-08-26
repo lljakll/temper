@@ -179,6 +179,34 @@ Sometimes the user wants quick View; sometimes quick Edit. Toggle avoids constan
 
 Completion Status:
 
+
+#15 - 2026-08-25 - Ledger / Fund Balances - Clarification / Enhancement - High
+Expected:
+Fund balances are driven only by fund tags on non-asset lines (Income, Expense, Net Assets/Equity). Fund tags on asset accounts (Checking, other cash/bank accounts, etc.) are ignored for fund-balance calculations.
+- Income or Net Assets – WDR credit tagged to a fund → increases that fund
+- Expense debit tagged to a fund → decreases that fund
+- Net Assets – WDR debit (release) tagged to a fund → decreases that fund
+Cash remains a shared asset; restrictions follow the economic reason (income, expense, or equity reclassification). Standard patterns: opening restricted balance, restricted contribution, restricted expense, release from restrictions — fund tag lives on the non-asset leg only.
+Actual:
+(To be confirmed against current behavior.) Fund tags on asset lines may currently affect fund balances or create double-counting / incorrect restricted balances.
+Notes / Context / Interpretation:
+Epiphany from General Conversation Thread. Aligns with proper nonprofit fund accounting: do not push restrictions through the cash account. Prevents double-counting and keeps Checking as a pooled asset. UI may still allow a fund on an asset line but calculation must ignore it. High priority for correct WODR/WDR reporting and audit readiness.
+
+Completion Status:
+
+
+#16 - 2026-08-25 - Dashboard - Bug / Enhancement - Med
+Expected:
+Total Cash / Bank Balances card shows a correct total for relevant asset accounts and is configurable. Longer term, the dashboard supports per-card setup plus the ability to add/remove cards.
+Actual:
+Total Cash / Bank Balances is perpetually blank. No per-card configuration. No layout customization.
+Notes / Context / Interpretation:
+Near-term: Fix the blank total (default = all asset accounts or a sensible cash/bank set). Add a gear control on the card to select which asset accounts roll into the total. Per-card config belongs on the dashboard, not in System → Configuration.
+Future: Dashboard layout mode to add/remove/reorder cards from a catalog (Total Cash, Fund balances, Recent activity, etc.), still with per-card gears for options. Do not build the full layout engine until basic totals work.
+
+Completion Status:
+
+
 TEMPLATE
 
 
@@ -192,3 +220,4 @@ Notes / Context / Interpretation:
 Completion Status:
 
 
+Tu2$Lp3D

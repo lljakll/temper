@@ -3,6 +3,7 @@
     // Security and DB connection already handled by index.php
     // Light fallback in case
 require_once __DIR__ . '/../includes/page_bootstrap.php';
+require_once __DIR__ . '/../includes/fund_utils.php';
 
 $today = date('Y-m-d');
     $tasksHorizon = date('Y-m-d', strtotime('+30 days'));
@@ -81,16 +82,7 @@ function dashboardQuickLinks(): array {
     ];
 }
 
-    $fundBalanceSql = "
-        SELECT COALESCE(SUM(
-            CASE WHEN tl.type = 'debit' THEN tl.amount ELSE -tl.amount END
-        ), 0) AS balance
-        FROM transaction_lines tl
-        JOIN accounts a ON a.id = tl.account_id AND a.normal_balance = 'debit'
-        JOIN transaction_details td ON td.id = tl.transaction_detail_id
-        WHERE tl.fund_id = ?
-          AND td.transaction_date <= ?
-    ";
+    $fundBalanceSql = fundBalanceSelectSql('AND td.transaction_date <= ?');
 
     $cashBankSql = "
         SELECT COALESCE(SUM(
@@ -353,6 +345,7 @@ function dashboardQuickLinks(): array {
                         </tbody>
                     </table>
                 </div>
+                <p class="small text-muted mb-0 mt-2">Fund balances come from tagged income, expense, and net assets lines. Fund tags on asset accounts (Checking, cash/bank) are ignored.</p>
             </div>
         </div>
     </div>
