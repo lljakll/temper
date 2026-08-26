@@ -11,6 +11,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     $savedTxId = null;
     $ledgerActor = getCurrentUser();
     $canWriteLedger = $ledgerActor && userHasPermission($db, (int)$ledgerActor['id'], 'page.ledger.write');
+    $canDeleteLedger = $ledgerActor && ledgerUserCanDeleteTransactions($db, (int)$ledgerActor['id']);
     // Ensure budget_id column exists before any ledger queries
     ledgerRequireTables($db);
 
@@ -964,6 +965,31 @@ require_once __DIR__ . '/../includes/permissions.php';
         require_once __DIR__ . '/../auth.php';
         $actor = getCurrentUserWithRole($db);
 
+        if ($action === 'delete') {
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            if (!$canDeleteLedger || !$actor) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Only an Administrator or Treasurer can delete transactions.',
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $txId = (int)($_POST['tx_id'] ?? 0);
+            $reason = (string)($_POST['delete_reason'] ?? $_POST['reason'] ?? '');
+            $result = ledgerDeletePendingTransaction(
+                $db,
+                $txId,
+                (int)$actor['id'],
+                (string)($actor['username'] ?? ''),
+                $reason
+            );
+            echo json_encode($result, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
         if (!$canWriteLedger) {
             denyPermission('You do not have permission to modify ledger transactions.');
         }
@@ -1867,6 +1893,11 @@ require_once __DIR__ . '/../includes/permissions.php';
         <button type="button" id="editTxBtn" class="btn btn-outline-secondary" disabled title="Edit selected (Ctrl+E)">
             <i class="bi bi-pencil"></i> Edit
         </button>
+        <?php if ($canDeleteLedger): ?>
+        <button type="button" id="deleteTxBtn" class="btn btn-outline-danger" disabled title="Delete selected pending transaction">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+        <?php endif; ?>
         <button type="button" id="clearTxBtn" class="btn btn-outline-warning" disabled>
             <i class="bi bi-check2-circle"></i> Clear
         </button>
@@ -2229,6 +2260,12 @@ foreach ($colDefs as $col):
                     </div>
                 </div>
                 <div class="modal-footer py-2 flex-wrap gap-2">
+                    <?php if ($canDeleteLedger): ?>
+                    <button type="button" id="deleteFromEditBtn" class="btn btn-sm btn-outline-danger d-none me-auto"
+                            title="Delete this pending transaction">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                    <?php endif; ?>
                     <?php if ($canWriteLedger): ?>
                     <button type="button" id="editFromViewBtn" class="btn btn-sm btn-primary d-none"
                             title="Edit this transaction (Ctrl+E)">
@@ -2315,6 +2352,39 @@ foreach ($colDefs as $col):
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pending transaction delete confirmation -->
+<div class="modal fade" id="txDeleteModal" tabindex="-1" aria-labelledby="txDeleteTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title" id="txDeleteTitle">Delete transaction?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cancel"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">This permanently removes the transaction, all lines, related document records, and attachment files. This cannot be undone.</p>
+                <dl class="row small mb-3">
+                    <dt class="col-sm-4">Ref #</dt>
+                    <dd class="col-sm-8 font-monospace mb-1" id="txDeleteRef">—</dd>
+                    <dt class="col-sm-4">Date</dt>
+                    <dd class="col-sm-8 mb-1" id="txDeleteDate">—</dd>
+                    <dt class="col-sm-4">Amount</dt>
+                    <dd class="col-sm-8 mb-1" id="txDeleteAmount">—</dd>
+                    <dt class="col-sm-4">Payee</dt>
+                    <dd class="col-sm-8 mb-1" id="txDeletePayTo">—</dd>
+                </dl>
+                <label for="txDeleteReason" class="form-label">Reason for delete <span class="text-danger">*</span></label>
+                <textarea class="form-control" id="txDeleteReason" rows="3" maxlength="500" required
+                          placeholder="Why is this transaction being deleted?"></textarea>
+                <div class="form-text">Required. Saved in the system audit log.</div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-danger" id="txDeleteConfirm" disabled>Delete permanently</button>
             </div>
         </div>
     </div>
@@ -2473,10 +2543,13 @@ foreach ($colDefs as $col):
     const cancelBtn2 = document.getElementById('cancelFormBtn2');
 
     const canWriteLedger = <?= $canWriteLedger ? 'true' : 'false' ?>;
+    const canDeleteLedger = <?= $canDeleteLedger ? 'true' : 'false' ?>;
     const addTxBtn = document.getElementById('addTxBtn');
     const viewTxBtn = document.getElementById('viewTxBtn');
     const editTxBtn = document.getElementById('editTxBtn');
     const editFromViewBtn = document.getElementById('editFromViewBtn');
+    const deleteTxBtn = document.getElementById('deleteTxBtn');
+    const deleteFromEditBtn = document.getElementById('deleteFromEditBtn');
     const clearTxBtn = document.getElementById('clearTxBtn');
     const reconcileTxBtn = document.getElementById('reconcileTxBtn');
     const clearAllFiltersBtn = document.getElementById('clearAllFiltersBtn');
@@ -5124,6 +5197,7 @@ foreach ($colDefs as $col):
         if (cancelBtn2) {
             cancelBtn2.textContent = (mode === 'view') ? 'Close' : 'Cancel';
         }
+        syncDeleteFromEditBtn();
     }
 
     /** Import from Text is only available when adding a new transaction. */
@@ -5369,6 +5443,185 @@ foreach ($colDefs as $col):
         openTxFormModal();
     }
 
+    function formatTxAmount(amount) {
+        const a = parseFloat(amount) || 0;
+        const sign = a < 0 ? '-' : '';
+        return sign + '$' + Math.abs(a).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function identityFromViewData(data) {
+        if (!data || !data.id) return null;
+        let amt = 0;
+        (data.lines || []).forEach(function(l) {
+            if ((l.type || '') === 'debit') amt += parseFloat(l.amount || 0) || 0;
+        });
+        if (!amt) {
+            amt = parseFloat(data.total_debits != null ? data.total_debits : (data.debits || 0)) || 0;
+        }
+        return {
+            id: parseInt(data.id, 10) || 0,
+            date: data.transaction_date || '',
+            ref: data.reference_number || '',
+            payTo: data.pay_to || '',
+            amount: amt,
+            status: data.status || ''
+        };
+    }
+
+    function identityFromSelectedRow() {
+        if (!txTableBody) return null;
+        const checked = txTableBody.querySelectorAll('.tx-cb:checked');
+        if (checked.length !== 1) return null;
+        const row = checked[0].closest('tr');
+        if (!row) return null;
+        const cells = row.cells;
+        const deb = parseFloat(row.dataset.debits || '0') || 0;
+        const cred = parseFloat(row.dataset.credits || '0') || 0;
+        return {
+            id: parseInt(row.dataset.id || checked[0].value, 10) || 0,
+            date: (cells[1] && cells[1].textContent.trim()) || '',
+            ref: (cells[2] && cells[2].textContent.trim()) || '',
+            payTo: (cells[3] && cells[3].textContent.trim()) || '',
+            amount: Math.max(deb, cred),
+            status: row.dataset.status || ''
+        };
+    }
+
+    function syncDeleteFromEditBtn() {
+        if (!deleteFromEditBtn) return;
+        const mode = (typeof getTxFormMode === 'function') ? getTxFormMode() : null;
+        const id = parseInt(txIdField && txIdField.value ? txIdField.value : '0', 10);
+        const pending = !!(currentViewData && String(currentViewData.status || '') === 'pending');
+        const show = canDeleteLedger && mode === 'edit' && id > 0 && pending && !budgetOnlyEditMode;
+        deleteFromEditBtn.classList.toggle('d-none', !show);
+        deleteFromEditBtn.disabled = !show;
+    }
+
+    let pendingDeleteIdentity = null;
+    let txDeleteModalEl = document.getElementById('txDeleteModal');
+    if (txDeleteModalEl && typeof window.mountModalOnBody === 'function') {
+        txDeleteModalEl = window.mountModalOnBody(txDeleteModalEl);
+    }
+    const txDeleteReasonEl = document.getElementById('txDeleteReason');
+    const txDeleteConfirmBtn = document.getElementById('txDeleteConfirm');
+
+    function setDeleteConfirmEnabled() {
+        if (!txDeleteConfirmBtn) return;
+        const reason = txDeleteReasonEl ? String(txDeleteReasonEl.value || '').trim() : '';
+        txDeleteConfirmBtn.disabled = reason === '';
+    }
+
+    function fillDeleteModal(ident) {
+        const dash = function(v) { return (v && String(v).trim() !== '') ? String(v) : '—'; };
+        const refEl = document.getElementById('txDeleteRef');
+        const dateEl = document.getElementById('txDeleteDate');
+        const amtEl = document.getElementById('txDeleteAmount');
+        const payEl = document.getElementById('txDeletePayTo');
+        if (refEl) refEl.textContent = dash(ident && ident.ref);
+        if (dateEl) dateEl.textContent = dash(ident && ident.date);
+        if (amtEl) amtEl.textContent = ident ? formatTxAmount(ident.amount) : '—';
+        if (payEl) payEl.textContent = dash(ident && ident.payTo);
+        if (txDeleteReasonEl) {
+            txDeleteReasonEl.value = '';
+            txDeleteReasonEl.classList.remove('is-invalid');
+        }
+        setDeleteConfirmEnabled();
+    }
+
+    function openDeleteConfirm(ident) {
+        if (!canDeleteLedger || !ident || !ident.id) return;
+        if (ident.status && ident.status !== 'pending') {
+            if (typeof showToast === 'function') {
+                showToast('Only pending transactions can be deleted.', 'warning');
+            }
+            return;
+        }
+        pendingDeleteIdentity = ident;
+        fillDeleteModal(ident);
+        if (!txDeleteModalEl) return;
+        if (typeof window.showFragmentModal === 'function') {
+            window.showFragmentModal(txDeleteModalEl);
+        } else if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            bootstrap.Modal.getOrCreateInstance(txDeleteModalEl).show();
+        }
+        setTimeout(function() {
+            if (txDeleteReasonEl) txDeleteReasonEl.focus();
+        }, 200);
+    }
+
+    function closeDeleteConfirm() {
+        if (!txDeleteModalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
+        const inst = bootstrap.Modal.getInstance(txDeleteModalEl);
+        if (inst) inst.hide();
+    }
+
+    function removeTxRowFromList(id) {
+        if (!txTableBody || !id) return;
+        const row = txTableBody.querySelector('tr[data-id="' + id + '"]');
+        if (row) row.remove();
+        const remaining = txTableBody.querySelectorAll('tr[data-id]');
+        if (remaining.length === 0 && !txTableBody.querySelector('.ledger-empty-row')) {
+            const tr = document.createElement('tr');
+            tr.className = 'ledger-empty-row';
+            tr.innerHTML = '<td colspan="11" class="text-center text-muted py-4">No transactions match the current filters.</td>';
+            txTableBody.appendChild(tr);
+        }
+        updateButtonStates();
+    }
+
+    function submitPendingDelete() {
+        if (!canDeleteLedger || !pendingDeleteIdentity || !pendingDeleteIdentity.id) return;
+        const reason = txDeleteReasonEl ? String(txDeleteReasonEl.value || '').trim() : '';
+        if (reason === '') {
+            if (txDeleteReasonEl) txDeleteReasonEl.classList.add('is-invalid');
+            setDeleteConfirmEnabled();
+            return;
+        }
+        if (txDeleteConfirmBtn) txDeleteConfirmBtn.disabled = true;
+        const fd = new FormData();
+        fd.append('action', 'delete');
+        fd.append('tx_id', String(pendingDeleteIdentity.id));
+        fd.append('delete_reason', reason);
+        fetch('pages/ledger.php', {
+            method: 'POST',
+            body: fd,
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        })
+            .then(parseJsonResponse)
+            .then(function(res) {
+                if (window.__temperAuthRedirecting) return;
+                if (!isApiSuccess(res)) {
+                    throw new Error(res.error || 'Could not delete the transaction.');
+                }
+                const deletedId = parseInt(res.id, 10) || pendingDeleteIdentity.id;
+                closeDeleteConfirm();
+                const formOpenId = parseInt(txIdField && txIdField.value ? txIdField.value : '0', 10);
+                if (formOpenId === deletedId) {
+                    if (typeof markTxFormClean === 'function') markTxFormClean();
+                    const formModal = document.getElementById('txFormModal');
+                    if (formModal && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                        const inst = bootstrap.Modal.getInstance(formModal);
+                        if (inst) inst.hide();
+                    }
+                    currentViewData = null;
+                    if (txIdField) txIdField.value = '';
+                }
+                removeTxRowFromList(deletedId);
+                if (typeof showToast === 'function') {
+                    showToast('Transaction deleted.', 'success', 2800);
+                }
+            })
+            .catch(function(err) {
+                if (typeof showToast === 'function') {
+                    showToast(err && err.message ? err.message : 'Could not delete the transaction.', 'danger');
+                }
+            })
+            .finally(function() {
+                setDeleteConfirmEnabled();
+            });
+    }
+
     function updateButtonStates() {
         if (!txTableBody) return;
         const checked = txTableBody.querySelectorAll('.tx-cb:checked');
@@ -5381,6 +5634,15 @@ foreach ($colDefs as $col):
         if (editTxBtn) editTxBtn.disabled = (count !== 1);
         if (clearTxBtn) clearTxBtn.disabled = (count === 0);
         if (reconcileTxBtn) reconcileTxBtn.disabled = (count === 0);
+        if (deleteTxBtn) {
+            let pendingOne = false;
+            if (count === 1) {
+                const row = checked[0].closest('tr');
+                pendingOne = !!(row && row.dataset.status === 'pending');
+            }
+            deleteTxBtn.disabled = !pendingOne;
+        }
+        syncDeleteFromEditBtn();
     }
 
     function getSelectedIds() {
@@ -5520,6 +5782,44 @@ foreach ($colDefs as $col):
         if (ids.length !== 1) return;
         openEditForId(ids[0]);
     });
+
+    if (deleteTxBtn) {
+        deleteTxBtn.addEventListener('click', function() {
+            if (!canDeleteLedger || deleteTxBtn.disabled) return;
+            const ident = identityFromSelectedRow();
+            if (!ident || ident.status !== 'pending') {
+                if (typeof showToast === 'function') {
+                    showToast('Select one pending transaction to delete.', 'warning');
+                }
+                return;
+            }
+            openDeleteConfirm(ident);
+        });
+    }
+    if (deleteFromEditBtn) {
+        deleteFromEditBtn.addEventListener('click', function() {
+            if (!canDeleteLedger || deleteFromEditBtn.disabled) return;
+            const ident = identityFromViewData(currentViewData);
+            if (!ident || ident.status !== 'pending') {
+                if (typeof showToast === 'function') {
+                    showToast('Only pending transactions can be deleted.', 'warning');
+                }
+                return;
+            }
+            openDeleteConfirm(ident);
+        });
+    }
+    if (txDeleteReasonEl) {
+        txDeleteReasonEl.addEventListener('input', function() {
+            txDeleteReasonEl.classList.remove('is-invalid');
+            setDeleteConfirmEnabled();
+        });
+    }
+    if (txDeleteConfirmBtn) {
+        txDeleteConfirmBtn.addEventListener('click', function() {
+            submitPendingDelete();
+        });
+    }
 
     if (editFromViewBtn) {
         editFromViewBtn.addEventListener('click', () => {

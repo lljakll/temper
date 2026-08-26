@@ -1307,6 +1307,40 @@ function ledgerIsEditable(array $transaction): bool {
     return true;
 }
 
+function ledgerStatusIsPending(mixed $status): bool {
+    return strtolower(trim((string)$status)) === 'pending';
+}
+
+/**
+ * Delete is allowed only while the active session role is Administrator or Treasurer.
+ */
+function ledgerUserCanDeleteTransactions(mysqli $db, int $userId): bool {
+    if ($userId <= 0 || !function_exists('loadUserAcl')) {
+        return false;
+    }
+    $acl = loadUserAcl($db, $userId);
+    if (!$acl) {
+        return false;
+    }
+    $role = trim((string)($acl['active_role_name'] ?? $acl['role_name'] ?? ''));
+    return $role === 'Administrator' || $role === 'Treasurer';
+}
+
+/**
+ * Debit total used as the transaction amount for display / audit.
+ *
+ * @param list<array<string,mixed>> $lines
+ */
+function ledgerTransactionDebitTotal(array $lines): float {
+    $sum = 0.0;
+    foreach ($lines as $line) {
+        if (($line['type'] ?? '') === 'debit') {
+            $sum += (float)($line['amount'] ?? 0);
+        }
+    }
+    return $sum;
+}
+
 function ledgerFetchLines(mysqli $db, int $transactionId): array {
     $lines = [];
     $stmt = $db->prepare(
@@ -1838,6 +1872,195 @@ function ledgerDeleteDocument(mysqli $db, int $documentId): array {
         'deleted_paths' => $deletedPaths,
         'folder' => $refOrNull !== null ? $refOrNull : (string)$txId,
     ];
+}
+
+/**
+ * Permanently delete a pending transaction (header, lines, documents, events, files).
+ * Cleared and reconciled transactions cannot be deleted — there is no code path here
+ * that removes those rows.
+ *
+ * @return array{success:bool,error?:string,id?:int,reference_number?:string,transaction_date?:string,pay_to?:string,amount?:float,amount_formatted?:string,files_removed?:int,reason?:string}
+ */
+function ledgerDeletePendingTransaction(
+    mysqli $db,
+    int $transactionId,
+    ?int $userId,
+    string $username,
+    string $reason
+): array {
+    ledgerRequireTables($db);
+
+    $reason = trim($reason);
+    $reason = preg_replace('/\s+/u', ' ', $reason) ?? $reason;
+    if ($reason === '') {
+        return ['success' => false, 'error' => 'A reason for delete is required.'];
+    }
+    if (function_exists('mb_strlen') ? mb_strlen($reason) > 500 : strlen($reason) > 500) {
+        return ['success' => false, 'error' => 'Reason for delete must be 500 characters or fewer.'];
+    }
+    if ($transactionId <= 0) {
+        return ['success' => false, 'error' => 'Invalid transaction.'];
+    }
+
+    $started = false;
+    try {
+        $started = $db->begin_transaction();
+
+        $stmt = $db->prepare(
+            'SELECT id, transaction_date, pay_to, reference_number, status
+             FROM transaction_details
+             WHERE id = ?
+             LIMIT 1
+             FOR UPDATE'
+        );
+        if (!$stmt) {
+            if ($started) {
+                $db->rollback();
+            }
+            return ['success' => false, 'error' => 'Database error preparing delete.'];
+        }
+        $stmt->bind_param('i', $transactionId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            if ($started) {
+                $db->rollback();
+            }
+            return ['success' => false, 'error' => 'Could not load the transaction for delete.'];
+        }
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            if ($started) {
+                $db->rollback();
+            }
+            return ['success' => false, 'error' => 'Transaction not found.'];
+        }
+
+        $status = (string)($row['status'] ?? '');
+        if (!ledgerStatusIsPending($status)) {
+            if ($started) {
+                $db->rollback();
+            }
+            return [
+                'success' => false,
+                'error' => 'Only pending transactions can be deleted. Cleared and reconciled transactions cannot be deleted.',
+            ];
+        }
+
+        $lines = ledgerFetchLines($db, $transactionId);
+        $docs = ledgerFetchDocuments($db, $transactionId);
+        $amount = ledgerTransactionDebitTotal($lines);
+        $refRaw = (string)($row['reference_number'] ?? '');
+        $ref = ledgerNormalizeReferenceNumber($refRaw);
+        $refOrNull = preg_match('/^\d{6}$/', $ref) ? $ref : null;
+        $payTo = trim((string)($row['pay_to'] ?? ''));
+        $txDate = (string)($row['transaction_date'] ?? '');
+        $amountFormatted = '$' . number_format($amount, 2);
+
+        $deletedPaths = [];
+        foreach ($docs as $doc) {
+            $stored = (string)($doc['stored_filename'] ?? '');
+            if ($stored === '') {
+                continue;
+            }
+            $paths = ledgerFindDocumentFiles($transactionId, $stored, $refOrNull);
+            foreach ($paths as $path) {
+                if (!is_file($path)) {
+                    continue;
+                }
+                if (!ledgerPathIsUnderAttachmentStorage($path)) {
+                    if ($started) {
+                        $db->rollback();
+                    }
+                    return ['success' => false, 'error' => 'Attachment file is outside storage; refusing to delete.'];
+                }
+                if (!@unlink($path) && is_file($path)) {
+                    if ($started) {
+                        $db->rollback();
+                    }
+                    return ['success' => false, 'error' => 'Could not delete attachment file from storage.'];
+                }
+                $deletedPaths[] = ledgerAttachmentRelativePath($path);
+                ledgerRemoveEmptyAttachmentDir(dirname($path));
+            }
+        }
+        foreach (ledgerAttachmentSearchDirs($transactionId, $refOrNull) as $dir) {
+            ledgerRemoveEmptyAttachmentDir($dir);
+        }
+
+        $del = $db->prepare(
+            "DELETE FROM transaction_details WHERE id = ? AND status = 'pending' LIMIT 1"
+        );
+        if (!$del) {
+            if ($started) {
+                $db->rollback();
+            }
+            return ['success' => false, 'error' => 'Database error preparing delete.'];
+        }
+        $del->bind_param('i', $transactionId);
+        if (!$del->execute()) {
+            $err = $del->error;
+            $del->close();
+            if ($started) {
+                $db->rollback();
+            }
+            return ['success' => false, 'error' => 'Failed to delete transaction: ' . $err];
+        }
+        $affected = $del->affected_rows;
+        $del->close();
+
+        if ($affected < 1) {
+            if ($started) {
+                $db->rollback();
+            }
+            return [
+                'success' => false,
+                'error' => 'Only pending transactions can be deleted. Cleared and reconciled transactions cannot be deleted.',
+            ];
+        }
+
+        $refLabel = $refRaw !== '' ? $refRaw : '(none)';
+        $payLabel = $payTo !== '' ? $payTo : '(none)';
+        $details = 'ref=' . $refLabel
+            . ' date=' . ($txDate !== '' ? $txDate : '(none)')
+            . ' amount=' . $amountFormatted
+            . ' pay_to=' . $payLabel
+            . ' reason=' . $reason
+            . ' files_removed=' . count($deletedPaths)
+            . ' tx_id=' . $transactionId;
+
+        logAuditAction(
+            $db,
+            $userId,
+            $username,
+            'ledger.transaction_deleted',
+            $details
+        );
+
+        if ($started) {
+            $db->commit();
+        }
+
+        return [
+            'success' => true,
+            'id' => $transactionId,
+            'reference_number' => $refRaw,
+            'transaction_date' => $txDate,
+            'pay_to' => $payTo,
+            'amount' => $amount,
+            'amount_formatted' => $amountFormatted,
+            'files_removed' => count($deletedPaths),
+            'deleted_paths' => $deletedPaths,
+            'reason' => $reason,
+        ];
+    } catch (Throwable $e) {
+        if ($started) {
+            $db->rollback();
+        }
+        error_log('[ledger] delete pending transaction failed: ' . $e->getMessage());
+        return ['success' => false, 'error' => 'Could not delete the transaction due to a system error.'];
+    }
 }
 
 /**

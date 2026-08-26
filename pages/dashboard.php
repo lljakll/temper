@@ -4,6 +4,7 @@
     // Light fallback in case
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/fund_utils.php';
+require_once __DIR__ . '/../includes/user_preferences.php';
 
 $today = date('Y-m-d');
     $tasksHorizon = date('Y-m-d', strtotime('+30 days'));
@@ -12,6 +13,46 @@ $today = date('Y-m-d');
     require_once __DIR__ . '/../includes/permissions.php';
     $dashAcl = $actorUser ? loadUserAcl($db, (int)$actorUser['id']) : null;
     $dashPerms = $dashAcl['permissions'] ?? [];
+    $dashUserId = $actorUser ? (int)$actorUser['id'] : 0;
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') === 'save_total_cash_accounts') {
+        if ($dashUserId <= 0) {
+            dashboardSendJson(['success' => false, 'error' => 'You must be signed in to save this setting.'], $db);
+        }
+        if (!userPreferencesColumnExists($db)) {
+            dashboardSendJson([
+                'success' => false,
+                'error' => 'User preferences are not available. Apply the 0.938 schema patch (users.preferences).',
+            ], $db);
+        }
+
+        $assetAccounts = dashboardActiveAssetAccounts($db);
+        $allowed = [];
+        foreach (dashboardAssetAccountIds($assetAccounts) as $id) {
+            $allowed[$id] = $id;
+        }
+        $posted = dashboardParsePostedAccountIds($_POST['account_ids'] ?? []);
+        $selected = [];
+        foreach ($posted as $id) {
+            if (isset($allowed[$id])) {
+                $selected[] = $id;
+            }
+        }
+
+        if (!setUserPreference($db, $dashUserId, USER_PREF_DASHBOARD_TOTAL_CASH_ACCOUNT_IDS, $selected)) {
+            dashboardSendJson(['success' => false, 'error' => 'Could not save account selection.'], $db);
+        }
+
+        $cashTotal = dashboardSumAssetBalances($db, $selected, $today);
+        dashboardSendJson([
+            'success' => true,
+            'account_ids' => $selected,
+            'cash_total' => $cashTotal,
+            'cash_total_formatted' => dashboardFormatMoney($cashTotal),
+            'selected_count' => count($selected),
+            'asset_count' => count($allowed),
+        ], $db);
+    }
 
 /**
  * Quick-access dashboard links (easy to extend).
@@ -82,9 +123,136 @@ function dashboardQuickLinks(): array {
     ];
 }
 
-    $fundBalanceSql = fundBalanceSelectSql('AND td.transaction_date <= ?');
+/**
+ * Active Chart of Accounts rows with account_type = asset.
+ *
+ * @return list<array{id:int,name:string,coa_number:?string}>
+ */
+function dashboardActiveAssetAccounts(mysqli $db): array
+{
+    $rows = [];
+    $res = $db->query(
+        "SELECT id, name, coa_number
+         FROM accounts
+         WHERE archived = FALSE
+           AND account_type = 'asset'
+         ORDER BY COALESCE(coa_number, ''), name"
+    );
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = [
+                'id' => (int)$row['id'],
+                'name' => (string)$row['name'],
+                'coa_number' => $row['coa_number'] !== null && $row['coa_number'] !== ''
+                    ? (string)$row['coa_number']
+                    : null,
+            ];
+        }
+        $res->close();
+    }
+    return $rows;
+}
 
-    $cashBankSql = "
+/**
+ * @param list<array{id:int,name:string,coa_number:?string}> $assets
+ * @return list<int>
+ */
+function dashboardAssetAccountIds(array $assets): array
+{
+    $ids = [];
+    foreach ($assets as $a) {
+        $id = (int)($a['id'] ?? 0);
+        if ($id > 0) {
+            $ids[] = $id;
+        }
+    }
+    return $ids;
+}
+
+/**
+ * Normalize a stored account-id list. Null = no preference (caller uses all assets).
+ *
+ * @return list<int>|null
+ */
+function dashboardNormalizeStoredAccountIds(mixed $raw): ?array
+{
+    if ($raw === null) {
+        return null;
+    }
+    if (!is_array($raw)) {
+        return null;
+    }
+    $ids = [];
+    foreach ($raw as $v) {
+        if (is_int($v) || is_float($v) || (is_string($v) && is_numeric($v))) {
+            $id = (int)$v;
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+    }
+    return array_values($ids);
+}
+
+/**
+ * Account ids included in Total Cash / Bank. Null preference → all active assets.
+ *
+ * @param list<int> $allAssetIds
+ * @return list<int>
+ */
+function dashboardResolveCashAccountIds(mysqli $db, int $userId, array $allAssetIds): array
+{
+    $allowed = [];
+    foreach ($allAssetIds as $id) {
+        $id = (int)$id;
+        if ($id > 0) {
+            $allowed[$id] = $id;
+        }
+    }
+    if ($allowed === []) {
+        return [];
+    }
+
+    $stored = null;
+    if ($userId > 0) {
+        $stored = dashboardNormalizeStoredAccountIds(
+            getUserPreference($db, $userId, USER_PREF_DASHBOARD_TOTAL_CASH_ACCOUNT_IDS, null)
+        );
+    }
+    if ($stored === null) {
+        return array_values($allowed);
+    }
+
+    $resolved = [];
+    foreach ($stored as $id) {
+        if (isset($allowed[$id])) {
+            $resolved[] = $id;
+        }
+    }
+    return $resolved;
+}
+
+/**
+ * Signed asset balance (debit − credit) for the given account ids as of $asOf.
+ *
+ * @param list<int> $accountIds
+ */
+function dashboardSumAssetBalances(mysqli $db, array $accountIds, string $asOf): float
+{
+    $ids = [];
+    foreach ($accountIds as $id) {
+        $id = (int)$id;
+        if ($id > 0) {
+            $ids[$id] = $id;
+        }
+    }
+    $ids = array_values($ids);
+    if ($ids === []) {
+        return 0.0;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "
         SELECT COALESCE(SUM(
             CASE WHEN tl.type = 'debit' THEN tl.amount ELSE -tl.amount END
         ), 0) AS balance
@@ -92,10 +260,69 @@ function dashboardQuickLinks(): array {
         JOIN accounts a ON a.id = tl.account_id
         JOIN transaction_details td ON td.id = tl.transaction_detail_id
         WHERE a.archived = FALSE
-          AND a.normal_balance = 'debit'
-          AND a.name IN ('Cash', 'Bank Account')
+          AND a.account_type = 'asset'
+          AND a.id IN ({$placeholders})
           AND td.transaction_date <= ?
     ";
+    $stmt = $db->prepare($sql);
+    if (!$stmt) {
+        return 0.0;
+    }
+    $types = str_repeat('i', count($ids)) . 's';
+    $params = array_merge($ids, [$asOf]);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $balance = (float)($stmt->get_result()->fetch_assoc()['balance'] ?? 0);
+    $stmt->close();
+    return $balance;
+}
+
+function dashboardFormatMoney(float $amount): string
+{
+    return '$' . number_format($amount, 2);
+}
+
+function dashboardSendJson(array $payload, ?mysqli $db = null): void
+{
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE);
+    if ($db) {
+        $db->close();
+    }
+    exit;
+}
+
+/** @return list<int> */
+function dashboardParsePostedAccountIds(mixed $raw): array
+{
+    if (is_string($raw)) {
+        $trim = trim($raw);
+        if ($trim !== '' && ($trim[0] === '[' || $trim[0] === '{')) {
+            $decoded = json_decode($trim, true);
+            $raw = is_array($decoded) ? $decoded : $raw;
+        }
+    }
+    if (!is_array($raw)) {
+        return [];
+    }
+    $ids = [];
+    foreach ($raw as $v) {
+        $id = (int)$v;
+        if ($id > 0) {
+            $ids[$id] = $id;
+        }
+    }
+    return array_values($ids);
+}
+
+    $fundBalanceSql = fundBalanceSelectSql('AND td.transaction_date <= ?');
+    $assetAccounts = dashboardActiveAssetAccounts($db);
+    $allAssetIds = dashboardAssetAccountIds($assetAccounts);
+    $cashAccountIds = dashboardResolveCashAccountIds($db, $dashUserId, $allAssetIds);
+    $cashSelectedSet = array_fill_keys($cashAccountIds, true);
 
     // Get all active funds with computed balances
     $funds_query = "SELECT id, name, code, type, description, purpose
@@ -128,13 +355,8 @@ function dashboardQuickLinks(): array {
     }
     $balStmt->close();
 
-    // Total cash and bank balances
-    $cash_total = 0;
-    $cashStmt = $db->prepare($cashBankSql);
-    $cashStmt->bind_param('s', $today);
-    $cashStmt->execute();
-    $cash_total = (float)($cashStmt->get_result()->fetch_assoc()['balance'] ?? 0);
-    $cashStmt->close();
+    // Total cash and bank balances (selected asset accounts)
+    $cash_total = dashboardSumAssetBalances($db, $cashAccountIds, $today);
 
     // Upcoming tasks from the tasks/reminders system (next 30 days, or all pending if fewer)
     $taskStatusMeta = [
@@ -248,11 +470,18 @@ function dashboardQuickLinks(): array {
     </div>
     <div class="col-12 col-sm-12 col-lg-4">
         <div class="card border-info h-100 dashboard-summary-card">
-            <div class="card-header text-bg-info py-2 py-md-3">
+            <div class="card-header text-bg-info py-2 py-md-3 d-flex align-items-center justify-content-between gap-2">
                 <h5 class="mb-0"><i class="bi bi-bank"></i> <span class="d-none d-md-inline">Total Cash / Bank Balances</span><span class="d-md-none">Cash / Bank</span></h5>
+                <button type="button"
+                        class="btn btn-sm btn-link p-1 dashboard-card-setup-btn"
+                        id="totalCashSetupBtn"
+                        title="Choose accounts"
+                        aria-label="Choose accounts included in Total Cash / Bank Balances">
+                    <i class="bi bi-gear" aria-hidden="true"></i>
+                </button>
             </div>
             <div class="card-body py-3">
-                <h3 class="text-info mb-1">$<?= number_format($cash_total, 2) ?></h3>
+                <h3 class="text-info mb-1" id="totalCashAmount"><?= htmlspecialchars(dashboardFormatMoney($cash_total)) ?></h3>
                 <p class="card-text text-body-secondary small mb-0">Combined cash on hand and bank accounts.</p>
             </div>
         </div>
@@ -432,5 +661,182 @@ function dashboardQuickLinks(): array {
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="totalCashAccountsModal" tabindex="-1" aria-labelledby="totalCashAccountsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title h6 mb-0" id="totalCashAccountsModalLabel">
+                    <i class="bi bi-bank me-1"></i> Total Cash / Bank accounts
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-muted mb-2">Choose which asset accounts are included in this total. The selection is saved for your user.</p>
+                <?php if (count($assetAccounts) > 0): ?>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small text-muted">Asset accounts</span>
+                        <span class="small">
+                            <button type="button" class="btn btn-link btn-sm p-0" id="totalCashSelectAll">All</button>
+                            <span class="text-muted">·</span>
+                            <button type="button" class="btn btn-link btn-sm p-0" id="totalCashSelectNone">None</button>
+                        </span>
+                    </div>
+                    <div id="totalCashAccountList" class="d-flex flex-column gap-1">
+                        <?php foreach ($assetAccounts as $acct): ?>
+                            <?php
+                                $acctId = (int)$acct['id'];
+                                $coa = $acct['coa_number'] ?? null;
+                                $label = $coa !== null ? $coa . ' · ' . $acct['name'] : $acct['name'];
+                                $checked = isset($cashSelectedSet[$acctId]);
+                            ?>
+                            <div class="form-check">
+                                <input class="form-check-input total-cash-account"
+                                       type="checkbox"
+                                       value="<?= $acctId ?>"
+                                       id="totalCashAcct<?= $acctId ?>"
+                                       <?= $checked ? 'checked' : '' ?>>
+                                <label class="form-check-label" for="totalCashAcct<?= $acctId ?>">
+                                    <?= htmlspecialchars($label) ?>
+                                </label>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <p class="text-muted small mb-0">No asset accounts are set up yet. Add them under Lookups → Accounts.</p>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" id="totalCashSaveBtn" <?= count($assetAccounts) === 0 ? 'disabled' : '' ?>>Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="text/plain" id="init-dashboard-script">
+(function() {
+    let modalEl = document.getElementById('totalCashAccountsModal');
+    if (modalEl && typeof window.mountModalOnBody === 'function') {
+        modalEl = window.mountModalOnBody(modalEl);
+    }
+    const setupBtn = document.getElementById('totalCashSetupBtn');
+    const saveBtn = document.getElementById('totalCashSaveBtn');
+    const selectAllBtn = document.getElementById('totalCashSelectAll');
+    const selectNoneBtn = document.getElementById('totalCashSelectNone');
+    const amountEl = document.getElementById('totalCashAmount');
+    let checkSnapshot = [];
+    let savedOk = false;
+
+    function accountBoxes() {
+        const root = document.getElementById('totalCashAccountsModal');
+        return root ? root.querySelectorAll('.total-cash-account') : [];
+    }
+
+    function setAllChecked(checked) {
+        accountBoxes().forEach(function(el) { el.checked = !!checked; });
+    }
+
+    function snapshotChecks() {
+        checkSnapshot = [];
+        accountBoxes().forEach(function(el) {
+            checkSnapshot.push({ el: el, checked: !!el.checked });
+        });
+    }
+
+    function restoreChecks() {
+        checkSnapshot.forEach(function(item) {
+            if (item.el) item.el.checked = item.checked;
+        });
+    }
+
+    function openModal() {
+        if (!modalEl) return;
+        if (typeof window.showFragmentModal === 'function') {
+            window.showFragmentModal(modalEl);
+            return;
+        }
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+    }
+
+    function closeModal() {
+        if (!modalEl) return;
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            const inst = bootstrap.Modal.getInstance(modalEl);
+            if (inst) inst.hide();
+        }
+    }
+
+    if (modalEl) {
+        modalEl.addEventListener('hidden.bs.modal', function() {
+            if (!savedOk) restoreChecks();
+        });
+    }
+    if (setupBtn) {
+        setupBtn.addEventListener('click', function() {
+            savedOk = false;
+            snapshotChecks();
+            openModal();
+        });
+    }
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', function() { setAllChecked(true); });
+    }
+    if (selectNoneBtn) {
+        selectNoneBtn.addEventListener('click', function() { setAllChecked(false); });
+    }
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function() {
+            const fd = new FormData();
+            fd.append('action', 'save_total_cash_accounts');
+            accountBoxes().forEach(function(el) {
+                if (el.checked) fd.append('account_ids[]', el.value);
+            });
+            saveBtn.disabled = true;
+            fetch('pages/dashboard.php', {
+                method: 'POST',
+                body: fd,
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin'
+            })
+                .then(function(r) { return r.text(); })
+                .then(function(text) {
+                    if (window.__temperAuthRedirecting) return;
+                    if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(text)) {
+                        window.redirectToLoginExpired();
+                        return;
+                    }
+                    let data = null;
+                    try { data = JSON.parse(text); } catch (e) { data = null; }
+                    if (!data || !data.success) {
+                        const err = (data && data.error) ? data.error : 'Could not save account selection.';
+                        if (typeof showToast === 'function') showToast(err, 'danger');
+                        return;
+                    }
+                    if (amountEl && data.cash_total_formatted) {
+                        amountEl.textContent = data.cash_total_formatted;
+                    }
+                    savedOk = true;
+                    snapshotChecks();
+                    closeModal();
+                    if (typeof showToast === 'function') {
+                        showToast('Total Cash / Bank accounts updated.', 'success', 2500);
+                    }
+                })
+                .catch(function() {
+                    if (typeof showToast === 'function') {
+                        showToast('Could not save account selection.', 'danger');
+                    }
+                })
+                .finally(function() {
+                    saveBtn.disabled = false;
+                });
+        });
+    }
+})();
+</script>
+<img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-dashboard-script');if(s){(new Function(s.textContent))();}this.remove();">
 
 <?php $db->close(); ?>

@@ -204,10 +204,31 @@ Notes / Context / Interpretation:
 Near-term: Fix the blank total (default = all asset accounts or a sensible cash/bank set). Add a gear control on the card to select which asset accounts roll into the total. Per-card config belongs on the dashboard, not in System → Configuration.
 Future: Dashboard layout mode to add/remove/reorder cards from a catalog (Total Cash, Fund balances, Recent activity, etc.), still with per-card gears for options. Do not build the full layout engine until basic totals work.
 
+┌────────────────────────────────┬────────────────────────────────────────────────────────────┐
+│ Pattern                        │ Example                                                    │
+├────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ <area>.<subject>[.<option>...] │                                                            │
+├────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ dashboard.<card_id>.<option>   │ dashboard.total_cash.account_ids                           │
+├────────────────────────────────┼────────────────────────────────────────────────────────────┤
+│ ledger.<option>                │ ledger.double_click (reserved; still browser localStorage) │
+└────────────────────────────────┴────────────────────────────────────────────────────────────┘
+
 Completion Status:
 
 
 TEMPLATE
+
+
+#17 - 2026-08-26 - Ledger - Enhancement - Med
+Expected:
+Ability to delete a mistakenly entered transaction that is still pending (not cleared, not reconciled). Delete is restricted by role, requires confirmation, removes lines and attachment files, and records who deleted it. Cleared or reconciled transactions cannot be deleted.
+Actual:
+No (or insufficient) delete-for-mistake path for pending transactions, or delete is not clearly blocked after clear/reconcile.
+Notes / Context / Interpretation:
+Treat delete as undo-mistake only. Roles: Admin and Treasurer. Finance Manager out for first pass. Archivist must not delete. Confirm dialog must show identifying fields (ref, date, amount, payee), and reason. Write an audit_log entry because transaction_events will disappear with the record. Clean attachment files from disk. No delete of cleared/reconciled transactions (control hidden/disabled).
+
+Completion Status:
 
 
 

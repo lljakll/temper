@@ -1226,6 +1226,20 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
 
         /* ── Dashboard cards ─────────────────────────────────────────────── */
+        .dashboard-card-setup-btn {
+            flex: 0 0 auto;
+            line-height: 1;
+            min-width: 1.75rem;
+            min-height: 1.75rem;
+            color: inherit;
+            text-decoration: none;
+            opacity: 0.85;
+        }
+        .dashboard-card-setup-btn:hover,
+        .dashboard-card-setup-btn:focus-visible {
+            opacity: 1;
+            color: inherit;
+        }
         @media (max-width: 575.98px) {
             .dashboard-summary-card .card-header h5 {
                 font-size: 0.95rem;

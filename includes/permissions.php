@@ -182,7 +182,7 @@ function checkUsersRolesSchema(mysqli $db): array {
     }
 
     if (temperTableExists($db, 'users')) {
-        foreach (['phone', 'must_change_password', 'custom_permissions', 'archived_at', 'force_password_set_at'] as $col) {
+        foreach (['phone', 'must_change_password', 'custom_permissions', 'preferences', 'archived_at', 'force_password_set_at'] as $col) {
             if (!temperColumnExists($db, 'users', $col)) {
                 $issues[] = "column users.{$col} is missing";
             }

@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.939](#v0939)
+- [v0.938](#v0938)
 - [v0.937](#v0937)
 - [v0.936](#v0936)
 - [v0.935](#v0935)
@@ -143,6 +145,62 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.939
+
+**Ledger: delete pending transactions (Admin / Treasurer only)** — 2026-08-26
+
+> No schema update required for this release (ledger delete behavior only).  
+> **Patch file (history row):** `updates/20260826_0939_pending_transaction_delete.sql`  
+> **Schema version:** `20260825_0938_user_preferences` *(carried forward)*  
+> **Min app version:** 0.939
+
+- Pending transactions can be deleted from the Ledger toolbar (selected row) and from the Edit modal.
+- Delete is limited to the **Administrator** and **Treasurer** active roles. Other roles with ledger write (e.g. Finance Manager) do not see the control and cannot delete via the API.
+- Cleared and reconciled transactions cannot be deleted: the control is disabled/hidden, and the server refuses any such request (`DELETE … AND status = 'pending'`).
+- Confirmation shows Ref #, date, amount, and payee, and requires a **Reason for delete**. An empty reason is rejected.
+- A successful delete removes the header, all lines, document records, on-disk attachment files, and (via FK cascade) `transaction_events`. A system `audit_log` row (`ledger.transaction_deleted`) records user (with active role), timestamp, ref #, date, amount, payee, and the reason.
+- No void / soft-delete. Line-only delete of a header is not added. Existing cleared/reconciled edit locks are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.939**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.938 | `updates/20260826_0939_pending_transaction_delete.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.938 patches, then this process patch |
+
+---
+
+## v0.938
+
+**Dashboard Total Cash / Bank Balances + per-user preferences storage** — 2026-08-25
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260825_0938_user_preferences.sql`  
+> **Schema version:** `20260825_0938_user_preferences`  
+> **Min app version:** 0.938
+
+- **DDL:** `users.preferences` — nullable JSON. Small keyed per-user settings only (no preferences management UI).
+- **Helpers:** `getUserPreference($db, $userId, $key, $default = null)` and `setUserPreference($db, $userId, $key, $value)` in `includes/user_preferences.php`.
+- **Preference key convention** (dot-separated path; stored as nested JSON; reuse for future cards):
+  - `<area>.<subject>[.<option>...]`
+  - `dashboard.<card_id>.<option>` — e.g. `dashboard.total_cash.account_ids` (list of Chart of Accounts ids)
+  - `ledger.<option>` — e.g. `ledger.double_click` (reserved; still browser `localStorage` in 0.936)
+- **Total Cash / Bank Balances** card sums the selected **asset** accounts (no longer hardcoded names `Cash` / `Bank Account`, which left the total at $0).
+  - Default when no preference is stored: every active `account_type = asset` account.
+  - Gear control in the card header opens a multi-select of asset accounts; the choice is saved under `dashboard.total_cash.account_ids` and the total recalculates.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.938**; `TEMPER_EXPECTED_SCHEMA_VERSION` = `20260825_0938_user_preferences`. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.937 | `updates/20260825_0938_user_preferences.sql` |
+| Fresh setup (0.900) | Apply 0.901 → 0.937 patches, then this schema patch |
 
 ---
 
