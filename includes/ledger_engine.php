@@ -286,62 +286,88 @@ function ledgerReferenceRangeAdvisory(?string $value, string $kind = 'other'): ?
 }
 
 /**
- * Suggest next free-ish Reference # for a year within the kind's range.
- * Does not auto-assign — UI only (placeholder / double-click fill).
+ * Suggest the next Reference # for the Add/Edit tip (placeholder / double-click).
+ * Does not auto-assign and never writes a value into the field.
  *
- * Ranges:
- * - contribution → YY0001–YY0099
- * - other        → YY0100–YY9999
+ * Uses the most recently saved transaction (`updated_at`, then `id`) that
+ * already has a valid YY#### Ref #, plus one. If that candidate is already
+ * used, skip forward in the same numeric sequence to the next unused 6-digit
+ * number. Accepting a used number still follows the existing “Already Used”
+ * confirm-on-save path.
  *
- * @param string|null $asOfDate Y-m-d (defaults to today) to pick YY
- * @param string      $kind     contribution|other
+ * $asOfDate / $kind are kept for callers; they only apply when no YY#### Ref #
+ * has been saved yet (fallback to the kind’s range start for that year).
+ *
+ * @param string|null $asOfDate Y-m-d (defaults to today) used only for empty-ledger fallback
+ * @param string      $kind     contribution|other — fallback range only
  */
 function ledgerSuggestNextReferenceNumber(mysqli $db, ?string $asOfDate = null, string $kind = 'other'): string {
     ledgerRequireTables($db);
-    $range = ledgerReferenceRangeForKind($kind);
-    $ts = time();
-    if ($asOfDate !== null && $asOfDate !== '') {
-        $parsed = strtotime($asOfDate);
-        if ($parsed !== false) {
-            $ts = $parsed;
-        }
-    }
-    $yy = date('y', $ts);
-    $prefix = $yy;
-    $like = $yy . '%';
 
-    $stmt = $db->prepare(
-        'SELECT reference_number FROM transaction_details
-         WHERE reference_number LIKE ? AND CHAR_LENGTH(reference_number) = 6'
+    $lastRef = '';
+    $res = $db->query(
+        "SELECT reference_number
+         FROM transaction_details
+         WHERE reference_number IS NOT NULL
+           AND CHAR_LENGTH(reference_number) = 6
+           AND reference_number REGEXP '^[0-9]{6}$'
+         ORDER BY updated_at DESC, id DESC
+         LIMIT 1"
     );
-    $stmt->bind_param('s', $like);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $maxInRange = $range['min'] - 1;
-    while ($row = $res->fetch_assoc()) {
-        $sn = ledgerNormalizeReferenceNumber($row['reference_number'] ?? '');
-        if (!preg_match('/^(\d{2})(\d{4})$/', $sn, $m) || $m[1] !== $prefix) {
-            continue;
+    if ($res) {
+        $row = $res->fetch_assoc();
+        if ($row) {
+            $lastRef = ledgerNormalizeReferenceNumber($row['reference_number'] ?? '');
         }
-        $suffix = (int)$m[2];
-        if ($suffix < $range['min'] || $suffix > $range['max']) {
-            continue;
-        }
-        if ($suffix > $maxInRange) {
-            $maxInRange = $suffix;
-        }
+        $res->free();
     }
-    $stmt->close();
 
-    $next = $maxInRange + 1;
-    if ($next < $range['min']) {
-        $next = $range['min'];
+    if (!preg_match('/^\d{6}$/', $lastRef)) {
+        $range = ledgerReferenceRangeForKind($kind);
+        $ts = time();
+        if ($asOfDate !== null && $asOfDate !== '') {
+            $parsed = strtotime($asOfDate);
+            if ($parsed !== false) {
+                $ts = $parsed;
+            }
+        }
+        $yy = date('y', $ts);
+        return $yy . str_pad((string)$range['min'], 4, '0', STR_PAD_LEFT);
     }
-    if ($next > $range['max']) {
-        // Range exhausted — still surface the max (user can override manually)
-        $next = $range['max'];
+
+    $next = (int)$lastRef + 1;
+    if ($next > 999999) {
+        return '999999';
     }
-    return $prefix . str_pad((string)$next, 4, '0', STR_PAD_LEFT);
+
+    $used = [];
+    $usedRes = $db->query(
+        "SELECT reference_number
+         FROM transaction_details
+         WHERE reference_number IS NOT NULL
+           AND CHAR_LENGTH(reference_number) = 6
+           AND reference_number REGEXP '^[0-9]{6}$'"
+    );
+    if ($usedRes) {
+        while ($urow = $usedRes->fetch_assoc()) {
+            $used[ledgerNormalizeReferenceNumber($urow['reference_number'] ?? '')] = true;
+        }
+        $usedRes->free();
+    }
+
+    $guard = 0;
+    while ($next <= 999999 && $guard < 10000) {
+        $candidate = str_pad((string)$next, 6, '0', STR_PAD_LEFT);
+        if (!isset($used[$candidate])) {
+            return $candidate;
+        }
+        $next++;
+        $guard++;
+    }
+    if ($next > 999999) {
+        return '999999';
+    }
+    return str_pad((string)$next, 6, '0', STR_PAD_LEFT);
 }
 
 /** @deprecated Use ledgerSuggestNextReferenceNumber */
@@ -895,11 +921,65 @@ function ledgerNameMaps(mysqli $db): array {
 }
 
 /**
+ * Optional per-line note stored in transaction_lines.description.
+ * UI label is "Note". Does not affect posting, funds, or balances.
+ */
+function ledgerNormalizeLineNote(mixed $note): string {
+    $s = trim((string)$note);
+    if ($s === '') {
+        return '';
+    }
+    if (function_exists('mb_substr')) {
+        return mb_substr($s, 0, 255);
+    }
+    return substr($s, 0, 255);
+}
+
+/**
+ * Read a line note from a POST/DB row (accepts description or note).
+ */
+function ledgerLineNoteFromRow(array $line): string {
+    if (array_key_exists('note', $line) && $line['note'] !== null && $line['note'] !== '') {
+        return ledgerNormalizeLineNote($line['note']);
+    }
+    return ledgerNormalizeLineNote($line['description'] ?? '');
+}
+
+/**
+ * Human-readable account/fund label for a transaction line in the audit trail.
+ */
+function ledgerLineAuditLabel(int $aid, mixed $fid, array $names): string {
+    $acct = $names['accounts'][$aid] ?? ('Account #' . $aid);
+    $fidInt = ($fid !== null && $fid !== '' && (int)$fid > 0) ? (int)$fid : 0;
+    if ($fidInt > 0) {
+        $fund = $names['funds'][$fidInt] ?? ('Fund #' . $fidInt);
+        return 'Fund "' . $fund . '" (' . $acct . ')';
+    }
+    return 'Account "' . $acct . '"';
+}
+
+/**
+ * Human-readable audit sentence when a line note is added, changed, or cleared.
+ */
+function ledgerDescribeLineNoteChange(string $label, string $oldNote, string $newNote): ?string {
+    if ($oldNote === $newNote) {
+        return null;
+    }
+    if ($oldNote === '' && $newNote !== '') {
+        return 'Line note added on ' . $label . ': "' . $newNote . '".';
+    }
+    if ($oldNote !== '' && $newNote === '') {
+        return 'Line note cleared on ' . $label . ' (was "' . $oldNote . '").';
+    }
+    return 'Line note on ' . $label . ' changed from "' . $oldNote . '" to "' . $newNote . '".';
+}
+
+/**
  * Build human-readable change lines when a manual transaction is updated.
  *
  * @param array $existing Row from ledgerFetchTransaction (includes lines)
  * @param array $newHeader Keys: transaction_date, pay_to, reference_number, check_number, description, budget_id
- * @param array $newLines  List of [aid, fid, am, t, nid, fid2]
+ * @param array $newLines  List of [aid, fid, am, t, nid, fid2, description?]
  * @return array{summary:string,changes:array<int,string>,debits:float,credits:float}
  */
 function ledgerDescribeTransactionUpdate(
@@ -966,15 +1046,6 @@ function ledgerDescribeTransactionUpdate(
     $lineKey = static function (int $aid, $fid, string $type): string {
         return $aid . '|' . ($fid !== null && $fid !== '' ? (int)$fid : 0) . '|' . $type;
     };
-    $lineLabel = static function (int $aid, $fid, array $names): string {
-        $acct = $names['accounts'][$aid] ?? ('Account #' . $aid);
-        $fidInt = ($fid !== null && $fid !== '' && (int)$fid > 0) ? (int)$fid : 0;
-        if ($fidInt > 0) {
-            $fund = $names['funds'][$fidInt] ?? ('Fund #' . $fidInt);
-            return 'Fund "' . $fund . '" (' . $acct . ')';
-        }
-        return 'Account "' . $acct . '"';
-    };
 
     $oldMap = [];
     foreach ($existing['lines'] ?? [] as $ol) {
@@ -984,9 +1055,10 @@ function ledgerDescribeTransactionUpdate(
         $key = $lineKey($aid, $fid, $type);
         $amt = (float)($ol['amount'] ?? 0);
         if (!isset($oldMap[$key])) {
-            $oldMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0];
+            $oldMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0, 'notes' => []];
         }
         $oldMap[$key]['amount'] += $amt;
+        $oldMap[$key]['notes'][] = ledgerLineNoteFromRow($ol);
     }
 
     $newMap = [];
@@ -1002,9 +1074,10 @@ function ledgerDescribeTransactionUpdate(
         }
         $key = $lineKey($aid, $fid, $type);
         if (!isset($newMap[$key])) {
-            $newMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0];
+            $newMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0, 'notes' => []];
         }
         $newMap[$key]['amount'] += $amt;
+        $newMap[$key]['notes'][] = ledgerLineNoteFromRow($nl);
         if ($type === 'credit') {
             $credits += $amt;
         } else {
@@ -1013,10 +1086,16 @@ function ledgerDescribeTransactionUpdate(
     }
 
     foreach ($newMap as $key => $nl) {
-        $label = $lineLabel($nl['aid'], $nl['fid'], $names);
+        $label = ledgerLineAuditLabel($nl['aid'], $nl['fid'], $names);
         $newAmt = $nl['amount'];
         if (!isset($oldMap[$key])) {
             $changes[] = 'Added ' . $label . ' ' . $nl['type'] . ' ' . ledgerFormatMoney($newAmt) . '.';
+            foreach ($nl['notes'] as $note) {
+                $msg = ledgerDescribeLineNoteChange($label, '', $note);
+                if ($msg !== null) {
+                    $changes[] = $msg;
+                }
+            }
             continue;
         }
         $oldAmt = (float)$oldMap[$key]['amount'];
@@ -1033,10 +1112,23 @@ function ledgerDescribeTransactionUpdate(
                     . ledgerFormatMoney($oldAmt) . ' to ' . ledgerFormatMoney($newAmt) . '.';
             }
         }
+        $oldNotes = $oldMap[$key]['notes'] ?? [];
+        $newNotes = $nl['notes'] ?? [];
+        $nCmp = max(count($oldNotes), count($newNotes));
+        for ($i = 0; $i < $nCmp; $i++) {
+            $msg = ledgerDescribeLineNoteChange(
+                $label,
+                (string)($oldNotes[$i] ?? ''),
+                (string)($newNotes[$i] ?? '')
+            );
+            if ($msg !== null) {
+                $changes[] = $msg;
+            }
+        }
         unset($oldMap[$key]);
     }
     foreach ($oldMap as $ol) {
-        $label = $lineLabel($ol['aid'], $ol['fid'], $names);
+        $label = ledgerLineAuditLabel($ol['aid'], $ol['fid'], $names);
         $changes[] = 'Removed ' . $label . ' ' . $ol['type'] . ' ' . ledgerFormatMoney($ol['amount']) . '.';
     }
 
@@ -1093,6 +1185,23 @@ function ledgerDescribeTransactionCreate(
     $changes = [$summary];
     foreach ($fundBits as $fname => $amt) {
         $changes[] = 'Fund "' . $fname . '" ' . ledgerFormatMoney($amt) . '.';
+    }
+    foreach ($newLines as $nl) {
+        $amt = (float)($nl['am'] ?? $nl['amount'] ?? 0);
+        if ($amt <= 0) {
+            continue;
+        }
+        $note = ledgerLineNoteFromRow($nl);
+        if ($note === '') {
+            continue;
+        }
+        $aid = (int)($nl['aid'] ?? $nl['account_id'] ?? 0);
+        $fid = $nl['fid'] ?? $nl['fund_id'] ?? null;
+        $label = ledgerLineAuditLabel($aid, $fid, $names);
+        $msg = ledgerDescribeLineNoteChange($label, '', $note);
+        if ($msg !== null) {
+            $changes[] = $msg;
+        }
     }
     return [
         'summary' => $summary,
@@ -1258,7 +1367,7 @@ function ledgerReplaceLines(mysqli $db, int $transactionId, array $lines): void 
         $fundId = $line['fund_id'] ?? null;
         $naturalId = $line['natural_category_id'] ?? null;
         $functionalId = $line['functional_category_id'] ?? null;
-        $description = $line['description'] ?? '';
+        $description = ledgerLineNoteFromRow($line);
         $ins->bind_param(
             'iiidsiis',
             $transactionId,

@@ -214,7 +214,7 @@ Future: Dashboard layout mode to add/remove/reorder cards from a catalog (Total 
 │ ledger.<option>                │ ledger.double_click (reserved; still browser localStorage) │
 └────────────────────────────────┴────────────────────────────────────────────────────────────┘
 
-Completion Status:
+Completion Status:  Implemented TEsting
 
 
 TEMPLATE
@@ -228,9 +228,55 @@ No (or insufficient) delete-for-mistake path for pending transactions, or delete
 Notes / Context / Interpretation:
 Treat delete as undo-mistake only. Roles: Admin and Treasurer. Finance Manager out for first pass. Archivist must not delete. Confirm dialog must show identifying fields (ref, date, amount, payee), and reason. Write an audit_log entry because transaction_events will disappear with the record. Clean attachment files from disk. No delete of cleared/reconciled transactions (control hidden/disabled).
 
-Completion Status:
+Completion Status:  Implemented, testing
 
 
+#18 - 2026-08-26 - Ledger / Add-Edit Transaction - Enhancement - Low
+Expected:
+Each transaction line can have an optional note that applies only to that line (not the whole transaction). Note is visible and editable in Add/Edit, visible in View, and changes are reflected in the transaction audit trail.
+Actual:
+Line-specific notes are missing or not exposed in the UI, so line-only context has to be stuffed into the header Description or omitted.
+Notes / Context / Interpretation:
+Use cases: identifying a portion of a deposit, pass-through detail, exception on one expense line. Prefer reusing transaction_lines.description as “Note” if the column already exists and is unused in the UI; otherwise add a line note column. Keep the control compact in the lines grid. Do not require a note. Do not use line notes in fund-balance or posting logic.
+
+Completion Status: implemented, testing
+
+
+#19 - 2026-08-26 - Ledger / Column filters - Bug - Med
+Expected:
+Typing in a column filter search box narrows the unique-value list and, on Apply, only the search-matching values remain selected. Non-matching items are cleared from the selection so the ledger actually filters.
+Actual:
+Search hides non-matching items in the dropdown but does not deselect them. Apply still uses the old full selection, so no filter change occurs.
+Notes / Context / Interpretation:
+Manual check/uncheck + Apply works. Search + Apply does not. Search should reset selection to the current search results (deselect non-matches; keep/select matches) before Apply.
+
+Completion Status: Implemented, testing
+
+
+#20 - 2026-08-26 - Ledger - Temporary Feature - Med
+Expected:
+Temporary bulk manager: select multiple similar pending transactions and apply the same account(s), fund, description, and/or line notes to all of them at once, with confirmation. Cleared/reconciled rows cannot be bulk-edited. Feature is modular and flagged for removal with the temporary importers.
+Actual:
+Each similar transaction (online contributions, USAA transfers, GPC, City Utilities, etc.) must be opened and edited individually.
+Notes / Context / Interpretation:
+One-time data-cleanup tool only. Do not build a permanent rules engine. Use existing multi-select. Keep out of core posting paths. Comment-flag TEMP_BULK_TXN_MANAGER and report files touched for later deletion.
+
+Completion Status: Implemented, awt removal after cw.
+
+Removal inventory (TEMP_BULK_TXN_MANAGER)
+
+New file
+• includes/temp_bulk_txn_manager.php
+
+Modified sections in pages/ledger.php
+• require_once of the helper
+• $canBulkApply flag
+• POST action=bulk_apply JSON handler
+• Toolbar Bulk apply button
+• Modal render call (tempBulkTxnManagerRenderModal)
+• JS: canBulkApply / bulkApplyBtn, updateButtonStates hook, modal open/confirm/submit block (// TEMP_BULK_TXN_MANAGER … // end TEMP_BULK_TXN_MANAGER)
+
+Leave updates/20260826_0942_ledger_temp_bulk_apply.sql in place (process-only app_version history row; do not roll it back).
 
 
 #<##> - yyyy-mm-dd - <page/action> - <category> - <severity>

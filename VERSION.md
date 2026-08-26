@@ -19,6 +19,10 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.943](#v0943)
+- [v0.942](#v0942)
+- [v0.941](#v0941)
+- [v0.940](#v0940)
 - [v0.939](#v0939)
 - [v0.938](#v0938)
 - [v0.937](#v0937)
@@ -145,6 +149,105 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+
+---
+
+## v0.943
+
+**Ledger: Ref # suggestion tip is last saved Ref # plus one** — 2026-08-26
+
+> No schema update required for this release (suggestion value only).  
+> **Patch file (history row):** `updates/20260826_0943_ledger_ref_suggest_last_plus_one.sql`  
+> **Schema version:** `20260825_0938_user_preferences` *(carried forward)*  
+> **Min app version:** 0.943
+
+- The recommended Ref # on Add and Edit (when the field is blank) is now the **most recently saved** transaction’s Ref # **plus one** (e.g. saved `260801` → tip shows `260802`).
+- Still a field tip/placeholder only — not auto-filled. Double-click accepts it; typing clears the tip. An already-entered Ref # is never overwritten.
+- If last+1 is already used, the tip skips to the next unused number in that numeric sequence. Accepting a used number still shows **Already Used** and the existing confirm-on-save reuse prompt.
+- Does not assign GUIDs or a new global 0…n scheme. Year-range fallback (YY0100+ for ledger entry) is used only when no YY#### Ref # has been saved yet.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.943**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.942 | `updates/20260826_0943_ledger_ref_suggest_last_plus_one.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.942 patches, then this process patch |
+
+---
+
+## v0.942
+
+**Ledger: temporary bulk-apply for similar pending transactions** — 2026-08-26
+
+> No schema update required for this release (temporary ledger helper only).  
+> **Patch file (history row):** `updates/20260826_0942_ledger_temp_bulk_apply.sql`  
+> **Schema version:** `20260825_0938_user_preferences` *(carried forward)*  
+> **Min app version:** 0.942
+
+- Temporary **Bulk apply** action on the Ledger toolbar (Admin / Treasurer). Select one or more rows with the existing Ctrl/Shift selection, then apply the same counterpart account, fund, description, and/or line note to every selected **pending** transaction.
+- Blank fields are left unchanged. Bank/cash (asset) lines are not recoded; account, fund, and line note go on the counterpart (non-asset) line, matching normal fund-tagging rules.
+- Confirmation is required and shows how many pending transactions will be updated. Cleared and reconciled rows in the selection are skipped and counted in the result.
+- Writes use the existing ledger update path (header, replace lines, audit). No importer, fuzzy matching, templates, or per-row values. Marked `TEMP_BULK_TXN_MANAGER` for removal with the temporary importers.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.942**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.941 | `updates/20260826_0942_ledger_temp_bulk_apply.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.941 patches, then this process patch |
+
+---
+
+## v0.941
+
+**Ledger: Excel-style column filter search selects matching values on Apply** — 2026-08-26
+
+> No schema update required for this release (client-side ledger auto-filter only).  
+> **Patch file (history row):** `updates/20260826_0941_ledger_filter_search_select.sql`  
+> **Schema version:** `20260825_0938_user_preferences` *(carried forward)*  
+> **Min app version:** 0.941
+
+- Typing in a column auto-filter search box now **deselects unique values that do not match** and **selects the matching values**.
+- Apply then filters the ledger to the search-matching values only (Excel-style), instead of treating the still-checked hidden values as “Select All / no filter”.
+- Matching values remain selected (or become selected) so Apply does not require a second pass through the checkboxes.
+- Manual check/uncheck without using search is unchanged. **(Select All)** still applies to the currently visible / search-filtered list.
+- Per-column Clear and Clear all filters are unchanged. Server-side filtering, infinite scroll, and sort are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.941**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.940 | `updates/20260826_0941_ledger_filter_search_select.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.940 patches, then this process patch |
+
+---
+
+## v0.940
+
+**Ledger: optional per-line Note on transaction lines** — 2026-08-26
+
+> No schema update required for this release (reuses existing `transaction_lines.description`).  
+> **Patch file (history row):** `updates/20260826_0940_transaction_line_notes.sql`  
+> **Schema version:** `20260825_0938_user_preferences` *(carried forward)*  
+> **Min app version:** 0.940
+
+- Each transaction line has an optional **Note** that applies only to that line (not the header Description).
+- Exposed the unused `transaction_lines.description` column in the UI as “Note” — no new column.
+- Compact Note input on each line in Add/Edit; read-only on each line in View.
+- Saving Add/Edit persists line notes with the lines. Empty notes are allowed.
+- Adding, changing, or clearing a line note is recorded in the transaction audit trail (`transaction_events`).
+- Notes do not affect balances, fund calculations, or posting rules. The main ledger list is unchanged (no line-note columns).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.940**. Setup baseline remains **0.900**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.939 | `updates/20260826_0940_transaction_line_notes.sql` (records version; no DDL) |
+| Fresh setup (0.900) | Apply 0.901 → 0.939 patches, then this process patch |
 
 ---
 

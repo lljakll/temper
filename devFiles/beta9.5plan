@@ -1,0 +1,41 @@
+Thoughts: the calendar is right; “George go ham on the whole repo” as one job is not.
+Waiting until the Saturday reset is sensible. You’re in the middle of real data and real bugs. Burning the last 60% of the week on a refactor means you can’t finish the load or capture the next wave of issues. Use Wed–Sat for:
+
+Data in
+Bugs only if they block you
+A written hit list of temp tools and known smells (no coding the cleanup yet)
+
+Token reset Sat 11:00 gives you a clean window for a controlled 0.950 pass, then a short “did we break the ledger?” week before 1.0.
+Sequence I’d use after reset
+
+Backup + git tag (data + code).
+Remove temp tools first (Bank Export, Beancount mass import, bulk manager, single Import-from-Text if you’re retiring it). Separate prompts, one family at a time, smoke test after each.
+Then optimization — not one “rewrite everything” prompt.
+
+A single “analyze the entire codebase and optimize” run tends to:
+
+Touch too many files at once
+“Clean up” working patterns you rely on
+Mix style nits with real bugs
+Make the second beta pass un-diagnosable
+
+Better 0.950 shape (still “George + 4.6 High”)
+Pass A – map, don’t change
+
+Read-only: inventory duplication, dead code, leftover TEMP flags, fat ledger.php, repeated JS, query hot spots. Deliver a written list with severity.
+Pass B – safe mechanical cleanup
+
+Dead code, unused includes, obvious duplication, consistent helpers. No behavior change.
+Pass C – targeted performance
+
+Only what the map flagged (ledger list queries, filter unique-value loads, dashboard totals). Measure-ish, don’t guess.
+Pass D – second beta
+
+You click the same paths you use every day: add/edit, filters, attachments, backup/restore, dashboard cash, fund balances. If something broke, you know it came from B or C.
+Features vs 0.950
+Park new squirrels after Friday unless they block the books. Optimization week is not when you add dashboard builders or generic importers. Those are 1.0+ or a freeze exception you choose on purpose.
+Bottom line
+Yes: data + bugs until reset → strip temp tools → structured 0.950 review → short re-test → 1.0.
+
+No: one unbounded “optimize the whole app” prompt.
+If you want, before Saturday I can turn this into a one-page 0.950 runbook (prompt A/B/C text stubs + temp-tool removal order) so you’re not inventing it at 11:01.

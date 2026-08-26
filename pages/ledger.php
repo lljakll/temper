@@ -5,6 +5,8 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/ledger_engine.php';
 require_once __DIR__ . '/../includes/budget_utils.php';
 require_once __DIR__ . '/../includes/permissions.php';
+// TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
 
     $success = null;
     $error = null;
@@ -12,6 +14,9 @@ require_once __DIR__ . '/../includes/permissions.php';
     $ledgerActor = getCurrentUser();
     $canWriteLedger = $ledgerActor && userHasPermission($db, (int)$ledgerActor['id'], 'page.ledger.write');
     $canDeleteLedger = $ledgerActor && ledgerUserCanDeleteTransactions($db, (int)$ledgerActor['id']);
+    // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+    $canBulkApply = $ledgerActor && $canWriteLedger
+        && tempBulkTxnManagerUserCanAccess($db, (int)$ledgerActor['id']);
     // Ensure budget_id column exists before any ledger queries
     ledgerRequireTables($db);
 
@@ -101,7 +106,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         exit;
     }
 
-    // Reference # (YY####) helpers: shadow default, reuse check, used-list modal
+    // Reference # (YY####) helpers: last-saved+1 tip, reuse check, used-list modal
     // Accept reference_api (preferred) or sequence_api (legacy alias)
     if (isset($_GET['reference_api']) || isset($_GET['sequence_api'])) {
         header('Content-Type: application/json; charset=utf-8');
@@ -188,7 +193,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                 'amount' => $l['amount'],
                 'type' => $lineType,
                 'natural_category_id' => $l['natural_category_id'] !== null ? (int)$l['natural_category_id'] : '',
-                'functional_category_id' => $l['functional_category_id'] !== null ? (int)$l['functional_category_id'] : ''
+                'functional_category_id' => $l['functional_category_id'] !== null ? (int)$l['functional_category_id'] : '',
+                'description' => ledgerLineNoteFromRow($l),
             ];
         }
         $det['lines'] = $lines;
@@ -990,6 +996,19 @@ require_once __DIR__ . '/../includes/permissions.php';
             exit;
         }
 
+        // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+        if ($action === 'bulk_apply') {
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            echo json_encode(
+                tempBulkTxnManagerHandlePost($db, $actor, (bool)$canWriteLedger),
+                JSON_UNESCAPED_UNICODE
+            );
+            exit;
+        }
+
         if (!$canWriteLedger) {
             denyPermission('You do not have permission to modify ledger transactions.');
         }
@@ -1348,6 +1367,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                             't' => (string)($ol['type'] ?? 'debit'),
                                             'nid' => $ol['natural_category_id'] ?? null,
                                             'fid2' => $ol['functional_category_id'] ?? null,
+                                            'description' => ledgerLineNoteFromRow($ol),
                                         ];
                                     }, $lockedTx['lines'] ?? [])
                                 );
@@ -1452,7 +1472,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                         'nid' => $cats['nid'],
                         'fid2' => $cats['fid2'],
                         'am' => $am,
-                        't' => $t
+                        't' => $t,
+                        'description' => ledgerLineNoteFromRow($l),
                     ];
                 }
                 if ($typeError) {
@@ -1526,6 +1547,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 $ed = '';
                                 $lins = $db->prepare("INSERT INTO transaction_lines(transaction_detail_id,account_id,fund_id,amount,type,natural_category_id,functional_category_id,description) VALUES(?,?,?,?,?,?,?,?)");
                                 foreach ($vlines as $v) {
+                                    $ed = (string)($v['description'] ?? '');
                                     $lins->bind_param("iiidsiis", $tx_id, $v['aid'], $v['fid'], $v['am'], $v['t'], $v['nid'], $v['fid2'], $ed);
                                     $lins->execute();
                                 }
@@ -1599,7 +1621,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                                 'type' => $v['t'],
                                 'natural_category_id' => $v['nid'],
                                 'functional_category_id' => $v['fid2'],
-                                'description' => '',
+                                'description' => (string)($v['description'] ?? ''),
                             ];
                         }
                         ledgerReplaceLines($db, $tid, $lineRows);
@@ -1898,6 +1920,13 @@ require_once __DIR__ . '/../includes/permissions.php';
             <i class="bi bi-trash"></i> Delete
         </button>
         <?php endif; ?>
+        <?php if ($canBulkApply): ?>
+        <!-- TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired -->
+        <button type="button" id="bulkApplyBtn" class="btn btn-outline-secondary" disabled
+                title="Temporary: apply account, fund, description, or line note to selected pending transactions">
+            <i class="bi bi-layer-forward"></i> <span class="d-none d-sm-inline">Bulk apply</span>
+        </button>
+        <?php endif; ?>
         <button type="button" id="clearTxBtn" class="btn btn-outline-warning" disabled>
             <i class="bi bi-check2-circle"></i> Clear
         </button>
@@ -2166,6 +2195,7 @@ foreach ($colDefs as $col):
                                         <th title="Fund tags on asset accounts do not affect fund balances. Tag the income, expense, or net assets line.">Fund</th>
                                         <th>Natural</th>
                                         <th>Functional</th>
+                                        <th class="tx-note-col">Note</th>
                                         <th class="text-end text-primary tx-amt-col">Debit</th>
                                         <th class="text-end text-success tx-amt-col">Credit</th>
                                         <th style="width:30px"></th>
@@ -2203,6 +2233,15 @@ foreach ($colDefs as $col):
                             }
                             #txLinesTable .line-amount {
                                 min-width: 7.5rem;
+                            }
+                            #txLinesTable th.tx-note-col,
+                            #txLinesTable td:has(.line-note) {
+                                width: 9rem;
+                                min-width: 7.5rem;
+                            }
+                            #txLinesTable .line-note {
+                                min-width: 7rem;
+                                max-width: 12rem;
                             }
                             #txLinesTable .line-fund.line-fund-ignored {
                                 opacity: 0.65;
@@ -2390,6 +2429,13 @@ foreach ($colDefs as $col):
     </div>
 </div>
 
+<?php if ($canBulkApply): ?>
+<?php
+    // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+    tempBulkTxnManagerRenderModal($aopt, $fopt);
+?>
+<?php endif; ?>
+
 <!-- Queue delete confirmation modal -->
 <div class="modal fade" id="txQueueDeleteModal" tabindex="-1" aria-labelledby="txQueueDeleteTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -2497,7 +2543,7 @@ foreach ($colDefs as $col):
                     Manual <code>YY####</code> Reference # values already on the ledger (highest first).
                     <strong>YY0001–YY0099</strong> are reserved for contributions;
                     <strong>YY0100+</strong> for payments, reimbursements, transfers, and other entries.
-                    Double-click the Ref # field to fill the suggested next number for this form type.
+                    Double-click the Ref # field to fill the suggested next number (last saved Ref # + 1).
                 </p>
                 <div class="table-responsive" style="max-height: 60vh;">
                     <table class="table table-sm table-hover mb-0 align-middle">
@@ -2544,12 +2590,16 @@ foreach ($colDefs as $col):
 
     const canWriteLedger = <?= $canWriteLedger ? 'true' : 'false' ?>;
     const canDeleteLedger = <?= $canDeleteLedger ? 'true' : 'false' ?>;
+    // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+    const canBulkApply = <?= !empty($canBulkApply) ? 'true' : 'false' ?>;
     const addTxBtn = document.getElementById('addTxBtn');
     const viewTxBtn = document.getElementById('viewTxBtn');
     const editTxBtn = document.getElementById('editTxBtn');
     const editFromViewBtn = document.getElementById('editFromViewBtn');
     const deleteTxBtn = document.getElementById('deleteTxBtn');
     const deleteFromEditBtn = document.getElementById('deleteFromEditBtn');
+    // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+    const bulkApplyBtn = document.getElementById('bulkApplyBtn');
     const clearTxBtn = document.getElementById('clearTxBtn');
     const reconcileTxBtn = document.getElementById('reconcileTxBtn');
     const clearAllFiltersBtn = document.getElementById('clearAllFiltersBtn');
@@ -3127,12 +3177,13 @@ foreach ($colDefs as $col):
         selectAll.indeterminate = nChecked > 0 && nChecked < leaves.length;
     }
 
-    function getCheckedLeafValues(th) {
-        return getLeafCheckboxes(th, { checkedOnly: true }).map(cb => cb.value);
-    }
-
     function getAllLeafValues(th) {
         return getLeafCheckboxes(th).map(cb => cb.value);
+    }
+
+    function columnFilterSearchQuery(th) {
+        const search = th && th.querySelector('.ledger-f-search');
+        return search ? String(search.value || '').trim() : '';
     }
 
     function applySearchFilterToMenu(th, q) {
@@ -3164,7 +3215,20 @@ foreach ($colDefs as $col):
                 item.style.display = !q || hay.includes(q) ? '' : 'none';
             });
         }
-        syncSelectAllCheckbox(th);
+        // Excel-style: an active search selects matching unique values and
+        // deselects the rest, so Apply filters the ledger to the search hits.
+        // Empty search leaves manual check/uncheck as-is.
+        if (q) {
+            const visible = new Set(getLeafCheckboxes(th, { visibleOnly: true }));
+            getLeafCheckboxes(th).forEach(cb => {
+                cb.checked = visible.has(cb);
+            });
+        }
+        if (isDate) {
+            syncDateParentCheckboxes(th);
+        } else {
+            syncSelectAllCheckbox(th);
+        }
     }
 
     function setAllVisibleChecked(th, checked) {
@@ -3196,10 +3260,14 @@ foreach ($colDefs as $col):
         menu.querySelectorAll('details').forEach(det => {
             const parentCb = det.querySelector(':scope > summary > .ledger-f-cb');
             if (!parentCb) return;
-            const days = det.querySelectorAll('.ledger-f-day-cb');
+            const days = Array.from(det.querySelectorAll('.ledger-f-day-cb')).filter(d => {
+                const wrap = d.closest('.ledger-f-item');
+                if (wrap && wrap.style.display === 'none') return false;
+                return true;
+            });
             if (!days.length) return;
             const n = days.length;
-            const c = Array.from(days).filter(d => d.checked).length;
+            const c = days.filter(d => d.checked).length;
             parentCb.checked = c === n;
             parentCb.indeterminate = c > 0 && c < n;
         });
@@ -3230,7 +3298,12 @@ foreach ($colDefs as $col):
                     tree: data.tree
                 });
                 box.dataset.loaded = '1';
-                syncSelectAllCheckbox(th);
+                const search = th.querySelector('.ledger-f-search');
+                if (search && String(search.value || '').trim()) {
+                    applySearchFilterToMenu(th, search.value);
+                } else {
+                    syncSelectAllCheckbox(th);
+                }
             })
             .catch(err => {
                 console.error(err);
@@ -3466,10 +3539,18 @@ foreach ($colDefs as $col):
     function applyColumnFilterFromMenu(th) {
         if (!th) return;
         const col = th.dataset.col;
+        const q = columnFilterSearchQuery(th);
         const allVals = getAllLeafValues(th);
-        const checked = getCheckedLeafValues(th);
-        // Excel: Select All (all checked) = no column filter; none checked = no matches
-        if (allVals.length && checked.length === allVals.length) {
+        // Search-narrowed Apply uses the visible matching set only.
+        const checked = getLeafCheckboxes(th, {
+            checkedOnly: true,
+            visibleOnly: !!q
+        }).map(cb => cb.value);
+        // Excel: on the full list, every value checked means no column filter.
+        // A search-narrowed selection is a real filter even if every visible
+        // match is checked (otherwise Apply would ignore the search).
+        const isFullSelect = !q && allVals.length && checked.length === allVals.length;
+        if (isFullSelect) {
             setColumnFilterValues(col, []);
         } else if (checked.length === 0) {
             setColumnFilterValues(col, ['__NONE__']);
@@ -3568,9 +3649,15 @@ foreach ($colDefs as $col):
                 if (e.target.classList.contains('ledger-f-year-cb') || e.target.classList.contains('ledger-f-month-cb')) {
                     const det = e.target.closest('details');
                     if (det) {
-                        det.querySelectorAll('.ledger-f-day-cb').forEach(cb => { cb.checked = e.target.checked; });
+                        det.querySelectorAll('.ledger-f-day-cb').forEach(cb => {
+                            const item = cb.closest('.ledger-f-item');
+                            if (item && item.style.display === 'none') return;
+                            cb.checked = e.target.checked;
+                        });
                         det.querySelectorAll('.ledger-f-month-cb, .ledger-f-year-cb').forEach(cb => {
                             if (cb !== e.target && det.contains(cb)) {
+                                const parentDet = cb.closest('details');
+                                if (parentDet && parentDet.style.display === 'none') return;
                                 cb.checked = e.target.checked;
                                 cb.indeterminate = false;
                             }
@@ -3866,6 +3953,9 @@ foreach ($colDefs as $col):
             <td><span class="line-cat-label line-natural-label" title="">—</span></td>
             <td><span class="line-cat-label line-functional-label" title="">—</span></td>
             <td>
+                <input type="text" class="form-control form-control-sm line-note" maxlength="255" placeholder="" autocomplete="off"${ro}>
+            </td>
+            <td>
                 <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
             </td>
             <td>
@@ -3894,6 +3984,15 @@ foreach ($colDefs as $col):
                     debIn.value = formatted;
                     row.dataset.lineType = 'debit';
                 }
+            }
+            const noteIn = row.querySelector('.line-note');
+            if (noteIn) {
+                const raw = (prefill.note != null && String(prefill.note) !== '')
+                    ? prefill.note
+                    : (prefill.description || '');
+                const note = String(raw).trim().slice(0, 255);
+                noteIn.value = note;
+                if (note) noteIn.title = note;
             }
         }
         syncLineCategoryLabels(row);
@@ -5642,6 +5741,10 @@ foreach ($colDefs as $col):
             }
             deleteTxBtn.disabled = !pendingOne;
         }
+        // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+        if (bulkApplyBtn) {
+            bulkApplyBtn.disabled = !canBulkApply || count === 0;
+        }
         syncDeleteFromEditBtn();
     }
 
@@ -5815,6 +5918,200 @@ foreach ($colDefs as $col):
             setDeleteConfirmEnabled();
         });
     }
+
+    // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
+    const bulkApplyModalEl = document.getElementById('bulkApplyModal');
+    const bulkApplyAccountEl = document.getElementById('bulkApplyAccount');
+    const bulkApplyFundEl = document.getElementById('bulkApplyFund');
+    const bulkApplyDescriptionEl = document.getElementById('bulkApplyDescription');
+    const bulkApplyLineNoteEl = document.getElementById('bulkApplyLineNote');
+    const bulkApplyNoteAllEl = document.getElementById('bulkApplyNoteAll');
+    const bulkApplyConfirmEl = document.getElementById('bulkApplyConfirm');
+    const bulkApplySubmitEl = document.getElementById('bulkApplySubmit');
+    const bulkApplyPendingCountEl = document.getElementById('bulkApplyPendingCount');
+    const bulkApplySkipAlertEl = document.getElementById('bulkApplySkipAlert');
+    const bulkApplySkipTextEl = document.getElementById('bulkApplySkipText');
+
+    function bulkApplySelectionStats() {
+        const checked = txTableBody ? txTableBody.querySelectorAll('.tx-cb:checked') : [];
+        let pending = 0;
+        let skipped = 0;
+        const pendingIds = [];
+        checked.forEach(function(cb) {
+            const row = cb.closest('tr');
+            const status = row && row.dataset.status ? String(row.dataset.status) : 'pending';
+            const id = parseInt(cb.value, 10) || 0;
+            if (!id) return;
+            if (status === 'pending') {
+                pending++;
+                pendingIds.push(id);
+            } else {
+                skipped++;
+            }
+        });
+        return { pending: pending, skipped: skipped, pendingIds: pendingIds };
+    }
+
+    function bulkApplyHasValues() {
+        const acct = bulkApplyAccountEl ? String(bulkApplyAccountEl.value || '').trim() : '';
+        const fund = bulkApplyFundEl ? String(bulkApplyFundEl.value || '').trim() : '';
+        const desc = bulkApplyDescriptionEl ? String(bulkApplyDescriptionEl.value || '').trim() : '';
+        const note = bulkApplyLineNoteEl ? String(bulkApplyLineNoteEl.value || '').trim() : '';
+        return !!(acct || fund || desc || note);
+    }
+
+    function syncBulkApplySubmit() {
+        if (!bulkApplySubmitEl) return;
+        const stats = bulkApplySelectionStats();
+        const confirmed = !!(bulkApplyConfirmEl && bulkApplyConfirmEl.checked);
+        bulkApplySubmitEl.disabled = !(canBulkApply && stats.pending > 0 && confirmed && bulkApplyHasValues());
+    }
+
+    function resetBulkApplyForm() {
+        if (bulkApplyAccountEl) bulkApplyAccountEl.value = '';
+        if (bulkApplyFundEl) bulkApplyFundEl.value = '';
+        if (bulkApplyDescriptionEl) bulkApplyDescriptionEl.value = '';
+        if (bulkApplyLineNoteEl) bulkApplyLineNoteEl.value = '';
+        if (bulkApplyNoteAllEl) bulkApplyNoteAllEl.checked = false;
+        if (bulkApplyConfirmEl) bulkApplyConfirmEl.checked = false;
+        syncBulkApplySubmit();
+    }
+
+    function openBulkApplyModal() {
+        if (!canBulkApply || !bulkApplyModalEl) return;
+        const stats = bulkApplySelectionStats();
+        if (stats.pending < 1 && stats.skipped < 1) {
+            if (typeof showToast === 'function') {
+                showToast('Select one or more transactions first.', 'warning');
+            }
+            return;
+        }
+        if (bulkApplyPendingCountEl) {
+            bulkApplyPendingCountEl.textContent = String(stats.pending);
+        }
+        if (bulkApplySkipAlertEl && bulkApplySkipTextEl) {
+            if (stats.skipped > 0) {
+                bulkApplySkipTextEl.textContent = stats.skipped + ' cleared or reconciled transaction'
+                    + (stats.skipped === 1 ? '' : 's')
+                    + ' in the selection will be skipped.';
+                bulkApplySkipAlertEl.hidden = false;
+            } else {
+                bulkApplySkipTextEl.textContent = '';
+                bulkApplySkipAlertEl.hidden = true;
+            }
+        }
+        if (stats.pending < 1) {
+            if (typeof showToast === 'function') {
+                showToast('None of the selected transactions are pending. Cleared and reconciled rows cannot be bulk-edited.', 'warning');
+            }
+        }
+        resetBulkApplyForm();
+        if (bulkApplyPendingCountEl) {
+            bulkApplyPendingCountEl.textContent = String(stats.pending);
+        }
+        if (typeof window.showFragmentModal === 'function') {
+            window.showFragmentModal(bulkApplyModalEl);
+        } else if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            bootstrap.Modal.getOrCreateInstance(bulkApplyModalEl).show();
+        }
+        syncBulkApplySubmit();
+    }
+
+    function closeBulkApplyModal() {
+        if (!bulkApplyModalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
+        const inst = bootstrap.Modal.getInstance(bulkApplyModalEl);
+        if (inst) inst.hide();
+    }
+
+    function submitBulkApply() {
+        if (!canBulkApply || !bulkApplySubmitEl || bulkApplySubmitEl.disabled) return;
+        const stats = bulkApplySelectionStats();
+        if (stats.pending < 1) {
+            if (typeof showToast === 'function') {
+                showToast('No pending transactions in the selection.', 'warning');
+            }
+            return;
+        }
+        if (!bulkApplyHasValues()) {
+            if (typeof showToast === 'function') {
+                showToast('Set at least one value to apply.', 'warning');
+            }
+            return;
+        }
+        if (!bulkApplyConfirmEl || !bulkApplyConfirmEl.checked) {
+            if (typeof showToast === 'function') {
+                showToast('Confirm the number of pending transactions to update.', 'warning');
+            }
+            return;
+        }
+        bulkApplySubmitEl.disabled = true;
+        const fd = new FormData();
+        fd.append('action', 'bulk_apply');
+        fd.append('confirm', '1');
+        fd.append('tx_ids', JSON.stringify(stats.pendingIds));
+        if (bulkApplyAccountEl && bulkApplyAccountEl.value) {
+            fd.append('counterpart_account_id', bulkApplyAccountEl.value);
+        }
+        if (bulkApplyFundEl && bulkApplyFundEl.value) {
+            fd.append('fund_id', bulkApplyFundEl.value);
+        }
+        if (bulkApplyDescriptionEl && String(bulkApplyDescriptionEl.value || '').trim()) {
+            fd.append('description', String(bulkApplyDescriptionEl.value).trim());
+        }
+        if (bulkApplyLineNoteEl && String(bulkApplyLineNoteEl.value || '').trim()) {
+            fd.append('line_note', String(bulkApplyLineNoteEl.value).trim());
+            fd.append('line_note_scope', (bulkApplyNoteAllEl && bulkApplyNoteAllEl.checked) ? 'all' : 'counterpart');
+        }
+        fetch('pages/ledger.php', {
+            method: 'POST',
+            body: fd,
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        })
+            .then(parseJsonResponse)
+            .then(function(res) {
+                if (window.__temperAuthRedirecting) return;
+                if (!res || res.success === false) {
+                    throw new Error((res && res.error) || 'Bulk apply failed.');
+                }
+                closeBulkApplyModal();
+                const msg = res.message || ((res.updated || 0) + ' transaction(s) updated.');
+                const warn = (res.warnings && res.warnings.length) || (res.skipped_not_pending > 0) || (res.failed > 0);
+                if (typeof showToast === 'function') {
+                    showToast(msg, warn && !(res.updated > 0) ? 'warning' : 'success', 5000);
+                }
+                if (typeof reloadTransactionList === 'function') {
+                    reloadTransactionList();
+                }
+            })
+            .catch(function(err) {
+                if (typeof showToast === 'function') {
+                    showToast(err && err.message ? err.message : 'Bulk apply failed.', 'danger');
+                }
+            })
+            .finally(function() {
+                syncBulkApplySubmit();
+            });
+    }
+
+    if (bulkApplyBtn) {
+        bulkApplyBtn.addEventListener('click', function() {
+            if (!canBulkApply || bulkApplyBtn.disabled) return;
+            openBulkApplyModal();
+        });
+    }
+    if (bulkApplySubmitEl) {
+        bulkApplySubmitEl.addEventListener('click', function() {
+            submitBulkApply();
+        });
+    }
+    ['change', 'input'].forEach(function(evt) {
+        [bulkApplyAccountEl, bulkApplyFundEl, bulkApplyDescriptionEl, bulkApplyLineNoteEl, bulkApplyNoteAllEl, bulkApplyConfirmEl].forEach(function(el) {
+            if (el) el.addEventListener(evt, syncBulkApplySubmit);
+        });
+    });
+    // end TEMP_BULK_TXN_MANAGER
+
     if (txDeleteConfirmBtn) {
         txDeleteConfirmBtn.addEventListener('click', function() {
             submitPendingDelete();
@@ -5908,7 +6205,7 @@ foreach ($colDefs as $col):
     }
 
     // ── Reference #: shadow default, double-click fill, reuse warn, list modal ──
-    // Ledger manual entry is non-contribution → suggest YY0100+
+    // Suggestion is last-saved Ref # + 1 (placeholder only). kind is for reuse-check advisory.
     const REF_KIND = 'other';
 
     /** Show tip only when Ref # is empty (ghost placeholder is visible). */
@@ -6232,7 +6529,8 @@ foreach ($colDefs as $col):
                     natural_category_id: natId,
                     functional_category_id: funId,
                     amount: amt,
-                    type: lineType
+                    type: lineType,
+                    description: String(row.querySelector('.line-note')?.value || '').trim().slice(0, 255)
                 });
             });
 

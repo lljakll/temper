@@ -29,7 +29,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.939';
+const TEMPER_DEFAULT_APP_VERSION = '0.943';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
@@ -54,7 +54,7 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
  * 0.938 adds users.preferences via updates/20260825_0938_user_preferences.sql.
- * 0.939 is process-only (pending transaction delete); schema stem carried forward.
+ * 0.939–0.943 are process-only; schema stem carried forward.
  */
 const TEMPER_EXPECTED_SCHEMA_VERSION = '20260825_0938_user_preferences';
 
