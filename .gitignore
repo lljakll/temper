@@ -1,3 +1,24 @@
 *.tar.gz
 *.tar.bz2
 *.tar.xz
+
+# Local / server user data — never commit
+storage/backups/
+storage/backups/**
+*.zip
+
+# Transaction attachments and other uploaded files
+storage/documents/
+storage/uploads/
+storage/attachments/
+
+# Optional: ignore all of storage except a keep file and committed defaults
+storage/*
+!storage/.gitkeep
+!storage/config/
+!storage/config/.gitkeep
+
+# SQL dumps sitting anywhere
+*.sql
+!updates/*.sql
+!**/patches/*.sql
