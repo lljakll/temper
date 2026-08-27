@@ -279,6 +279,28 @@ Modified sections in pages/ledger.php
 Leave updates/20260826_0942_ledger_temp_bulk_apply.sql in place (process-only app_version history row; do not roll it back).
 
 
+#21 - 2026-08-26 - Ledger / Add-Edit Transaction - Enhancement - Low
+Expected:
+Ref # suggestion tip is last saved Ref # plus one (e.g. 260801 → tip 260802). Same tip on Add and on Edit when the field is blank. Remains a tip (double-click to accept; typing dismisses). Not an auto-filled value.
+Actual:
+Previous suggestion logic did not follow last-entered sequence (or was less useful for bulk transcription).
+Notes / Context / Interpretation:
+Temporary aid for current-year numbers. Long-term: strict 0…n sequence or GUID fragments post-1.0. Implemented and reported working 2026-08-27.
+
+Completion Status: 2026-08-27
+
+
+#22 - 2026-08-27 - Attachments / Backup - Enhancement - Low
+Expected:
+Attachments are stored at a reasonable size (optimize on upload for images/PDFs; existing files recompressed after the current load). Backups stay manageable as years of documents accumulate. Longer term: live/offsite sync of changed files plus separate periodic full backups (weekly/monthly) offsite.
+Actual:
+Uploads store original file size (typical deposit PDFs ~1–2 MB). Full zip backups include all attachments and will grow toward 1 GB+ over multi-year data. No in-app optimize-on-upload. No live offsite file sync yet.
+Notes / Context / Interpretation:
+No action required now — current volume is manageable. After current-year data and attachments are loaded, run an external recompress script on existing files, then implement Temper optimize-on-upload (best place once mobile photos exist). Also consider backup-zip compression and/or rsync-style incremental sync of storage + DB dumps to an offsite host, with periodic full backups stored separately. Optimize-on-upload still worth doing for consistency even if live sync reduces backup-size pressure. Park for post-load / 0.950+; not a 1.0 blocker.
+
+Completion Status:
+
+
 #<##> - yyyy-mm-dd - <page/action> - <category> - <severity>
 Expected:
 Actual:
