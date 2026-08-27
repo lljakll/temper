@@ -56,7 +56,7 @@
 -- ---------------------------------------------------------------------------
 -- Record application in version history (required)
 -- ---------------------------------------------------------------------------
--- setup_db.php is frozen at v0.804. Post-0.804 releases MUST record here
+-- setup_db.php is frozen at v0.944. Post-0.944 releases MUST record here
 -- (never by extending TEMPER_VERSION_HISTORY / setup seed).
 --
 -- schema_version = this patch's filename stem when DDL is included;

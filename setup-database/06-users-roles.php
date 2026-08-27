@@ -30,6 +30,7 @@ function setupSchemaUsersRoles(): array
     must_change_password TINYINT(1) NOT NULL DEFAULT 0,
     force_password_set_at DATETIME NULL,
     custom_permissions JSON NULL,
+    preferences JSON NULL,
     last_login DATETIME NULL,
     archived_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

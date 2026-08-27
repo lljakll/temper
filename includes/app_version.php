@@ -7,12 +7,14 @@
  * This module only reads/writes version history rows; it does not create tables,
  * seed history on page load, or apply patches.
  *
- * ## Setup baseline (0.900 beta) vs post-baseline patches
+ * ## Setup baseline (0.944) vs post-baseline patches
  *
- * - `setup_db.php` / `TEMPER_VERSION_HISTORY` are **frozen at app v0.900** (beta start).
- *   Fresh destructive setup always leaves the DB at 0.900 with full history through 0.900.
- * - Releases **after 0.900** are applied **only** via `updates/*.sql` patches.
- *   Do not append post-0.900 rows to TEMPER_VERSION_HISTORY or re-seed them in setup.
+ * - `setup_db.php` / `TEMPER_VERSION_HISTORY` are **frozen at app v0.944**.
+ *   Fresh destructive setup always leaves the DB at 0.944 with full history through 0.944
+ *   and current schema (accounts.account_type, users.preferences, and earlier shape).
+ * - Releases **after 0.944** are applied **only** via `updates/*.sql` patches.
+ *   Do not append post-0.944 rows to TEMPER_VERSION_HISTORY or re-seed them in setup.
+ * - Pre-0.944 incremental patches live in `updates/archive/` (historical upgrades only).
  *
  * Schema version identity = patch filename stem (no .sql) when a release has DDL;
  * process-only releases carry forward the previous schema version stem.
@@ -29,20 +31,20 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.943';
+const TEMPER_DEFAULT_APP_VERSION = '0.944';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.
- * Beta baseline — raise only when consolidating a new setup milestone.
+ * Raise only when consolidating a new setup milestone.
  */
-const TEMPER_SETUP_BASELINE_APP_VERSION = '0.900';
+const TEMPER_SETUP_BASELINE_APP_VERSION = '0.944';
 
 /**
- * Schema version (patch stem) of the frozen setup_db.php baseline (0.900).
+ * Schema version (patch stem) of the setup_db.php baseline (0.944).
  * Matches the last TEMPER_VERSION_HISTORY entry's schema_version.
- * Embodies schema through 0.811 (transaction_details.description).
+ * Embodies schema through 0.938 (accounts.account_type + users.preferences).
  */
-const TEMPER_SETUP_BASELINE_SCHEMA_VERSION = '20260726_0811_tx_memo_to_description';
+const TEMPER_SETUP_BASELINE_SCHEMA_VERSION = '20260827_0944_setup_baseline_consolidation';
 
 /**
  * Schema id for the initial setup_db.php shape (no updates/*.sql patch yet).
@@ -53,15 +55,14 @@ const TEMPER_SCHEMA_BASELINE = 'setup_baseline';
 /**
  * Expected database schema version for this codebase (patch filename stem).
  * Equals the newest required schema id; carry forward when a release has no DDL.
- * 0.938 adds users.preferences via updates/20260825_0938_user_preferences.sql.
- * 0.939–0.943 are process-only; schema stem carried forward.
+ * 0.944 setup baseline includes accounts.account_type and users.preferences.
  */
-const TEMPER_EXPECTED_SCHEMA_VERSION = '20260825_0938_user_preferences';
+const TEMPER_EXPECTED_SCHEMA_VERSION = '20260827_0944_setup_baseline_consolidation';
 
 /**
- * Frozen setup seed: full version history through TEMPER_SETUP_BASELINE_APP_VERSION (0.900).
+ * Frozen setup seed: full version history through TEMPER_SETUP_BASELINE_APP_VERSION (0.944).
  * Used by seedAppVersionHistory() from setup_db.php / 08-app-version.php only.
- * Never applied on page load. Never append post-0.900 here — those rows come from updates/*.sql.
+ * Never applied on page load. Never append post-0.944 here — those rows come from updates/*.sql.
  *
  * schema_version is always set (patch stem, or TEMPER_SCHEMA_BASELINE).
  * patch_file is the .sql applied with that app version, or null if none
@@ -141,6 +142,270 @@ const TEMPER_VERSION_HISTORY = [
         'schema_version' => '20260726_0811_tx_memo_to_description',
         'patch_file' => '20260726_0900_beta_baseline.sql',
         'notes' => 'Beta start: setup baseline consolidated through 0.811; no demo accounts/budgets/transactions',
+    ],
+    [
+        'version' => '0.901',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260801_0901_account_type_classification.sql',
+        'notes' => 'Required accounts.account_type (asset/liability/equity/income/expense); CoA Normal Balance UX',
+    ],
+    [
+        'version' => '0.902',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260801_0902_modal_form_autofocus.sql',
+        'notes' => 'Modal form autofocus: first data field on open; resist SPA/AJAX focus steal',
+    ],
+    [
+        'version' => '0.903',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260801_0903_login_timeout_disabled_authoritative.sql',
+        'notes' => 'Login Timeout disabled is authoritative: no idle modal/redirect; session GC aligned',
+    ],
+    [
+        'version' => '0.904',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260801_0904_lookup_archive_toggle_fix.sql',
+        'notes' => 'Lookup Archive/Unarchive toggle: fix checkbox POST cast; Funds handler; UI refresh',
+    ],
+    [
+        'version' => '0.905',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260801_0905_lookup_add_edit_modals.sql',
+        'notes' => 'Lookup Add/Edit forms: inline sections → modal dialogs with dirty-state protection',
+    ],
+    [
+        'version' => '0.906',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260801_0906_sidebar_fixed_float.sql',
+        'notes' => 'Desktop sidebar: position fixed/floating while main content scrolls',
+    ],
+    [
+        'version' => '0.907',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260802_0907_login_timeout_from_developer_mode.sql',
+        'notes' => 'Login timeout fixed by Developer Mode (5m/20m); Status panel regroup; no disable',
+    ],
+    [
+        'version' => '0.908',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260803_0908_lookup_table_filter_sort.sql',
+        'notes' => 'Lookup tables: live filter + sortable column headers (Funds/Accounts/Natural/Functional)',
+    ],
+    [
+        'version' => '0.909',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260803_0909_lookup_toolbar_hotkeys.sql',
+        'notes' => 'Lookup toolbar: compact title row, table font size, leader hotkeys (; commands)',
+    ],
+    [
+        'version' => '0.910',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260807_0910_login_timeout_warning_and_devmode.sql',
+        'notes' => 'Login timeout: 10m when Dev Mode off; disabled when on; warning modal stacking fix',
+    ],
+    [
+        'version' => '0.911',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260809_0911_check_pending_schema_updates.sql',
+        'notes' => 'setup_db.php --check: clear warning when updates/*.sql patches are pending',
+    ],
+    [
+        'version' => '0.912',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260809_0912_ledger_modal_infinite_scroll.sql',
+        'notes' => 'Ledger redesign: modal Add/Edit/View, infinite scroll, Excel-style filters',
+    ],
+    [
+        'version' => '0.913',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260809_0913_ledger_excel_multiselect_filters.sql',
+        'notes' => 'Ledger Excel-style multi-select auto-filters + Clear all filters',
+    ],
+    [
+        'version' => '0.914',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260811_0914_ledger_filter_dropdown_layout.sql',
+        'notes' => 'Ledger filter dropdown layout: checkboxes, no-wrap, resize, scroll; account/fund name-only labels',
+    ],
+    [
+        'version' => '0.915',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260812_0915_toast_zindex_and_doc_upload.sql',
+        'notes' => 'Toasts above modals site-wide; ledger doc upload selected-file detection',
+    ],
+    [
+        'version' => '0.916',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260814_0916_attachment_upload_size.sql',
+        'notes' => 'Attachment upload size follows PHP ceiling (20 MB); removed hard-coded 2 MB cap',
+    ],
+    [
+        'version' => '0.917',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260814_0917_ledger_attachment_portfolio.sql',
+        'notes' => 'Ledger list paperclip indicator and portfolio attachment viewer',
+    ],
+    [
+        'version' => '0.918',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260814_0918_ledger_portfolio_viewer_refine.sql',
+        'notes' => 'Portfolio viewer: viewport modal, static panes, page panel, fit-height zoom',
+    ],
+    [
+        'version' => '0.919',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260814_0919_ledger_portfolio_narrow_wheel.sql',
+        'notes' => 'Portfolio viewer: narrower modal, larger close, wheel page-turn',
+    ],
+    [
+        'version' => '0.920',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260814_0920_import_sequence_ref_warning.sql',
+        'notes' => 'Import sequence: into Ref #; field warning is only Already Used',
+    ],
+    [
+        'version' => '0.921',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260814_0921_data_backup_exclude_system_tables.sql',
+        'notes' => 'Data-only backups exclude app_version and audit_log; roles remain; restore keeps version history',
+    ],
+    [
+        'version' => '0.922',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260816_0922_ledger_hotkeys_view_edit.sql',
+        'notes' => 'Ledger leader-key hotkeys and View modal Edit action (no DDL)',
+    ],
+    [
+        'version' => '0.923',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260816_0923_ledger_add_attachments_deposit_budget.sql',
+        'notes' => 'Ledger Add attachments, save-upload of selected files, blank budget on deposits',
+    ],
+    [
+        'version' => '0.924',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260818_0924_ledger_modal_hotkeys_attach_save.sql',
+        'notes' => 'Ledger Ctrl/Cmd modal hotkeys, immediate paperclip after save-upload, single-save selected file',
+    ],
+    [
+        'version' => '0.925',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260818_0925_backup_list_existing_on_load.sql',
+        'notes' => 'Backup page lists all existing files in storage/backups on load (no DDL)',
+    ],
+    [
+        'version' => '0.926',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260819_0926_import_fuzzy_account_match.sql',
+        'notes' => 'Import from Text: fuzzy account matching and resolve dialog (no DDL)',
+    ],
+    [
+        'version' => '0.927',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260819_0927_backup_include_storage_files.sql',
+        'notes' => 'Backup packages include DB dump plus attachments and system config (no DDL)',
+    ],
+    [
+        'version' => '0.928',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260819_0928_beancount_mass_import.sql',
+        'notes' => 'Beancount Mass Import under Ledger; grant mass-import permission on named roles (no DDL)',
+    ],
+    [
+        'version' => '0.929',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260820_0929_mass_import_button_handlers.sql',
+        'notes' => 'Mass Import Parse/Clear buttons: SPA init-script bootstrap (no DDL)',
+    ],
+    [
+        'version' => '0.930',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260820_0930_mass_import_duplicate_refine.sql',
+        'notes' => 'Mass Import: same-batch allow checkbox, amount-weighted dupes, live re-check (no DDL)',
+    ],
+    [
+        'version' => '0.931',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260820_0931_active_role_switching.sql',
+        'notes' => 'Active role switching (single session role) and role-stamped audit usernames (no DDL)',
+    ],
+    [
+        'version' => '0.932',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260820_0932_sidebar_switch_role_popout.sql',
+        'notes' => 'Sidebar Switch Role button + drop-up of assigned roles (no DDL)',
+    ],
+    [
+        'version' => '0.933',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260824_0933_attachment_file_sync.sql',
+        'notes' => 'Sync attachment files with deletes, Ref # changes, and full transaction purge; audit while editable (no DDL)',
+    ],
+    [
+        'version' => '0.934',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260825_0934_bank_export_import.sql',
+        'notes' => 'Temporary FMB Checking Bank Export CSV importer under Ledger (no DDL)',
+    ],
+    [
+        'version' => '0.935',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260825_0935_bank_export_preview_json.sql',
+        'notes' => 'Fix Bank Export Preview JSON broken by PHP 8.4 fgetcsv deprecation notices (no DDL)',
+    ],
+    [
+        'version' => '0.936',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260825_0936_ledger_form_layout_dblclick.sql',
+        'notes' => 'Ledger form field widths, account-type grouping, currency Debit/Credit, double-click View/Edit toggle (no DDL)',
+    ],
+    [
+        'version' => '0.937',
+        'schema_version' => '20260801_0901_account_type_classification',
+        'patch_file' => '20260825_0937_fund_tag_asset_ignored.sql',
+        'notes' => 'Fund balances ignore asset-account fund tags; only income/expense/equity lines count (no DDL)',
+    ],
+    [
+        'version' => '0.938',
+        'schema_version' => '20260825_0938_user_preferences',
+        'patch_file' => '20260825_0938_user_preferences.sql',
+        'notes' => 'users.preferences JSON; dashboard Total Cash account picker (dashboard.total_cash.account_ids)',
+    ],
+    [
+        'version' => '0.939',
+        'schema_version' => '20260825_0938_user_preferences',
+        'patch_file' => '20260826_0939_pending_transaction_delete.sql',
+        'notes' => 'Pending-only transaction delete for Admin/Treasurer; required reason; file cleanup; audit_log (no DDL)',
+    ],
+    [
+        'version' => '0.940',
+        'schema_version' => '20260825_0938_user_preferences',
+        'patch_file' => '20260826_0940_transaction_line_notes.sql',
+        'notes' => 'Optional per-line Note on transaction_lines.description; Add/Edit/View + audit (no DDL)',
+    ],
+    [
+        'version' => '0.941',
+        'schema_version' => '20260825_0938_user_preferences',
+        'patch_file' => '20260826_0941_ledger_filter_search_select.sql',
+        'notes' => 'Ledger auto-filter search selects matching values on Apply (Excel-style); no DDL',
+    ],
+    [
+        'version' => '0.942',
+        'schema_version' => '20260825_0938_user_preferences',
+        'patch_file' => '20260826_0942_ledger_temp_bulk_apply.sql',
+        'notes' => 'Temporary Ledger bulk-apply for similar pending txns (Admin/Treasurer); no DDL',
+    ],
+    [
+        'version' => '0.943',
+        'schema_version' => '20260825_0938_user_preferences',
+        'patch_file' => '20260826_0943_ledger_ref_suggest_last_plus_one.sql',
+        'notes' => 'Ledger Ref # tip is last saved Ref # + 1 (placeholder/double-click); skip used in sequence; no DDL',
+    ],
+    [
+        'version' => '0.944',
+        'schema_version' => '20260827_0944_setup_baseline_consolidation',
+        'patch_file' => '20260827_0944_setup_baseline_consolidation.sql',
+        'notes' => 'Setup baseline advanced to 0.944: accounts.account_type + users.preferences in setup_db.php; prior updates archived',
     ],
 ];
 
@@ -274,11 +539,11 @@ function ensureAppVersionTable(mysqli $db): void
  * Read-only — never mutates the database.
  *
  * Status values:
- * - match: highest DB app version equals baseline (fresh setup, no post-baseline patches)
- * - ahead: highest DB app version is above baseline (expected after updates/*.sql)
- * - behind: highest DB app version is below baseline
+ * - match: highest DB app version equals baseline (fresh setup, or live DB after consolidation patch)
+ * - ahead: highest DB app version is above baseline (expected after post-baseline updates/*.sql)
+ * - behind: highest DB app version is below baseline (apply pending updates/*.sql when >= 0.900)
  * - missing: app_version table or rows unavailable
- * - incomplete: baseline seed rows from TEMPER_VERSION_HISTORY are not all present
+ * - incomplete: required 0.801–0.900 seed rows from TEMPER_VERSION_HISTORY are not all present
  *
  * @return array{
  *   ok: bool,
@@ -367,7 +632,14 @@ function assessSetupBaselineVsDatabase(?mysqli $db): array
     $missingSeed = [];
     foreach (TEMPER_VERSION_HISTORY as $entry) {
         $seedV = (string)($entry['version'] ?? '');
-        if ($seedV !== '' && !isset($versionsPresent[$seedV])) {
+        if ($seedV === '' || isset($versionsPresent[$seedV])) {
+            continue;
+        }
+        // Required on every database: the original 0.801–0.900 setup seed.
+        // Post-0.900 rows are seeded on a fresh 0.944 install and recorded by
+        // patches; missing future/consolidation rows are pending updates, not
+        // an incomplete 0.900 seed.
+        if (version_compare($seedV, '0.900') <= 0) {
             $missingSeed[] = $seedV;
         }
     }
@@ -387,6 +659,7 @@ function assessSetupBaselineVsDatabase(?mysqli $db): array
         $result['messages'][] = 'A full (destructive) setup_db.php run is required to establish the '
             . $baselineVersion . ' baseline before applying any newer updates/*.sql patches.';
         $result['messages'][] = 'Back up application data first — full setup drops and recreates tables.';
+        $result['messages'][] = 'Do not run full setup against a database that has live treasurer data.';
         return $result;
     }
 
@@ -394,13 +667,22 @@ function assessSetupBaselineVsDatabase(?mysqli $db): array
 
     if ($cmp < 0) {
         $result['status'] = 'behind';
-        $result['ok'] = false;
-        $result['requires_full_setup'] = true;
+        // Live databases that already passed the 0.900 floor catch up via the
+        // consolidation / later updates/*.sql patch — not destructive setup.
+        $belowOperationalFloor = version_compare($highestVersion, '0.900') < 0;
+        $result['requires_full_setup'] = $belowOperationalFloor;
+        $result['ok'] = !$belowOperationalFloor;
         $result['messages'][] = "Database app version ({$highestVersion}) is behind the setup_db.php baseline ({$baselineVersion}).";
-        $result['messages'][] = 'A full (destructive) setup_db.php run is required to reach the '
-            . $baselineVersion . ' / ' . $baselineSchema
-            . ' baseline before applying any newer updates/*.sql patches.';
-        $result['messages'][] = 'Back up application data first — full setup drops and recreates tables.';
+        if ($belowOperationalFloor) {
+            $result['messages'][] = 'A full (destructive) setup_db.php run is required to reach the '
+                . $baselineVersion . ' / ' . $baselineSchema
+                . ' baseline before applying any newer updates/*.sql patches.';
+            $result['messages'][] = 'Back up application data first — full setup drops and recreates tables.';
+            $result['messages'][] = 'Do not run full setup against a database that has live treasurer data.';
+        } else {
+            $result['messages'][] = 'Apply the pending updates/*.sql patch(es) listed below (non-destructive). '
+                . 'Do not run destructive setup_db.php on a live database.';
+        }
         return $result;
     }
 
@@ -591,12 +873,19 @@ function setupDbPrintBaselineVersionReport(?mysqli $db): bool
     $dbSchema = $assessment['db_schema'] ?? '(none / unknown)';
     $baseVer = $assessment['baseline_version'];
     $baseSchema = $assessment['baseline_schema'];
+    $lag = getDatabaseVersionLagStatus($db);
+    $pending = !empty($lag['behind']);
+    $pendingLabel = $pending ? 'YES — updates are pending' : 'NO — no schema updates pending';
 
+    echo "  Baseline version (setup_db.php) : app {$baseVer}  /  schema {$baseSchema}\n";
+    echo "  Current DB version              : app {$dbVer}  /  schema {$dbSchema}\n";
+    echo "  Updates pending                 : {$pendingLabel}\n";
+    echo "\n";
     echo "  Database (highest app_version row):\n";
     echo "    App version    : {$dbVer}\n";
     echo "    Schema version : {$dbSchema}\n";
     echo "\n";
-    echo "  setup_db.php internal baseline (frozen seed ceiling):\n";
+    echo "  setup_db.php internal baseline (seed ceiling):\n";
     echo "    App version    : {$baseVer}\n";
     echo "    Schema version : {$baseSchema}\n";
     echo "\n";
@@ -622,6 +911,8 @@ function setupDbPrintBaselineVersionReport(?mysqli $db): bool
             echo "  Match detail     : app version matches baseline"
                 . ($schemaEqual ? '; schema matches' : '; schema does NOT match') . "\n";
         }
+    } elseif ($assessment['status'] === 'behind' && empty($assessment['requires_full_setup'])) {
+        echo "  Match detail     : below current baseline — apply pending updates/*.sql (non-destructive)\n";
     } else {
         echo "  Match detail     : do NOT match — remediation required\n";
     }
@@ -636,6 +927,7 @@ function setupDbPrintBaselineVersionReport(?mysqli $db): bool
         echo "\n";
         echo "  ---------------------------------------------------------------------------\n";
         echo "  DO NOT apply newer updates/*.sql patches until the baseline is established.\n";
+        echo "  DO NOT run full setup against a database that has live treasurer data.\n";
         echo "  Recommended steps:\n";
         echo "    1. Back up the database and any needed application data\n";
         echo "    2. Run: php setup_db.php   (destructive — requires confirmations)\n";
@@ -654,9 +946,9 @@ function setupDbPrintBaselineVersionReport(?mysqli $db): bool
 }
 
 /**
- * Insert the frozen setup baseline history (through TEMPER_SETUP_BASELINE_APP_VERSION / 0.900).
+ * Insert the frozen setup baseline history (through TEMPER_SETUP_BASELINE_APP_VERSION / 0.944).
  * For setup_db.php / 08-app-version.php only — never call on page load.
- * Does not seed post-0.900 rows; apply those via updates/*.sql after setup.
+ * Does not seed post-0.944 rows; apply those via updates/*.sql after setup.
  */
 function seedAppVersionHistory(mysqli $db): bool
 {

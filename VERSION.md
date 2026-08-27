@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.944](#v0944)
 - [v0.943](#v0943)
 - [v0.942](#v0942)
 - [v0.941](#v0941)
@@ -83,11 +84,11 @@ There is **no** automatic schema detection or apply UI in the application.
 
 | Layer | Role |
 |-------|------|
-| **`setup_db.php` + `setup-database/*`** | **Frozen at app v0.900 (beta).** Destructive setup always leaves the database at 0.900 with full history through 0.900 and schema shape through 0.811 (`transaction_details.description`). |
-| **`TEMPER_VERSION_HISTORY`** | Seeds **through 0.900** (complete alpha history + beta baseline). Do **not** add post-0.900 rows here. |
-| **`updates/*.sql`** | **Only** path for releases **after 0.900** (DDL and/or `app_version` history rows). Historical pre-0.900 patches remain for operators upgrading old databases. |
+| **`setup_db.php` + `setup-database/*`** | **Frozen at app v0.944.** Destructive setup always leaves the database at 0.944 with full history through 0.944 and current schema (`accounts.account_type`, `users.preferences`, and earlier shape including `transaction_details.description`). |
+| **`TEMPER_VERSION_HISTORY`** | Seeds **through 0.944**. Do **not** add post-0.944 rows here. |
+| **`updates/*.sql`** | **Only** path for releases **after 0.944** (DDL and/or `app_version` history rows). Pre-0.944 patches live in `updates/archive/` for historical recovery only. |
 
-After a fresh setup at the current baseline, no further patches are required until the next post-0.900 release. Operators on older databases apply listed patches (or re-run full setup for a clean beta baseline).
+After a fresh setup at the current baseline, **SCHEMA is current** when `setup_db.php` matches this 0.944 milestone — no further patches are required until the next post-0.944 release. Operators on existing live databases apply the 0.944 consolidation patch (non-destructive), then any later listed patches. **Do not** run destructive setup against a database that has live treasurer data.
 
 ### Schema version = patch filename stem
 
@@ -99,6 +100,7 @@ The **schema version** is the patch file’s basename **without** `.sql` when th
 | `updates/20260725_02_schema_version_as_filename.sql` | `20260725_02_schema_version_as_filename` |
 | `updates/20260725_03_formalize_audit_log.sql` | `20260725_03_formalize_audit_log` |
 | `updates/20260726_0811_tx_memo_to_description.sql` | `20260726_0811_tx_memo_to_description` |
+| `updates/20260827_0944_setup_baseline_consolidation.sql` | `20260827_0944_setup_baseline_consolidation` |
 | *(schema from early setup only)* | `setup_baseline` |
 
 Every app version history row **must** store a `schema_version`.  
@@ -142,13 +144,45 @@ Aim for **one schema patch per app version**. Details and the SQL header templat
 
 ### Consolidation (developers)
 
-After every **5–10** schema patches (or at a natural milestone such as beta), fold post-baseline DDL into `setup-database/*`, raise `TEMPER_SETUP_BASELINE_APP_VERSION`, seed full history through the new baseline, keep older patch files for historical upgrades, and document under the consolidating release.
+After every **5–10** schema patches (or at a natural milestone such as beta), fold post-baseline DDL into `setup-database/*`, raise `TEMPER_SETUP_BASELINE_APP_VERSION`, seed full history through the new baseline, move older patch files to `updates/archive/`, and document under the consolidating release.
 
 ### Fresh installs
 
-`php setup_db.php` builds the **0.900 beta baseline** schema from `setup-database/*.php` (including `transaction_details.description`) and seeds `app_version` history **through 0.900** (complete alpha chain included).  
+`php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
-Do **not** replay pre-0.900 patches after a current setup; they are already embodied in the setup scripts. Releases after 0.900 require `updates/*.sql` patches listed under those versions.
+Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.944
+
+**Setup baseline consolidation — current live schema in `setup_db.php`** — 2026-08-27
+
+> ### **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20260827_0944_setup_baseline_consolidation.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation`  
+> **Min app version:** 0.944
+
+- **`setup_db.php` advanced to 0.944.** A clean run now creates the **current** schema (the same shape as a 0.900 install after all patches through 0.938):
+  - `accounts.account_type` `ENUM('asset','liability','equity','income','expense') NOT NULL` + `idx_accounts_account_type` (from 0.901)
+  - `users.preferences` nullable JSON (from 0.938)
+  - All earlier 0.900 shape (`transaction_details.description`, users/roles, audit_log, etc.)
+- **Repair:** a fresh `setup_db.php` run on 0.938+ code was broken — `06-users-roles.php` calls `ensureUsersRolesSchema()`, which requires `users.preferences`, but the 0.900 CREATE TABLE did not include that column. `accounts.account_type` was likewise missing from setup while runtime checks and the CoA UI require it.
+- **Seeds unchanged:** roles (including `page.ledger.mass_import` on Treasurer / Finance Manager / Archivist), natural/functional categories, structural funds, default users. No demo accounts, budgets, or transactions.
+- **Patch chain:** pre-0.944 incremental files moved to `updates/archive/`. They are **not** the required install path.
+- **`php setup_db.php --check`** reports setup baseline version, current DB version, and whether updates are pending (same class of milestone as 0.911 messaging).
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` / `TEMPER_SETUP_BASELINE_APP_VERSION` = **0.944**; `TEMPER_EXPECTED_SCHEMA_VERSION` = `20260827_0944_setup_baseline_consolidation`.
+- **SCHEMA is current** when `setup_db.php` matches this milestone.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.943 (live DB already at `users.preferences`) | `updates/20260827_0944_setup_baseline_consolidation.sql` (records 0.944; idempotent DDL is a no-op) |
+| v0.900–0.942 | Same consolidation patch (adds any missing columns; do **not** replay `updates/archive/`) |
+| Fresh setup (0.944) | No further patches required for 0.944 |
+| Below 0.900 | Archived patches in order, **or** a new empty install via `php setup_db.php`. Do **not** run destructive setup against live treasurer data. |
 
 ---
 

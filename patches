@@ -1,4 +1,1 @@
-updates/20260824_0933_attachment_file_sync.sql
-updates/20260825_0934_bank_export_import.sql
-updates/20260825_0935_bank_export_preview_json.sql
-updates/20260825_0936_ledger_form_layout_dblclick.sql
+updates/20260827_0944_setup_baseline_consolidation.sql

@@ -3,7 +3,7 @@
  * Per-user preferences (users.preferences JSON).
  *
  * Storage and helpers only — there is no general preferences UI.
- * Schema: updates/20260825_0938_user_preferences.sql (nullable JSON column).
+ * Schema: users.preferences (nullable JSON; in setup_db.php since 0.944).
  *
  * ## Key naming convention
  *

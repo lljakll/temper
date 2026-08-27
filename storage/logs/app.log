@@ -2160,3 +2160,11 @@ Stack trace:
 [27-Aug-2026 11:01:21 UTC] [AUDIT] user=jackie.adair (Treasurer) action=ledger.updated details=transaction=88 Date changed from 2026-05-18 to 2026-05-17. {"debits":779,"credits":779,"changes":["Date changed from 2026-05-18 to 2026-05-17."]} ip=::1
 [27-Aug-2026 11:01:49 UTC] [AUDIT] user=jackie.adair (Treasurer) action=ledger.updated details=transaction=117 Description updated. {"debits":2586,"credits":2586,"changes":["Description updated."]} ip=::1
 [27-Aug-2026 11:01:57 UTC] [AUDIT] user=jackie.adair (Treasurer) action=ledger.updated details=transaction=127 Description updated. {"debits":1368,"credits":1368,"changes":["Description updated."]} ip=::1
+[27-Aug-2026 17:07:33 UTC] [temper-schema] Database schema is out of date [users/roles]: column users.preferences is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[27-Aug-2026 17:07:33 UTC] PHP Fatal error:  Uncaught RuntimeException: Database schema is out of date [users/roles]: column users.preferences is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check in /var/www/temper/config.php:112
+Stack trace:
+#0 /var/www/temper/includes/permissions.php(215): temperSchemaOutOfDate()
+#1 /var/www/temper/auth.php(368): ensureUsersRolesSchema()
+#2 /var/www/temper/login.php(29): login()
+#3 {main}
+  thrown in /var/www/temper/config.php on line 112

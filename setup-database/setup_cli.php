@@ -60,17 +60,20 @@ Options:
 
 Modes:
   (no options)     Run full database setup (destructive — drops and recreates all tables)
-  --check          Structure validation, setup baseline (v0.900) vs app_version, and
+  --check          Structure validation, setup baseline (v0.944) vs app_version, and
                    clear warning when updates/*.sql patches are still pending
   --check -v       Detailed per-table/column/permission validation output
   --dry-run        Preview drop/create steps for full setup without executing them
 
 Notes:
   --check never runs destructive setup or applies updates/*.sql patches.
-  If the database is behind the frozen setup baseline (v0.900), --check warns that
+  It always reports setup baseline version, current DB version, and whether
+  updates are pending.
+  If the database is below the previous 0.900 operational floor, --check warns that
   a full setup_db.php run (after backup) is required before applying newer patches.
-  If the database is above baseline but behind the latest updates/*.sql release,
-  --check prints a prominent SCHEMA UPDATES ARE REQUIRED warning with next steps.
+  If the database is at/above 0.900 but behind the current 0.944 baseline or later
+  updates/*.sql releases, --check prints SCHEMA UPDATES ARE REQUIRED (apply the
+  listed patch; do not run destructive setup on a live database).
   When fully current, --check states that no schema updates are pending.
   Full setup seeds lookup data only (no demo accounts, budgets, or transactions).
 

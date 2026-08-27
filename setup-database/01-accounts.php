@@ -13,6 +13,7 @@ function setupSchemaAccounts(): array
     name VARCHAR(100) NOT NULL,
     description TEXT,
     normal_balance ENUM('debit', 'credit') NOT NULL,
+    account_type ENUM('asset','liability','equity','income','expense') NOT NULL,
     coa_number VARCHAR(50) NULL,
     natural_category_id INT NULL,
     functional_category_id INT NULL,
@@ -48,6 +49,7 @@ if ($db->query($accounts_table) === TRUE) {
 
 // Create indexes
 $db->query("CREATE INDEX idx_accounts_normal_balance ON accounts(normal_balance)");
+$db->query("CREATE INDEX idx_accounts_account_type ON accounts(account_type)");
 $db->query("CREATE INDEX idx_accounts_archived ON accounts(archived)");
 $db->query("CREATE INDEX idx_accounts_natural_category_id ON accounts(natural_category_id)");
 $db->query("CREATE INDEX idx_accounts_functional_category_id ON accounts(functional_category_id)");

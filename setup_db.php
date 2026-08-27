@@ -1,12 +1,12 @@
 <?php
 // Church Treasurer System - Run All Database Setup Scripts
 //
-// FROZEN BASELINE (app v0.900 beta): this script + setup-database/* establish
-// schema (through 0.811 shape) and seed app_version history through 0.900 only.
-// No demo accounts, budgets, or transactions — lookup data (roles, categories,
-// structural funds) and default users only. Releases after 0.900 are applied
-// solely via updates/*.sql patches after setup (see VERSION.md). Do not add
-// post-0.900 history rows to TEMPER_VERSION_HISTORY or these setup scripts.
+// SETUP BASELINE (app v0.944): this script + setup-database/* establish the
+// current schema (accounts.account_type, users.preferences, and all earlier
+// shape) and seed app_version history through 0.944. No demo accounts, budgets,
+// or transactions — lookup data (roles, categories, structural funds) and
+// default users only. Releases after 0.944 are applied solely via updates/*.sql
+// after setup (see VERSION.md). Pre-0.944 patches live in updates/archive/.
 //
 require_once 'config.php';
 require_once 'setup-database/setup_cli.php';
@@ -134,7 +134,7 @@ if ($cli->check) {
     $validator->validateAll($tables);
     $structureExit = $validator->printReport($cli->verbose);
 
-    // Baseline awareness: compare highest app_version to frozen setup ceiling (0.900).
+    // Baseline awareness: compare highest app_version to setup ceiling (0.944).
     // Also prints pending updates/*.sql status (messaging only).
     // Read-only — never runs destructive setup or applies patches.
     $baselineOk = setupDbPrintBaselineVersionReport($db);
