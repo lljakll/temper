@@ -2168,3 +2168,7 @@ Stack trace:
 #2 /var/www/temper/login.php(29): login()
 #3 {main}
   thrown in /var/www/temper/config.php on line 112
+[27-Aug-2026 17:28:48 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[27-Aug-2026 17:28:48 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[27-Aug-2026 17:28:48 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
+[27-Aug-2026 17:28:48 UTC] [temper-schema] Database schema is out of date [app_version]: table app_version is missing. Apply pending updates/*.sql patches (see VERSION.md), or run php setup_db.php for a fresh install. Validate with: php setup_db.php --check
