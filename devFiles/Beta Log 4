@@ -151,7 +151,7 @@ Complete: YES-PENDING REMOVAL
 #12 - 2026-08-25 - Ledger / Add-Edit Transaction - Enhancement - Minor
 Expected:
 Date and other input fields are wide enough that typed values (especially the full year in Date) remain visible. Budget may stay partially visible in the closed control; full text appears when the dropdown is open. Debit and Credit amounts display and re-format as currency when the field loses focus (not bare decimals only).
-Actual:
+Actual:Restoration
 Date field is too narrow (year is clipped while typing). Some other fields leave text partially hidden. Debit/Credit show plain decimals without currency formatting after blur.
 Notes / Context / Interpretation:
 Review all Add/Edit transaction inputs for reasonable visible width. Budget does not need full string visible when closed. Currency formatting should apply on blur for Debit/Credit.
@@ -300,6 +300,16 @@ No action required now — current volume is manageable. After current-year data
 
 Completion Status:
 
+
+#23 - 2026-09-04 - Ledger - Enhancement - Low
+Expected:
+Main ledger transaction list shows Check # and assigned Budget (when present) as columns so those values are visible without opening View/Edit.
+Actual:
+Check # and Budget exist on the transaction but have no columns on the main list. Must open each transaction to see them.
+Notes / Context / Interpretation:
+List-only change. Empty is fine when there is no check or no budget. Do not add these as line-level columns unless the list is already line-expanded; this is the transaction header row. Keep existing filters/sort if those columns are easy to include; otherwise display-only is enough for this pass.
+
+Completion Status:
 
 #<##> - yyyy-mm-dd - <page/action> - <category> - <severity>
 Expected:

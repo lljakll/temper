@@ -31,7 +31,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Current application release (codebase). Advanced via deploy + updates/*.sql;
  * not the setup seed ceiling.
  */
-const TEMPER_DEFAULT_APP_VERSION = '0.944';
+const TEMPER_DEFAULT_APP_VERSION = '0.945';
 
 /**
  * Highest app version seeded by setup_db.php / TEMPER_VERSION_HISTORY.

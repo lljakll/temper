@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.945](#v0945)
 - [v0.944](#v0944)
 - [v0.943](#v0943)
 - [v0.942](#v0942)
@@ -151,6 +152,31 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.945
+
+**Ledger list: Check # and Budget columns** — 2026-09-04
+
+> No schema update required for this release (list display and query only).  
+> **Patch file (history row):** `updates/20260904_0945_ledger_list_check_budget_columns.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.945
+
+- Main Ledger transaction list shows **Check #** and **Budget** from the transaction header (`transaction_details.check_number` and assigned `budget_id` name).
+- Empty check number and unassigned budget display as blank (no placeholder text).
+- Values are included in the list API/query so infinite scroll and existing filters keep working.
+- Excel-style column sort and auto-filter apply to both new columns (Budget filter includes blanks).
+- Add/Edit/View modal behavior is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.945**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.944 | `updates/20260904_0945_ledger_list_check_budget_columns.sql` (records 0.945; no DDL) |
+| Fresh setup (0.944) | Same process-only patch after `php setup_db.php` |
 
 ---
 

@@ -353,11 +353,38 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         $pay_tos = $skip('pay_to') ? [] : $ledgerParseMultiStrings($src, 'pay_to', 'pay_tos');
         $statuses = $skip('status') ? [] : $ledgerParseMultiStrings($src, 'status', 'statuses');
         $amounts = $skip('amount') ? [] : $ledgerParseMultiStrings($src, 'amount', 'amounts');
+        $check_numbers = $skip('check') ? [] : $ledgerParseMultiStrings($src, 'check', 'check_numbers');
 
         $account_ids = $skip('account') ? [] : $ledgerParseMultiIds($src, 'account_id', 'account_ids');
         $fund_ids = $skip('fund') ? [] : $ledgerParseMultiIds($src, 'fund_id', 'fund_ids');
 
-        $check_number = trim((string)($src['check_number'] ?? ''));
+        $budget_raw = $skip('budget') ? [] : $ledgerParseMultiStrings($src, 'budget_id', 'budget_ids');
+        $budget_ids = [];
+        $budget_has_blank = false;
+        $budget_none = false;
+        foreach ($budget_raw as $v) {
+            if ($v === '__NONE__') {
+                $budget_none = true;
+                continue;
+            }
+            if ($v === '' || $v === '__BLANK__') {
+                $budget_has_blank = true;
+                continue;
+            }
+            $i = (int)$v;
+            if ($i > 0) {
+                $budget_ids[] = $i;
+            }
+        }
+        $budget_ids = array_values(array_unique($budget_ids));
+
+        $check_number = '';
+        if (!$skip('check')) {
+            $rawCn = $src['check_number'] ?? '';
+            if (!is_array($rawCn)) {
+                $check_number = trim((string)$rawCn);
+            }
+        }
         $search = trim((string)($src['search'] ?? ''));
         $amount_min = $skip('amount') ? '' : trim((string)($src['amount_min'] ?? ''));
         $amount_max = $skip('amount') ? '' : trim((string)($src['amount_max'] ?? ''));
@@ -420,8 +447,9 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         $ledgerAddStringMultiFilter('td.description', $descriptions, $conditions, $bind_params, $bind_types);
         $ledgerAddStringMultiFilter('td.pay_to', $pay_tos, $conditions, $bind_params, $bind_types);
         $ledgerAddStringMultiFilter('td.status', $statuses, $conditions, $bind_params, $bind_types);
+        $ledgerAddStringMultiFilter('td.check_number', $check_numbers, $conditions, $bind_params, $bind_types);
 
-        if ($check_number !== '') {
+        if ($check_numbers === [] && $check_number !== '') {
             $like = '%' . $check_number . '%';
             $conditions[] = 'td.check_number LIKE ?';
             $bind_params[] = $like;
@@ -459,6 +487,30 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 foreach ($fund_ids as $fid) {
                     $bind_params[] = $fid;
                     $bind_types .= 'i';
+                }
+            }
+        }
+
+        if ($budget_raw !== []) {
+            if ($budget_none && $budget_ids === [] && !$budget_has_blank) {
+                $conditions[] = '1=0';
+            } else {
+                $budgetParts = [];
+                if ($budget_ids !== []) {
+                    $ph = implode(',', array_fill(0, count($budget_ids), '?'));
+                    $budgetParts[] = "td.budget_id IN ($ph)";
+                    foreach ($budget_ids as $bid) {
+                        $bind_params[] = $bid;
+                        $bind_types .= 'i';
+                    }
+                }
+                if ($budget_has_blank) {
+                    $budgetParts[] = '(td.budget_id IS NULL OR td.budget_id = 0)';
+                }
+                if ($budgetParts === []) {
+                    $conditions[] = '1=0';
+                } else {
+                    $conditions[] = '(' . implode(' OR ', $budgetParts) . ')';
                 }
             }
         }
@@ -514,6 +566,16 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         $filter_account_id = count($account_ids) === 1 ? $account_ids[0] : 0;
         $filter_fund_id = count($fund_ids) === 1 ? $fund_ids[0] : 0;
 
+        $budget_ids_out = [];
+        if ($budget_none && $budget_ids === [] && !$budget_has_blank) {
+            $budget_ids_out = ['__NONE__'];
+        } else {
+            $budget_ids_out = array_map('strval', $budget_ids);
+            if ($budget_has_blank) {
+                $budget_ids_out[] = '';
+            }
+        }
+
         $view_normal = '';
         if ($filter_account_id > 0) {
             $vn = $db->prepare('SELECT normal_balance FROM accounts WHERE id = ? LIMIT 1');
@@ -543,6 +605,8 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 'amounts' => $amounts,
                 'account_ids' => $account_ids,
                 'fund_ids' => $fund_ids,
+                'check_numbers' => $check_numbers,
+                'budget_ids' => $budget_ids_out,
                 'check_number' => $check_number,
                 'search' => $search,
                 'amount_min' => $amount_min,
@@ -589,6 +653,8 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             'pay_to' => 'td.pay_to',
             'check' => 'td.check_number',
             'check_number' => 'td.check_number',
+            'budget' => '(SELECT b.name FROM budgets b WHERE b.id = td.budget_id)',
+            'budget_name' => '(SELECT b.name FROM budgets b WHERE b.id = td.budget_id)',
             'description' => 'td.description',
             'status' => 'td.status',
             'lines' => 'num_lines',
@@ -620,7 +686,8 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
 
         $sql = "
             SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.check_number, td.description, td.status, td.cleared_date,
-                   td.validated_by_user_id, td.validated_at,
+                   td.validated_by_user_id, td.validated_at, td.budget_id,
+                   (SELECT b.name FROM budgets b WHERE b.id = td.budget_id) AS budget_name,
                    COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0) AS total_debits,
                    COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0) AS total_credits,
                    COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id), 0) AS total_amount,
@@ -700,7 +767,9 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 'transaction_date' => $r['transaction_date'],
                 'pay_to' => $r['pay_to'] ?? '',
                 'reference_number' => $r['reference_number'] ?? '',
-                'check_number' => $r['check_number'] ?? '',
+                'check_number' => trim((string)($r['check_number'] ?? '')),
+                'budget_id' => !empty($r['budget_id']) ? (int)$r['budget_id'] : null,
+                'budget_name' => trim((string)($r['budget_name'] ?? '')),
                 'description' => $r['description'] ?? '',
                 'status' => $r['status'] ?? 'pending',
                 'cleared_date' => $r['cleared_date'] ?? null,
@@ -753,7 +822,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     if (isset($_GET['filter_values'])) {
         header('Content-Type: application/json; charset=utf-8');
         $column = strtolower(trim((string)($_GET['column'] ?? '')));
-        $allowedCols = ['date', 'reference', 'pay_to', 'description', 'account', 'fund', 'amount', 'status'];
+        $allowedCols = ['date', 'reference', 'pay_to', 'check', 'description', 'account', 'fund', 'budget', 'amount', 'status'];
         if (!in_array($column, $allowedCols, true)) {
             echo json_encode(['success' => false, 'error' => 'Invalid filter column.']);
             exit;
@@ -851,6 +920,41 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 ];
             }
             $stmt->close();
+        } elseif ($column === 'budget') {
+            // Header-level assigned budget (name); include blanks when no budget.
+            $sql = "SELECT COALESCE(CAST(td.budget_id AS CHAR), '') AS value,
+                           COALESCE(NULLIF(TRIM(b.name), ''), '') AS name,
+                           COUNT(*) AS cnt
+                    FROM transaction_details td
+                    LEFT JOIN budgets b ON b.id = td.budget_id
+                    $where_clause
+                    GROUP BY td.budget_id, b.name
+                    ORDER BY (td.budget_id IS NULL OR td.budget_id = 0) ASC, name ASC
+                    LIMIT 2000";
+            $stmt = $db->prepare($sql);
+            if ($bind_types !== '') {
+                $stmt->bind_param($bind_types, ...$bind_params);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $val = (string)$row['value'];
+                $name = trim((string)$row['name']);
+                if ($val === '' || $val === '0') {
+                    $values[] = [
+                        'value' => '',
+                        'label' => '(Blanks)',
+                        'count' => (int)$row['cnt'],
+                    ];
+                } else {
+                    $values[] = [
+                        'value' => $val,
+                        'label' => $name !== '' ? $name : '(Unnamed)',
+                        'count' => (int)$row['cnt'],
+                    ];
+                }
+            }
+            $stmt->close();
         } elseif ($column === 'fund') {
             // Display fund name only (no fund code) in the filter list.
             $sql = "SELECT f.id AS value, f.name AS label, COUNT(DISTINCT td.id) AS cnt
@@ -922,6 +1026,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 'pay_to' => 'td.pay_to',
                 'description' => 'td.description',
                 'reference' => 'td.reference_number',
+                'check' => 'td.check_number',
                 'status' => 'td.status',
             ];
             $expr = $colMap[$column];
@@ -1865,7 +1970,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
 
     $hasActiveFilters = false;
     foreach ($active_filters as $fk => $fv) {
-        if (in_array($fk, ['dates', 'references', 'descriptions', 'pay_tos', 'statuses', 'amounts', 'account_ids', 'fund_ids'], true)) {
+        if (in_array($fk, ['dates', 'references', 'descriptions', 'pay_tos', 'statuses', 'amounts', 'account_ids', 'fund_ids', 'check_numbers', 'budget_ids'], true)) {
             if (is_array($fv) && count($fv) > 0) {
                 $hasActiveFilters = true;
                 break;
@@ -1968,7 +2073,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             </div>
             <div class="card-body p-0 d-flex flex-column" style="flex:1 1 auto; min-height:0;">
                 <div class="table-responsive ledger-table-scroll" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
-                    <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 1020px;">
+                    <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 1240px;">
                         <thead class="table-dark ledger-sticky-head">
                             <tr class="ledger-col-titles">
                                 <th style="width:28px" class="ledger-th-check">
@@ -1979,9 +2084,11 @@ $colDefs = [
     ['key' => 'date', 'label' => 'Date', 'filter' => 'multi', 'class' => 'text-nowrap'],
     ['key' => 'reference', 'label' => 'Ref #', 'filter' => 'multi', 'class' => 'text-nowrap'],
     ['key' => 'pay_to', 'label' => 'Pay To', 'filter' => 'multi', 'class' => ''],
+    ['key' => 'check', 'label' => 'Check #', 'filter' => 'multi', 'class' => 'text-nowrap'],
     ['key' => 'description', 'label' => 'Description', 'filter' => 'multi', 'class' => ''],
     ['key' => 'account', 'label' => 'Account', 'filter' => 'multi', 'class' => ''],
     ['key' => 'fund', 'label' => 'Fund', 'filter' => 'multi', 'class' => ''],
+    ['key' => 'budget', 'label' => 'Budget', 'filter' => 'multi', 'class' => ''],
     ['key' => 'amount', 'label' => 'Amount', 'filter' => 'multi', 'class' => 'text-end text-nowrap', 'title' => 'Debit / Credit amounts'],
     ['key' => 'status', 'label' => 'Status', 'filter' => 'multi', 'class' => ''],
 ];
@@ -1989,15 +2096,21 @@ $ledgerFilterKeyMap = [
     'date' => 'dates',
     'reference' => 'references',
     'pay_to' => 'pay_tos',
+    'check' => 'check_numbers',
     'description' => 'descriptions',
     'account' => 'account_ids',
     'fund' => 'fund_ids',
+    'budget' => 'budget_ids',
     'amount' => 'amounts',
     'status' => 'statuses',
 ];
 foreach ($colDefs as $col):
     $ck = $col['key'];
-    $isSorted = ($list_sort === $ck || ($ck === 'amount' && in_array($list_sort, ['amount', 'debit', 'credit'], true)) || ($ck === 'reference' && in_array($list_sort, ['reference', 'ref'], true)));
+    $isSorted = ($list_sort === $ck
+        || ($ck === 'amount' && in_array($list_sort, ['amount', 'debit', 'credit'], true))
+        || ($ck === 'reference' && in_array($list_sort, ['reference', 'ref'], true))
+        || ($ck === 'check' && in_array($list_sort, ['check', 'check_number'], true))
+        || ($ck === 'budget' && in_array($list_sort, ['budget', 'budget_name'], true)));
     $sortIcon = '';
     if ($isSorted) {
         $sortIcon = $list_sort_dir === 'asc' ? ' ↑' : ' ↓';
@@ -2072,15 +2185,19 @@ foreach ($colDefs as $col):
                                         $acctNames = (string)($r['account_names'] ?? '');
                                         $fundNames = (string)($r['fund_names'] ?? '');
                                         $descFull = (string)($r['description'] ?? '');
+                                        $checkNo = trim((string)($r['check_number'] ?? ''));
+                                        $budgetName = trim((string)($r['budget_name'] ?? ''));
                                     ?>
                                     <tr data-id="<?= $tid ?>" data-cleared="<?= $isCleared ? '1' : '0' ?>" data-status="<?= htmlspecialchars($r['status']) ?>" data-debits="<?= htmlspecialchars((string)$debAmt) ?>" data-credits="<?= htmlspecialchars((string)$credAmt) ?>" data-doc-count="<?= (int)($r['doc_count'] ?? 0) ?>">
                                         <td><input type="checkbox" class="form-check-input tx-cb" value="<?= $tid ?>"></td>
                                         <td class="text-nowrap"><?= htmlspecialchars($r['transaction_date']) ?></td>
                                         <td class="font-monospace"><?= htmlspecialchars($r['reference_number'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['pay_to'] ?? '') ?></td>
+                                        <td class="font-monospace"><?= htmlspecialchars($checkNo) ?></td>
                                         <td class="small text-muted" title="<?= htmlspecialchars($descFull) ?>"><?= htmlspecialchars(mb_strlen($descFull) > 70 ? mb_substr($descFull, 0, 70) . '…' : $descFull) ?></td>
                                         <td class="small" title="<?= htmlspecialchars($acctNames) ?>"><?= htmlspecialchars(mb_strlen($acctNames) > 40 ? mb_substr($acctNames, 0, 40) . '…' : $acctNames) ?></td>
                                         <td class="small" title="<?= htmlspecialchars($fundNames) ?>"><?= htmlspecialchars(mb_strlen($fundNames) > 30 ? mb_substr($fundNames, 0, 30) . '…' : $fundNames) ?></td>
+                                        <td class="small" title="<?= htmlspecialchars($budgetName) ?>"><?= htmlspecialchars(mb_strlen($budgetName) > 30 ? mb_substr($budgetName, 0, 30) . '…' : $budgetName) ?></td>
                                         <td class="text-end font-monospace small">
                                             <?php if ($debDisplay !== ''): ?><div class="text-primary fw-semibold ledger-debit-col"><?= htmlspecialchars($debDisplay) ?></div><?php endif; ?>
                                             <?php if ($credDisplay !== ''): ?><div class="text-success fw-semibold ledger-credit-col"><?= htmlspecialchars($credDisplay) ?></div><?php endif; ?>
@@ -2093,7 +2210,7 @@ foreach ($colDefs as $col):
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr class="ledger-empty-row">
-                                    <td colspan="11" class="text-center text-muted py-4">No transactions match the current filters.<?= $canWriteLedger ? ' Use “Add Transaction” to create one.' : '' ?></td>
+                                    <td colspan="13" class="text-center text-muted py-4">No transactions match the current filters.<?= $canWriteLedger ? ' Use “Add Transaction” to create one.' : '' ?></td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -2894,9 +3011,11 @@ foreach ($colDefs as $col):
         date: 'dates',
         reference: 'references',
         pay_to: 'pay_tos',
+        check: 'check_numbers',
         description: 'descriptions',
         account: 'account_ids',
         fund: 'fund_ids',
+        budget: 'budget_ids',
         amount: 'amounts',
         status: 'statuses'
     };
@@ -2904,9 +3023,11 @@ foreach ($colDefs as $col):
         dates: 'date',
         references: 'reference',
         pay_tos: 'pay_to',
+        check_numbers: 'check',
         descriptions: 'description',
         account_ids: 'account_id',
         fund_ids: 'fund_id',
+        budget_ids: 'budget_id',
         amounts: 'amount',
         statuses: 'status'
     };
@@ -2921,6 +3042,8 @@ foreach ($colDefs as $col):
             amounts: [],
             account_ids: [],
             fund_ids: [],
+            check_numbers: [],
+            budget_ids: [],
             date_from: '',
             date_to: '',
             check_number: '',
@@ -2949,6 +3072,17 @@ foreach ($colDefs as $col):
         base.amounts = asArr(raw.amounts != null ? raw.amounts : raw.amount);
         base.account_ids = asIdArr(raw.account_ids != null ? raw.account_ids : raw.account_id);
         base.fund_ids = asIdArr(raw.fund_ids != null ? raw.fund_ids : raw.fund_id);
+        base.check_numbers = asArr(raw.check_numbers != null ? raw.check_numbers : raw.check);
+        const asBudgetArr = (v) => asArr(v).filter(x => {
+            if (x === '' || x === '__BLANK__' || x === '__NONE__') return true;
+            const n = parseInt(x, 10);
+            return !isNaN(n) && n > 0;
+        }).map(x => {
+            if (x === '__BLANK__') return '';
+            if (x === '' || x === '__NONE__') return x;
+            return String(parseInt(x, 10));
+        });
+        base.budget_ids = asBudgetArr(raw.budget_ids != null ? raw.budget_ids : raw.budget_id);
         base.date_from = raw.date_from ? String(raw.date_from) : '';
         base.date_to = raw.date_to ? String(raw.date_to) : '';
         base.check_number = raw.check_number ? String(raw.check_number) : '';
@@ -2979,6 +3113,8 @@ foreach ($colDefs as $col):
         appendMulti('amount', f.amounts);
         appendMulti('account_id', f.account_ids);
         appendMulti('fund_id', f.fund_ids);
+        appendMulti('check', f.check_numbers);
+        appendMulti('budget_id', f.budget_ids);
         if (f.date_from) p.set('date_from', f.date_from);
         if (f.date_to) p.set('date_to', f.date_to);
         if (f.check_number) p.set('check_number', f.check_number);
@@ -3002,7 +3138,7 @@ foreach ($colDefs as $col):
 
     function hasAnyActiveFilter() {
         const f = getActiveFilters();
-        const multiKeys = ['dates', 'references', 'descriptions', 'pay_tos', 'statuses', 'amounts', 'account_ids', 'fund_ids'];
+        const multiKeys = ['dates', 'references', 'descriptions', 'pay_tos', 'statuses', 'amounts', 'account_ids', 'fund_ids', 'check_numbers', 'budget_ids'];
         for (const k of multiKeys) {
             if (f[k] && f[k].length) return true;
         }
@@ -3036,6 +3172,16 @@ foreach ($colDefs as $col):
         if (!key) return;
         if (col === 'account' || col === 'fund') {
             f[key] = (values || []).map(v => String(parseInt(v, 10))).filter(v => v !== '0' && v !== 'NaN');
+        } else if (col === 'budget') {
+            f[key] = (values || []).map(v => String(v)).filter(v => {
+                if (v === '' || v === '__BLANK__' || v === '__NONE__') return true;
+                const n = parseInt(v, 10);
+                return !isNaN(n) && n > 0;
+            }).map(v => {
+                if (v === '__BLANK__') return '';
+                if (v === '' || v === '__NONE__') return v;
+                return String(parseInt(v, 10));
+            });
         } else {
             f[key] = (values || []).map(String);
         }
@@ -3342,6 +3488,8 @@ foreach ($colDefs as $col):
         const desc = r.description || '';
         const accts = r.account_names || '';
         const funds = r.fund_names || '';
+        const checkNo = String(r.check_number || '').trim();
+        const budgetName = String(r.budget_name || '').trim();
         let amtHtml = '';
         if (debDisplay) amtHtml += '<div class="text-primary fw-semibold ledger-debit-col">' + escHtml(debDisplay) + '</div>';
         if (credDisplay) amtHtml += '<div class="text-success fw-semibold ledger-credit-col">' + escHtml(credDisplay) + '</div>';
@@ -3351,9 +3499,11 @@ foreach ($colDefs as $col):
             + '<td class="text-nowrap">' + escHtml(r.transaction_date || '') + '</td>'
             + '<td class="font-monospace">' + escHtml(r.reference_number || '') + '</td>'
             + '<td>' + escHtml(r.pay_to || '') + '</td>'
+            + '<td class="font-monospace">' + escHtml(checkNo) + '</td>'
             + '<td class="small text-muted" title="' + escHtml(desc) + '">' + escHtml(truncText(desc, 70)) + '</td>'
             + '<td class="small" title="' + escHtml(accts) + '">' + escHtml(truncText(accts, 40)) + '</td>'
             + '<td class="small" title="' + escHtml(funds) + '">' + escHtml(truncText(funds, 30)) + '</td>'
+            + '<td class="small" title="' + escHtml(budgetName) + '">' + escHtml(truncText(budgetName, 30)) + '</td>'
             + '<td class="text-end font-monospace small">' + amtHtml + '</td>'
             + '<td>' + statusBadgeHtml(r.status) + '</td>'
             + '<td class="text-center">' + (parseInt(r.num_lines, 10) || 0) + '</td>'
@@ -3463,6 +3613,8 @@ foreach ($colDefs as $col):
             let sorted = listState.sort === col;
             if (col === 'amount' && ['amount', 'debit', 'credit'].includes(listState.sort)) sorted = true;
             if (col === 'reference' && ['reference', 'ref'].includes(listState.sort)) sorted = true;
+            if (col === 'check' && ['check', 'check_number'].includes(listState.sort)) sorted = true;
+            if (col === 'budget' && ['budget', 'budget_name'].includes(listState.sort)) sorted = true;
             ind.textContent = sorted ? (listState.sort_dir === 'asc' ? ' ↑' : ' ↓') : '';
         });
     }
@@ -3486,7 +3638,7 @@ foreach ($colDefs as $col):
                 if (reset) {
                     if (!txTableBody) return;
                     if (rows.length === 0) {
-                        txTableBody.innerHTML = '<tr class="ledger-empty-row"><td colspan="11" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+                        txTableBody.innerHTML = '<tr class="ledger-empty-row"><td colspan="13" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
                     } else {
                         txTableBody.innerHTML = rows.map(renderTxRow).join('');
                     }
@@ -5662,7 +5814,7 @@ foreach ($colDefs as $col):
         if (remaining.length === 0 && !txTableBody.querySelector('.ledger-empty-row')) {
             const tr = document.createElement('tr');
             tr.className = 'ledger-empty-row';
-            tr.innerHTML = '<td colspan="11" class="text-center text-muted py-4">No transactions match the current filters.</td>';
+            tr.innerHTML = '<td colspan="13" class="text-center text-muted py-4">No transactions match the current filters.</td>';
             txTableBody.appendChild(tr);
         }
         updateButtonStates();
