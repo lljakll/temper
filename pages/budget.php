@@ -203,6 +203,26 @@ require_once __DIR__ . '/../includes/permissions.php';
                 'message' => 'FY ' . (int)$promote['fiscal_year'] . ' budget "' . $promote['name'] . '" is now active. Other active budgets were not changed.',
             ]);
             exit;
+        } elseif ($action === 'duplicate') {
+            header('Content-Type: application/json');
+            $sourceId = (int)($_POST['source_id'] ?? 0);
+            $name = trim((string)($_POST['name'] ?? ''));
+            $fy = (int)($_POST['fiscal_year'] ?? 0);
+            $start = (string)($_POST['start_date'] ?? '');
+            $end = (string)($_POST['end_date'] ?? '');
+            $result = budgetDuplicateToDraft($db, $sourceId, $name, $fy, $start, $end);
+            if (empty($result['ok'])) {
+                echo json_encode(['error' => $result['error'] ?? 'Unable to duplicate budget.']);
+                exit;
+            }
+            $lineCount = (int)($result['line_count'] ?? 0);
+            $lineLabel = $lineCount === 1 ? '1 line' : $lineCount . ' lines';
+            echo json_encode([
+                'success' => true,
+                'id' => (int)$result['id'],
+                'message' => 'Draft budget "' . $result['name'] . '" created from copy (' . $lineLabel . ').',
+            ]);
+            exit;
         } elseif ($action === 'save') {
             $id = (int)($_POST['budget_id'] ?? 0);
             $canSave = true;
@@ -426,7 +446,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         <div class="col d-flex flex-wrap gap-2 justify-content-md-end">
             <button type="button" id="cycleBtn" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
             <?php if ($canWriteBudget): ?>
-            <button id="addBtn" class="btn btn-primary">New Budget</button>
+            <button type="button" id="addBtn" class="btn btn-primary">New Budget</button>
+            <button type="button" id="duplicateBtn" class="btn btn-outline-secondary" disabled>Duplicate</button>
             <?php endif; ?>
             <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
         </div>
@@ -443,7 +464,13 @@ require_once __DIR__ . '/../includes/permissions.php';
                 <?php if ($budgets && $budgets->num_rows > 0): ?>
                     <?php while ($b = $budgets->fetch_assoc()): ?>
                         <?php $isCurrentFy = ((int)$b['fiscal_year'] === $currentFiscalYear); ?>
-                        <tr data-id="<?= $b['id'] ?>" data-status="<?= htmlspecialchars($b['status']) ?>" data-fiscal-year="<?= (int)$b['fiscal_year'] ?>" class="<?= $isCurrentFy ? 'budget-row-current-fy' : '' ?>">
+                        <tr data-id="<?= $b['id'] ?>"
+                            data-status="<?= htmlspecialchars($b['status']) ?>"
+                            data-fiscal-year="<?= (int)$b['fiscal_year'] ?>"
+                            data-name="<?= htmlspecialchars($b['name']) ?>"
+                            data-start-date="<?= htmlspecialchars($b['start_date']) ?>"
+                            data-end-date="<?= htmlspecialchars($b['end_date']) ?>"
+                            class="<?= $isCurrentFy ? 'budget-row-current-fy' : '' ?>">
                             <td>
                                 <?= (int)$b['fiscal_year'] ?>
                                 <?php if ($isCurrentFy): ?><span class="badge bg-primary ms-1">Current FY</span><?php endif; ?>
@@ -578,6 +605,55 @@ require_once __DIR__ . '/../includes/permissions.php';
     </div>
 </div>
 
+<?php if ($canWriteBudget): ?>
+<!-- Duplicate Budget Modal -->
+<div class="modal fade" id="duplicateModal" tabindex="-1" aria-labelledby="duplicateModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="duplicateModalLabel">Duplicate Budget</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="duplicateForm">
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        Creates a new <strong>Draft</strong> with the same budget lines (accounts, amounts, and notes).
+                        Approval, activation, and transactions are not copied.
+                    </p>
+                    <div class="mb-3">
+                        <label class="form-label">Copying from</label>
+                        <div id="duplicateSourceLabel" class="form-control-plaintext small"></div>
+                        <input type="hidden" id="duplicateSourceId">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="duplicateName">New budget name</label>
+                        <input type="text" class="form-control" id="duplicateName" required maxlength="100" autocomplete="off">
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="duplicateFiscalYear">Year</label>
+                            <input type="number" class="form-control" id="duplicateFiscalYear" required min="2000" max="2100">
+                        </div>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label" for="duplicateStartDate">Start Date</label>
+                            <input type="date" class="form-control" id="duplicateStartDate" required>
+                        </div>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label" for="duplicateEndDate">End Date</label>
+                            <input type="date" class="form-control" id="duplicateEndDate" required>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="duplicateConfirmBtn">Create Draft Copy</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <!-- Activate / Close Budget Modal -->
 <div class="modal fade" id="cycleModal" tabindex="-1" aria-labelledby="cycleModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -644,6 +720,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     const linesBody = document.getElementById('linesBody');
     const linesTotal = document.getElementById('linesTotal');
     const addBtn = document.getElementById('addBtn');
+    const duplicateBtn = document.getElementById('duplicateBtn');
     const deleteBtn = document.getElementById('deleteBtn');
     const addLineBtn = document.getElementById('addLineBtn');
     const saveBtn = document.getElementById('saveBtn');
@@ -659,6 +736,13 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
     const cycleModal = cycleModalEl
         ? bootstrap.Modal.getOrCreateInstance(cycleModalEl)
+        : null;
+    let duplicateModalEl = document.getElementById('duplicateModal');
+    if (duplicateModalEl && typeof window.mountModalOnBody === 'function') {
+        duplicateModalEl = window.mountModalOnBody(duplicateModalEl);
+    }
+    const duplicateModal = duplicateModalEl
+        ? bootstrap.Modal.getOrCreateInstance(duplicateModalEl)
         : null;
     let selectedRow = null;
     let originalStatus = 'draft';
@@ -873,6 +957,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
     function updateActionButtons() {
         deleteBtn.disabled = !selectedRow || selectedRow.dataset.status !== 'draft';
+        if (duplicateBtn) duplicateBtn.disabled = !selectedRow;
     }
     function showForm(title) {
         document.getElementById('formTitle').textContent = title;
@@ -1018,7 +1103,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         openBudget(row.dataset.id);
     });
 
-    addBtn.addEventListener('click', () => {
+    if (addBtn) addBtn.addEventListener('click', () => {
         if (!confirmDiscard()) return;
         formEl.reset();
         originalStatus = 'draft';
@@ -1026,6 +1111,82 @@ require_once __DIR__ . '/../includes/permissions.php';
         tableBody.querySelectorAll('tr.table-primary').forEach(r => r.classList.remove('table-primary'));
         const y = new Date().getFullYear();
         populateForm({ fiscal_year: y, start_date: `${y}-01-01`, end_date: `${y}-12-31`, status: 'draft', lines: [{}] });
+        updateActionButtons();
+    });
+
+    function suggestedDuplicateName(sourceName) {
+        const base = String(sourceName || '').trim() || 'Budget';
+        const prefix = 'Copy of ';
+        const max = 100;
+        if ((prefix + base).length <= max) return prefix + base;
+        return (prefix + base).slice(0, max);
+    }
+    function openDuplicateModal() {
+        if (!selectedRow || !duplicateModal || !duplicateModalEl) return;
+        document.getElementById('duplicateSourceId').value = selectedRow.dataset.id || '';
+        const srcName = selectedRow.dataset.name || '';
+        const fy = selectedRow.dataset.fiscalYear || '';
+        const status = selectedRow.dataset.status || '';
+        const period = [selectedRow.dataset.startDate, selectedRow.dataset.endDate].filter(Boolean).join(' – ');
+        document.getElementById('duplicateSourceLabel').textContent =
+            `${srcName} (FY ${fy}${status ? ', ' + status : ''}${period ? ' · ' + period : ''})`;
+        document.getElementById('duplicateName').value = suggestedDuplicateName(srcName);
+        document.getElementById('duplicateFiscalYear').value = fy;
+        document.getElementById('duplicateStartDate').value = selectedRow.dataset.startDate || '';
+        document.getElementById('duplicateEndDate').value = selectedRow.dataset.endDate || '';
+        if (typeof window.mountModalOnBody === 'function') {
+            duplicateModalEl = window.mountModalOnBody(duplicateModalEl);
+        }
+        duplicateModal.show();
+        setTimeout(() => {
+            const nameEl = document.getElementById('duplicateName');
+            if (nameEl) { nameEl.focus(); nameEl.select(); }
+        }, 150);
+    }
+    if (duplicateBtn) duplicateBtn.addEventListener('click', () => {
+        if (!selectedRow) return;
+        if (!confirmDiscard()) return;
+        openDuplicateModal();
+    });
+    const duplicateForm = document.getElementById('duplicateForm');
+    if (duplicateForm) duplicateForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const sourceId = document.getElementById('duplicateSourceId').value;
+        const name = (document.getElementById('duplicateName').value || '').trim();
+        const fy = document.getElementById('duplicateFiscalYear').value;
+        const start = document.getElementById('duplicateStartDate').value;
+        const end = document.getElementById('duplicateEndDate').value;
+        if (!sourceId || !name || !fy || !start || !end) {
+            showToast('Name, year, start date, and end date are required.', 'warning');
+            return;
+        }
+        if (start > end) {
+            showToast('Start date must be on or before end date.', 'warning');
+            return;
+        }
+        const fd = new FormData();
+        fd.append('action', 'duplicate');
+        fd.append('source_id', sourceId);
+        fd.append('name', name);
+        fd.append('fiscal_year', fy);
+        fd.append('start_date', start);
+        fd.append('end_date', end);
+        const confirmBtn = document.getElementById('duplicateConfirmBtn');
+        if (confirmBtn) confirmBtn.disabled = true;
+        fetch(`pages/${page}.php`, { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(res => {
+                if (res.error) {
+                    showToast(res.error, 'danger');
+                    return;
+                }
+                if (duplicateModal) duplicateModal.hide();
+                if (res.id) sessionStorage.setItem('budgetOpenId', String(res.id));
+                showToast(res.message || 'Draft budget created.', 'success');
+                reload();
+            })
+            .catch(() => showToast('Budget duplicate failed. Please try again.', 'danger'))
+            .finally(() => { if (confirmBtn) confirmBtn.disabled = false; });
     });
 
     deleteBtn.addEventListener('click', () => {
@@ -1119,6 +1280,19 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('linesJson').value = JSON.stringify(collectLines());
         postAndApply(new FormData(formEl));
     });
+
+    const pendingOpen = sessionStorage.getItem('budgetOpenId');
+    if (pendingOpen && /^\d+$/.test(pendingOpen)) {
+        sessionStorage.removeItem('budgetOpenId');
+        const row = tableBody.querySelector('tr[data-id="' + pendingOpen + '"]');
+        if (row) {
+            if (selectedRow) selectedRow.classList.remove('table-primary');
+            selectedRow = row;
+            selectedRow.classList.add('table-primary');
+            updateActionButtons();
+            openBudget(pendingOpen);
+        }
+    }
 })();
 </script>
 <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="display:none" alt="" onload="var s=document.getElementById('init-budget-script');if(s){(new Function(s.textContent))();}this.remove();">

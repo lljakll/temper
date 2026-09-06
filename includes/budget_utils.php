@@ -380,3 +380,167 @@ function budgetListGroupedByYear(mysqli $db): array {
     }
     return $grouped;
 }
+
+function budgetValidIsoDate(string $date): bool {
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        return false;
+    }
+    $dt = DateTime::createFromFormat('Y-m-d', $date);
+    return $dt instanceof DateTime && $dt->format('Y-m-d') === $date;
+}
+
+/**
+ * Duplicate an existing budget (any status) into a new Draft.
+ * Copies name/period as provided, header description, and all lines
+ * (account, amount, notes). Does not copy status, approval fields,
+ * or transaction links.
+ *
+ * @return array{ok:bool,id:?int,error:?string,name:?string,fiscal_year:?int,line_count:?int}
+ */
+function budgetDuplicateToDraft(
+    mysqli $db,
+    int $sourceId,
+    string $name,
+    int $fiscalYear,
+    string $startDate,
+    string $endDate
+): array {
+    $fail = static function (string $error): array {
+        return [
+            'ok' => false,
+            'id' => null,
+            'error' => $error,
+            'name' => null,
+            'fiscal_year' => null,
+            'line_count' => null,
+        ];
+    };
+
+    $name = trim($name);
+    if ($sourceId <= 0) {
+        return $fail('Select a budget to duplicate.');
+    }
+    if ($name === '') {
+        return $fail('New budget name is required.');
+    }
+    if (strlen($name) > 100) {
+        return $fail('Budget name must be 100 characters or fewer.');
+    }
+    if ($fiscalYear < 2000 || $fiscalYear > 2100) {
+        return $fail('Fiscal year must be between 2000 and 2100.');
+    }
+    if (!budgetValidIsoDate($startDate) || !budgetValidIsoDate($endDate)) {
+        return $fail('Start and end dates are required.');
+    }
+    if ($startDate > $endDate) {
+        return $fail('Start date must be on or before end date.');
+    }
+
+    budgetEnsureSimplifiedSchema($db);
+
+    $src = $db->prepare(
+        'SELECT id, name, description FROM budgets WHERE id = ? LIMIT 1'
+    );
+    if (!$src) {
+        return $fail('Unable to load source budget.');
+    }
+    $src->bind_param('i', $sourceId);
+    $src->execute();
+    $source = $src->get_result()->fetch_assoc();
+    $src->close();
+    if (!$source) {
+        return $fail('Budget not found.');
+    }
+
+    $linesStmt = $db->prepare(
+        'SELECT account_id, budgeted_amount, notes
+         FROM budget_lines
+         WHERE budget_id = ?
+         ORDER BY id'
+    );
+    if (!$linesStmt) {
+        return $fail('Unable to load budget lines.');
+    }
+    $linesStmt->bind_param('i', $sourceId);
+    $linesStmt->execute();
+    $lineRes = $linesStmt->get_result();
+    $lines = [];
+    $total = 0.0;
+    while ($row = $lineRes->fetch_assoc()) {
+        $aid = (int)($row['account_id'] ?? 0);
+        if ($aid <= 0) {
+            continue;
+        }
+        $amt = (float)($row['budgeted_amount'] ?? 0);
+        $lines[] = [
+            'account_id' => $aid,
+            'budgeted_amount' => $amt,
+            'notes' => (string)($row['notes'] ?? ''),
+        ];
+        $total += $amt;
+    }
+    $linesStmt->close();
+
+    $desc = (string)($source['description'] ?? '');
+    $status = 'draft';
+
+    $db->begin_transaction();
+    try {
+        $ins = $db->prepare(
+            'INSERT INTO budgets
+                (fiscal_year, name, start_date, end_date, approved_date, reference_number,
+                 status, total_budgeted, description)
+             VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)'
+        );
+        if (!$ins) {
+            throw new RuntimeException('Unable to create budget copy.');
+        }
+        $ins->bind_param('issssds', $fiscalYear, $name, $startDate, $endDate, $status, $total, $desc);
+        if (!$ins->execute()) {
+            $err = $ins->error;
+            $ins->close();
+            throw new RuntimeException($err !== '' ? $err : 'Unable to create budget copy.');
+        }
+        $newId = (int)$ins->insert_id;
+        $ins->close();
+        if ($newId <= 0) {
+            throw new RuntimeException('Unable to create budget copy.');
+        }
+
+        if ($lines !== []) {
+            $lineIns = $db->prepare(
+                'INSERT INTO budget_lines (budget_id, account_id, budgeted_amount, notes)
+                 VALUES (?, ?, ?, ?)'
+            );
+            if (!$lineIns) {
+                throw new RuntimeException('Unable to copy budget lines.');
+            }
+            foreach ($lines as $line) {
+                $aid = $line['account_id'];
+                $amt = $line['budgeted_amount'];
+                $notes = $line['notes'];
+                $lineIns->bind_param('iids', $newId, $aid, $amt, $notes);
+                if (!$lineIns->execute()) {
+                    $err = $lineIns->error;
+                    $lineIns->close();
+                    throw new RuntimeException($err !== '' ? $err : 'Unable to copy budget lines.');
+                }
+            }
+            $lineIns->close();
+        }
+
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollback();
+        return $fail('Error duplicating budget: ' . $e->getMessage());
+    }
+
+    return [
+        'ok' => true,
+        'id' => $newId,
+        'error' => null,
+        'name' => $name,
+        'fiscal_year' => $fiscalYear,
+        'line_count' => count($lines),
+    ];
+}

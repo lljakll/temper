@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.946](#v0946)
 - [v0.945](#v0945)
 - [v0.944](#v0944)
 - [v0.943](#v0943)
@@ -152,6 +153,31 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.946
+
+**Budget duplicate to Draft** — 2026-09-06
+
+> No schema update required for this release (application copy flow only).  
+> **Patch file (history row):** `updates/20260906_0946_budget_duplicate_to_draft.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.946
+
+- Budget module **Duplicate** copies any existing budget (draft, approved, active, or closed) into a new **Draft**.
+- A short modal collects the new budget name plus fiscal year / start and end dates (same fields as the budget form).
+- Copied lines keep account, amount, and notes. Header description is copied; approval date, reference number, status, and transaction links are not.
+- The copy is never treated as the live budget: status is always Draft, and no transactions are attached. Budget-vs-actual for the new budget starts empty of assigned activity.
+- Action is limited to roles that already have `page.budget.write` (create/edit budgets). Existing create, edit, activate, and close behavior is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.946**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.945 | `updates/20260906_0946_budget_duplicate_to_draft.sql` (records 0.946; no DDL) |
+| Fresh setup (0.944) | Apply 0.945 then this process-only patch after `php setup_db.php` |
 
 ---
 
