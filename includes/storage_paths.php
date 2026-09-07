@@ -9,16 +9,39 @@ function getAppRoot(): string {
     return dirname(__DIR__);
 }
 
-function getConfiguredStoragePath(): ?string {
-    $sources = [
-        'SERVER' => $_SERVER['TEMPER_STORAGE_PATH'] ?? null,
-        'ENV' => $_ENV['TEMPER_STORAGE_PATH'] ?? null,
-        'getenv' => getenv('TEMPER_STORAGE_PATH') ?: null,
-    ];
+/** Default writable root: <application root>/storage (never a parent folder). */
+function getDefaultStoragePath(): string {
+    return rtrim(str_replace('\\', '/', getAppRoot()), '/') . '/storage';
+}
 
-    foreach ($sources as $value) {
+function temperNormalizeStoragePath(string $path): string {
+    $path = rtrim(str_replace('\\', '/', trim($path)), '/');
+    if ($path === '') {
+        return '';
+    }
+    $real = realpath($path);
+    return $real !== false ? rtrim(str_replace('\\', '/', $real), '/') : $path;
+}
+
+/**
+ * Immediate parent-directory folder named storage (e.g. /var/www/storage when
+ * the app lives at /var/www/temper). Never used as an automatic candidate.
+ */
+function getUndocumentedParentStoragePath(): ?string {
+    $parent = dirname(rtrim(str_replace('\\', '/', getAppRoot()), '/')) . '/storage';
+    if (!is_dir($parent)) {
+        return null;
+    }
+    return temperNormalizeStoragePath($parent);
+}
+
+function getConfiguredStoragePath(): ?string {
+    $sources = getConfiguredStoragePathSources();
+    // Env (Apache SetEnv / process) wins over a config.php constant.
+    foreach (['SERVER', 'ENV', 'getenv', 'CONSTANT'] as $key) {
+        $value = $sources[$key] ?? null;
         if (is_string($value) && trim($value) !== '') {
-            return rtrim(trim($value), '/\\');
+            return rtrim(str_replace('\\', '/', trim($value)), '/');
         }
     }
 
@@ -26,29 +49,46 @@ function getConfiguredStoragePath(): ?string {
 }
 
 function getConfiguredStoragePathSources(): array {
+    $constant = (defined('TEMPER_STORAGE_PATH') && is_string(TEMPER_STORAGE_PATH) && trim(TEMPER_STORAGE_PATH) !== '')
+        ? trim(TEMPER_STORAGE_PATH)
+        : null;
+
     return [
+        'CONSTANT' => $constant,
         'SERVER' => $_SERVER['TEMPER_STORAGE_PATH'] ?? null,
         'ENV' => $_ENV['TEMPER_STORAGE_PATH'] ?? null,
         'getenv' => getenv('TEMPER_STORAGE_PATH') ?: null,
     ];
 }
 
+/**
+ * Explicit override first (env / config.php constant), then the app's own
+ * storage directory. No parent-folder walk, sibling /storage, or other
+ * undocumented auto-discovery.
+ *
+ * @return list<string>
+ */
 function getStoragePathCandidates(): array {
-    $appRoot = getAppRoot();
     $configured = getConfiguredStoragePath();
+    $default = getDefaultStoragePath();
     $candidates = [];
 
     if ($configured !== null) {
         $candidates[] = $configured;
     }
+    $candidates[] = $default;
 
-    $candidates[] = dirname($appRoot) . '/storage';
-    $candidates[] = $appRoot . '/storage';
-    $candidates[] = '/var/www/temper/storage';
-    $candidates[] = '/var/www/html/temper-data/storage';
-    $candidates[] = rtrim(sys_get_temp_dir(), '/\\') . '/temper-storage';
-
-    return array_values(array_unique($candidates));
+    $unique = [];
+    $seen = [];
+    foreach ($candidates as $path) {
+        $key = temperNormalizeStoragePath($path);
+        if ($key === '' || isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $unique[] = $path;
+    }
+    return $unique;
 }
 
 function probeWritableDirectory(string $dir): array {
@@ -84,67 +124,82 @@ function probeWritableDirectory(string $dir): array {
 }
 
 function buildStorageSelectionReason(?string $configured, string $candidate, string $default): string {
-    if ($configured !== null && $candidate === $configured) {
-        return 'Selected configured TEMPER_STORAGE_PATH from server environment.';
+    $candNorm = temperNormalizeStoragePath($candidate);
+    $defaultNorm = temperNormalizeStoragePath($default);
+    $configuredNorm = $configured !== null ? temperNormalizeStoragePath($configured) : '';
+
+    if ($configuredNorm !== '' && $candNorm === $configuredNorm) {
+        return 'Selected configured TEMPER_STORAGE_PATH (environment or config.php constant).';
     }
-    if ($candidate === $default) {
-        return 'Selected default app storage directory.';
+    if ($candNorm === $defaultNorm) {
+        return 'Selected default application storage directory (' . $default . ').';
     }
-    if ($candidate === '/var/www/temper/storage') {
-        return 'Selected built-in preferred path /var/www/temper/storage.';
-    }
-    return 'Selected automatic fallback because earlier candidates were not writable.';
+    return 'Selected application storage path.';
 }
 
 function resolveStorageRoot(bool $forceRecheck = false): array {
     static $resolved = null;
+    static $loggedParentConflict = false;
     if ($resolved !== null && !$forceRecheck) {
         return $resolved;
     }
 
-    $default = getAppRoot() . '/storage';
+    $default = getDefaultStoragePath();
     $configured = getConfiguredStoragePath();
+    $intended = $configured !== null ? $configured : $default;
     $errors = [];
     $probes = [];
 
     foreach (getStoragePathCandidates() as $candidate) {
         $probe = probeWritableDirectory($candidate);
         $probes[$candidate] = $probe;
-
-        if ($probe['writable']) {
-            $isConfigured = $configured !== null && $candidate === $configured;
-            $usingFallback = !$isConfigured;
-
-            $resolved = [
-                'path' => realpath($candidate) ?: $candidate,
-                'source' => $candidate,
-                'configured_path' => $configured,
-                'is_configured' => $isConfigured,
-                'fallback' => $usingFallback,
-                'using_fallback' => $usingFallback,
-                'writable' => true,
-                'errors' => $errors,
-                'probes' => $probes,
-                'selection_reason' => buildStorageSelectionReason($configured, $candidate, $default),
-            ];
-            return $resolved;
+        if (!$probe['writable']) {
+            $errors[$candidate] = $probe['error'];
         }
-
-        $errors[$candidate] = $probe['error'];
     }
 
-    $resolved = [
-        'path' => $default,
-        'source' => $default,
+    $intendedProbe = $probes[$intended] ?? probeWritableDirectory($intended);
+    $isConfigured = $configured !== null
+        && temperNormalizeStoragePath($intended) === temperNormalizeStoragePath($configured);
+    $reason = buildStorageSelectionReason($configured, $intended, $default);
+    if (empty($intendedProbe['writable'])) {
+        $reason .= ' This process cannot write to that directory.';
+    }
+
+    $chosen = [
+        'path' => realpath($intended) ?: $intended,
+        'source' => $intended,
         'configured_path' => $configured,
-        'is_configured' => false,
-        'fallback' => true,
-        'using_fallback' => true,
-        'writable' => false,
+        'is_configured' => $isConfigured,
+        'fallback' => !$isConfigured,
+        'using_fallback' => !$isConfigured,
+        'writable' => !empty($intendedProbe['writable']),
         'errors' => $errors,
         'probes' => $probes,
-        'selection_reason' => 'No writable storage candidate found; defaulting to app storage path.',
+        'selection_reason' => $reason,
     ];
+
+    $activeNorm = temperNormalizeStoragePath((string)$chosen['path']);
+    $parent = getUndocumentedParentStoragePath();
+    $unusedParent = null;
+    if ($parent !== null && temperNormalizeStoragePath($parent) !== $activeNorm) {
+        $unusedParent = $parent;
+    }
+    $chosen['default_path'] = $default;
+    $chosen['unused_parent_storage'] = $unusedParent;
+    $chosen['parent_storage_exists'] = $unusedParent !== null;
+
+    if ($unusedParent !== null && !$loggedParentConflict) {
+        $loggedParentConflict = true;
+        error_log(
+            '[temper-storage] Resolved storage root: ' . $chosen['path']
+            . ' (' . $chosen['selection_reason'] . '). '
+            . 'A parent/sibling storage directory exists at ' . $unusedParent
+            . ' and is not used.'
+        );
+    }
+
+    $resolved = $chosen;
     return $resolved;
 }
 
@@ -204,8 +259,8 @@ function describeFileOperationFailure(string $operation, string $path): string {
     if (stripos($detail, 'Read-only file system') !== false) {
         return 'Backup storage is read-only for the web server at ' . $path . '. '
             . 'Apache (www-data) cannot write under /home when the app is served from a home-directory symlink. '
-            . 'Set TEMPER_STORAGE_PATH to a writable directory such as /var/www/temper/storage or '
-            . '/var/www/html/temper-data/storage, then restart Apache. '
+            . 'Set TEMPER_STORAGE_PATH to a writable directory such as ' . getDefaultStoragePath()
+            . ', then restart Apache. '
             . 'Active storage root: ' . $root['path'] . '.';
     }
 
@@ -335,16 +390,27 @@ function purgeTransactionAttachmentFiles(): array {
 
 function getStorageDiagnostics(): array {
     $root = resolveStorageRoot(true);
+    $base = rtrim((string)$root['path'], '/\\');
 
     return [
         'active_root' => $root['path'],
         'active_source' => $root['source'],
+        'default_path' => $root['default_path'] ?? getDefaultStoragePath(),
         'configured_path' => $root['configured_path'],
         'is_configured' => $root['is_configured'],
         'using_fallback' => $root['using_fallback'],
         'selection_reason' => $root['selection_reason'],
         'writable' => $root['writable'],
-        'backup_dir' => ensureStorageSubdir('backups')['path'],
+        'unused_parent_storage' => $root['unused_parent_storage'] ?? null,
+        'parent_storage_exists' => !empty($root['parent_storage_exists']),
+        'backup_dir' => $base . '/backups',
+        'subdirs' => [
+            'attachments' => $base . '/attachments',
+            'backups' => $base . '/backups',
+            'config' => $base . '/config',
+            'exports' => $base . '/exports',
+            'logs' => $base . '/logs',
+        ],
         'env_sources' => getConfiguredStoragePathSources(),
         'candidates' => getStoragePathCandidates(),
         'probes' => $root['probes'] ?? [],

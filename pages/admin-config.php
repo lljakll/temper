@@ -58,6 +58,18 @@ function configPayload(): array {
         'app_env' => (string)APP_ENV,
         'is_development_env' => isDevelopmentEnvironment(),
         'config_path' => getSystemConfigFilePath(),
+        'storage' => (static function (): array {
+            $diag = getStorageDiagnostics();
+            return [
+                'root' => (string)($diag['active_root'] ?? ''),
+                'writable' => !empty($diag['writable']),
+                'reason' => (string)($diag['selection_reason'] ?? ''),
+                'configured_path' => $diag['configured_path'] ?? null,
+                'default_path' => (string)($diag['default_path'] ?? ''),
+                'unused_parent_storage' => $diag['unused_parent_storage'] ?? null,
+                'subdirs' => is_array($diag['subdirs'] ?? null) ? $diag['subdirs'] : [],
+            ];
+        })(),
     ];
 }
 
@@ -234,6 +246,12 @@ $autoBackupLastStatus = $payload['auto_backup_last_status'] ?? null;
 $allowHardDelete = (bool)$payload['allow_hard_delete'];
 $appEnv = (string)$payload['app_env'];
 $isDevEnv = (bool)$payload['is_development_env'];
+$storageStatus = is_array($payload['storage'] ?? null) ? $payload['storage'] : [];
+$storageRoot = (string)($storageStatus['root'] ?? '');
+$storageWritable = !empty($storageStatus['writable']);
+$storageReason = (string)($storageStatus['reason'] ?? '');
+$storageUnusedParent = $storageStatus['unused_parent_storage'] ?? null;
+$storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['subdirs'] : [];
 ?>
 
 <div class="row mb-3">
@@ -543,6 +561,35 @@ $isDevEnv = (bool)$payload['is_development_env'];
                     </dd>
                 </dl>
                 <hr>
+                <p class="text-uppercase text-muted mb-2" style="letter-spacing: 0.04em; font-size: 0.7rem;">Storage</p>
+                <p class="text-muted mb-1" style="font-size: 0.75rem;">Resolved writable root (attachments, backups, config, exports, logs):</p>
+                <code id="cfgStatusStorageRoot" class="d-block text-break mb-1" style="font-size: 0.7rem;"><?= htmlspecialchars($storageRoot) ?></code>
+                <p class="mb-2" id="cfgStatusStorageWritable">
+                    <?php if ($storageWritable): ?>
+                        <span class="badge text-bg-success">Writable</span>
+                    <?php else: ?>
+                        <span class="badge text-bg-danger">Not writable</span>
+                    <?php endif; ?>
+                </p>
+                <p class="text-muted mb-2" id="cfgStatusStorageReason" style="font-size: 0.75rem;"><?= htmlspecialchars($storageReason) ?></p>
+                <?php if (is_string($storageUnusedParent) && $storageUnusedParent !== ''): ?>
+                <div id="cfgStatusStorageParentWarn" class="alert alert-warning py-2 px-2 small mb-2" role="status">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    A storage directory also exists at <code><?= htmlspecialchars($storageUnusedParent) ?></code>
+                    and is <strong>not used</strong>. The application writes only to the resolved root above.
+                    Files were not moved or deleted.
+                </div>
+                <?php else: ?>
+                <div id="cfgStatusStorageParentWarn" class="alert alert-warning py-2 px-2 small mb-2 d-none" role="status"></div>
+                <?php endif; ?>
+                <?php if ($storageSubdirs !== []): ?>
+                <p class="text-muted mb-1" style="font-size: 0.75rem;">Subdirectories:</p>
+                <ul id="cfgStatusStorageSubdirs" class="list-unstyled mb-2" style="font-size: 0.7rem;">
+                    <?php foreach ($storageSubdirs as $name => $path): ?>
+                    <li><span class="text-muted"><?= htmlspecialchars((string)$name) ?>:</span> <code class="text-break"><?= htmlspecialchars((string)$path) ?></code></li>
+                    <?php endforeach; ?>
+                </ul>
+                <?php endif; ?>
                 <p class="text-muted mb-1" style="font-size: 0.75rem;">
                     Settings file (for operators):
                 </p>
@@ -750,6 +797,34 @@ $isDevEnv = (bool)$payload['is_development_env'];
                     + String(f) + ' / ' + String(fmt) + '</span>';
             } else {
                 statusAutoBackup.innerHTML = '<span class="badge text-bg-secondary">Off</span>';
+            }
+        }
+        if (res.storage && typeof res.storage === 'object') {
+            const rootEl = document.getElementById('cfgStatusStorageRoot');
+            if (rootEl) rootEl.textContent = res.storage.root || '';
+            const writableEl = document.getElementById('cfgStatusStorageWritable');
+            if (writableEl) {
+                writableEl.innerHTML = res.storage.writable
+                    ? '<span class="badge text-bg-success">Writable</span>'
+                    : '<span class="badge text-bg-danger">Not writable</span>';
+            }
+            const reasonEl = document.getElementById('cfgStatusStorageReason');
+            if (reasonEl) reasonEl.textContent = res.storage.reason || '';
+            const warnEl = document.getElementById('cfgStatusStorageParentWarn');
+            if (warnEl) {
+                const unused = res.storage.unused_parent_storage;
+                if (unused) {
+                    warnEl.classList.remove('d-none');
+                    warnEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>'
+                        + 'A storage directory also exists at <code></code>'
+                        + ' and is <strong>not used</strong>. The application writes only to the resolved root above. '
+                        + 'Files were not moved or deleted.';
+                    const code = warnEl.querySelector('code');
+                    if (code) code.textContent = String(unused);
+                } else {
+                    warnEl.classList.add('d-none');
+                    warnEl.textContent = '';
+                }
             }
         }
         const lastRunEl = document.getElementById('cfgAutoBackupLastRun');
