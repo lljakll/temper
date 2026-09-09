@@ -311,6 +311,35 @@ List-only change. Empty is fine when there is no check or no budget. Do not add 
 
 Completion Status:
 
+
+
+#24 - 2026-08-31 - Ledger - Enhancement - Low
+Expected:  Budget year listed on ledger if available
+Actual:None
+Notes / Context / Interpretation:
+
+Completion Status:
+
+
+#26 - 2026-08-31 - Backup - Enhancement - Low
+Expected: Backup file name (downloaded/server) should have some indicator of what version of the db/app is required.  The archive should contain db/app version requried information manifest.json.
+Actual:  file name is just date time, and json is just bare info.
+Notes / Context / Interpretation: The restore system should not just fail if the app and db dont match the backup file's information detail.  It should give a message with the relevant problem.
+
+Completion Status:
+
+
+
+
+
+#<##> - yyyy-mm-dd - <page/action> - <category> - <severity>
+Expected:
+Actual:
+Notes / Context / Interpretation:
+
+Completion Status:
+
+
 #<##> - yyyy-mm-dd - <page/action> - <category> - <severity>
 Expected:
 Actual:
