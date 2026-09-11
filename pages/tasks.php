@@ -543,7 +543,7 @@ if ($tasksTable) {
     <div class="card shadow-sm">
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
+                <table class="table table-hover mb-0 align-middle temper-stack-on-mobile">
                     <thead class="table-dark">
                         <tr>
                             <th>Title</th>

@@ -660,11 +660,11 @@ require_once __DIR__ . '/../includes/fund_utils.php';
         if (key === 'fund-balances') {
             return `
                 <div class="row g-2 align-items-end">
-                    <div class="col-6 col-md-3">
+                    <div class="col-12 col-sm-6 col-md-3">
                         <label class="form-label small mb-1">As of Date</label>
                         <input type="date" id="fb-date" class="form-control form-control-sm" value="${FD.today}">
                     </div>
-                    <div class="col-6 col-md-3">
+                    <div class="col-12 col-sm-6 col-md-3">
                         <label class="form-label small mb-1">Fund Type</label>
                         <select id="fb-type" class="form-select form-select-sm">
                             <option value="">All Types</option>
@@ -683,11 +683,11 @@ require_once __DIR__ . '/../includes/fund_utils.php';
         if (key === 'transaction-listing') {
             return `
                 <div class="row g-2 align-items-end">
-                    <div class="col-6 col-md-auto">
+                    <div class="col-12 col-sm-6 col-md-auto">
                         <label class="form-label small mb-1">Date From</label>
                         <input type="date" id="tl-from" class="form-control form-control-sm" value="${FD.yearStart}">
                     </div>
-                    <div class="col-6 col-md-auto">
+                    <div class="col-12 col-sm-6 col-md-auto">
                         <label class="form-label small mb-1">Date To</label>
                         <input type="date" id="tl-to" class="form-control form-control-sm" value="${FD.today}">
                     </div>
@@ -837,7 +837,7 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             return `
                 <div class="small text-muted mb-2">Generated ${data.generated} &bull; As of ${data.as_of}. Fund tags on asset accounts are ignored.</div>
                 <div class="table-responsive">
-                    <table class="table table-sm table-striped align-middle mb-0">
+                    <table class="table table-sm table-striped align-middle mb-0 temper-stack-on-mobile">
                         <thead class="table-dark"><tr><th>Fund</th><th>Code</th><th>Type</th><th class="text-end">Balance</th></tr></thead>
                         <tbody>${rows}</tbody>
                         <tfoot class="table-light">
@@ -878,7 +878,7 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             return `
                 <div class="small text-muted mb-2">Generated ${data.generated} &bull; ${data.count} transaction${data.count === 1 ? '' : 's'}</div>
                 <div class="table-responsive">
-                    <table class="table table-sm table-hover align-middle mb-0">
+                    <table class="table table-sm table-hover align-middle mb-0 temper-stack-on-mobile">
                         <thead class="table-dark"><tr><th>Date</th><th>Ref #</th><th>Pay To</th><th>Fund</th><th>Category</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th>Status</th></tr></thead>
                         <tbody>${rows}</tbody>
                     </table>
@@ -905,7 +905,7 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             return `
                 <div class="small text-muted mb-2">Generated ${data.generated} &bull; FY ${data.fiscal_year}${fyNote} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}${multiYear}${multiActive}</div>
                 <div class="table-responsive">
-                    <table class="table table-sm table-striped align-middle mb-0">
+                    <table class="table table-sm table-striped align-middle mb-0 temper-stack-on-mobile">
                         <thead class="table-dark"><tr><th>Category</th><th class="text-end">Budget</th><th class="text-end">Actual</th><th class="text-end">Variance</th><th class="text-end">% Used</th></tr></thead>
                         <tbody>${rows}</tbody>
                     </table>
@@ -922,7 +922,7 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             return `
                 <div class="small text-muted mb-2">Generated ${data.generated} &bull; Period ${data.period_start} to ${data.as_of}. Fund tags on asset accounts are ignored.</div>
                 <div class="table-responsive">
-                    <table class="table table-sm table-striped align-middle mb-0">
+                    <table class="table table-sm table-striped align-middle mb-0 temper-stack-on-mobile">
                         <thead class="table-dark"><tr><th>Fund</th><th class="text-end">Beginning</th><th class="text-end">Inflows</th><th class="text-end">Outflows</th><th class="text-end">Ending Balance</th></tr></thead>
                         <tbody>${rows}</tbody>
                     </table>
@@ -1005,6 +1005,9 @@ require_once __DIR__ . '/../includes/fund_utils.php';
                     return;
                 }
                 results.innerHTML = renderResults(currentReportKey, data);
+                if (typeof window.temperLabelStackTables === 'function') {
+                    window.temperLabelStackTables(results);
+                }
             })
             .catch(err => {
                 showToast('Failed to load report: ' + err.message, 'danger');

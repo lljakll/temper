@@ -418,7 +418,7 @@ require_once __DIR__ . '/../includes/permissions.php';
 <script type="application/json" id="page-flash"><?= json_encode($pageFlash) ?></script>
 <?php endif; ?>
 <div class="container-fluid mt-2 mt-md-4 px-0 px-sm-2">
-    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3 page-title-row">
         <div>
             <h2 class="mb-1">Budget</h2>
             <p class="text-muted small mb-0">Current fiscal year: <strong><?= $currentFiscalYear ?></strong>. Multiple budgets may be active at once — including across fiscal years — for year-end entries.</p>
@@ -454,7 +454,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     </div>
 
     <div class="table-responsive mb-4">
-        <table class="table table-striped table-hover">
+        <table class="table table-striped table-hover temper-stack-on-mobile">
             <thead class="table-dark">
                 <tr>
                     <th>Year</th><th>Name</th><th>Period</th><th>Approved</th><th>Reference</th><th>Status</th><th class="text-end">Total</th>
@@ -656,7 +656,7 @@ require_once __DIR__ . '/../includes/permissions.php';
 
 <!-- Activate / Close Budget Modal -->
 <div class="modal fade" id="cycleModal" tabindex="-1" aria-labelledby="cycleModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="cycleModalLabel">Activate / Close Budget</h5>
@@ -904,14 +904,14 @@ require_once __DIR__ . '/../includes/permissions.php';
         const acctLabel = data.account_name || (acctInfo && acctInfo.name) || '—';
         if (mode === 'draft') {
             tr.innerHTML = `
-                <td class="line-cell-cat"><select class="form-select form-select-sm line-account" required>${accountOpts(data.account_id)}</select></td>
-                <td class="line-cell-cat"><span class="line-cat-label line-coa-label" title="">—</span></td>
-                <td class="line-cell-cat"><span class="line-cat-label line-natural-label" title="">—</span></td>
-                <td class="line-cell-cat"><span class="line-cat-label line-functional-label" title="">—</span></td>
-                <td class="line-cell-amount"><input type="text" class="form-control form-control-sm text-end line-amount" inputmode="numeric"></td>
-                <td class="text-end text-muted line-cell-remaining">—</td>
-                <td class="line-cell-notes"><input type="text" class="form-control form-control-sm line-notes" value="${escAttr(data.notes || '')}"></td>
-                <td class="line-actions"><button type="button" class="btn btn-sm btn-outline-danger rm-line"><i class="bi bi-x"></i></button></td>`;
+                <td class="line-cell-cat" data-label="Account"><select class="form-select form-select-sm line-account" required>${accountOpts(data.account_id)}</select></td>
+                <td class="line-cell-cat" data-label="CoA #"><span class="line-cat-label line-coa-label" title="">—</span></td>
+                <td class="line-cell-cat" data-label="Natural"><span class="line-cat-label line-natural-label" title="">—</span></td>
+                <td class="line-cell-cat" data-label="Functional"><span class="line-cat-label line-functional-label" title="">—</span></td>
+                <td class="line-cell-amount" data-label="Amount"><input type="text" class="form-control form-control-sm text-end line-amount" inputmode="numeric"></td>
+                <td class="text-end text-muted line-cell-remaining" data-label="Remaining">—</td>
+                <td class="line-cell-notes" data-label="Notes"><input type="text" class="form-control form-control-sm line-notes" value="${escAttr(data.notes || '')}"></td>
+                <td class="line-actions" data-label=""><button type="button" class="btn btn-sm btn-outline-danger rm-line"><i class="bi bi-x"></i></button></td>`;
             bindAmountInput(tr.querySelector('.line-amount'), data.budgeted_amount);
             const accSel = tr.querySelector('.line-account');
             accSel.addEventListener('change', () => syncLineCategoryLabels(tr));
@@ -923,13 +923,13 @@ require_once __DIR__ . '/../includes/permissions.php';
                 ? `<input type="text" class="form-control form-control-sm line-notes" value="${escAttr(notesVal)}">`
                 : `<span class="line-cell-text" title="${escAttr(notesVal)}">${escAttr(notesVal)}</span>`;
             tr.innerHTML = `
-                <td class="line-cell-cat"><span class="line-cell-text" title="${escAttr(acctLabel)}">${escAttr(acctLabel)}</span></td>
-                <td class="line-cell-cat"><span class="line-cat-label line-coa-label" title="${escAttr(coaLabel)}">${escAttr(coaLabel)}</span></td>
-                <td class="line-cell-cat"><span class="line-cat-label" title="${escAttr(natLabel)}">${escAttr(natLabel)}</span></td>
-                <td class="line-cell-cat"><span class="line-cat-label" title="${escAttr(funLabel)}">${escAttr(funLabel)}</span></td>
-                <td class="text-end line-cell-amount">${fmt(amt)}</td>
-                <td class="text-end text-muted line-cell-remaining">—</td>
-                <td class="line-cell-notes">${notesCell}</td><td class="line-actions"></td>`;
+                <td class="line-cell-cat" data-label="Account"><span class="line-cell-text" title="${escAttr(acctLabel)}">${escAttr(acctLabel)}</span></td>
+                <td class="line-cell-cat" data-label="CoA #"><span class="line-cat-label line-coa-label" title="${escAttr(coaLabel)}">${escAttr(coaLabel)}</span></td>
+                <td class="line-cell-cat" data-label="Natural"><span class="line-cat-label" title="${escAttr(natLabel)}">${escAttr(natLabel)}</span></td>
+                <td class="line-cell-cat" data-label="Functional"><span class="line-cat-label" title="${escAttr(funLabel)}">${escAttr(funLabel)}</span></td>
+                <td class="text-end line-cell-amount" data-label="Amount">${fmt(amt)}</td>
+                <td class="text-end text-muted line-cell-remaining" data-label="Remaining">—</td>
+                <td class="line-cell-notes" data-label="Notes">${notesCell}</td><td class="line-actions" data-label=""></td>`;
             tr.dataset.amount = amt;
         }
         linesBody.appendChild(tr);

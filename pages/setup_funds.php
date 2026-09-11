@@ -133,7 +133,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
 
     <!-- Fund Table -->
     <div class="table-responsive">
-        <table class="table table-striped table-hover temper-lookup-table" id="fundsTable">
+        <table class="table table-striped table-hover temper-lookup-table temper-stack-on-mobile" id="fundsTable">
             <thead class="table-dark">
                 <tr>
                     <th>Name</th>
@@ -167,7 +167,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     
     <!-- Add / Edit modal -->
     <div class="modal fade" id="fundFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-scrollable modal-fullscreen-sm-down">
             <div class="modal-content">
                 <form id="fundFormContent" method="POST" data-dirty-track>
                     <div class="modal-header">

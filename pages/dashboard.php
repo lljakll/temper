@@ -545,7 +545,7 @@ function dashboardParsePostedAccountIds(mixed $raw): array
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-striped table-hover mb-0">
+                    <table class="table table-striped table-hover mb-0 temper-stack-on-mobile">
                         <thead class="table-dark">
                             <tr>
                                 <th>Fund</th>
@@ -601,7 +601,7 @@ function dashboardParsePostedAccountIds(mixed $raw): array
                     </div>
                 <?php else: ?>
                     <div class="table-responsive">
-                        <table class="table table-striped table-hover mb-0 align-middle">
+                        <table class="table table-striped table-hover mb-0 align-middle temper-stack-on-mobile">
                             <thead class="table-dark">
                                 <tr>
                                     <th>Task</th>

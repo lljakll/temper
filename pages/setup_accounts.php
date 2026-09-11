@@ -269,7 +269,7 @@ if ($fr) {
 
     <!-- Account Table -->
     <div class="table-responsive">
-        <table class="table table-striped table-hover temper-lookup-table" id="accountsTable">
+        <table class="table table-striped table-hover temper-lookup-table temper-stack-on-mobile" id="accountsTable">
             <thead class="table-dark">
                 <tr>
                     <th>CoA #</th>
@@ -329,7 +329,7 @@ if ($fr) {
     
     <!-- Add / Edit modal -->
     <div class="modal fade" id="accountFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
             <div class="modal-content">
                 <form id="accountFormContent" method="POST" data-dirty-track>
                     <div class="modal-header">

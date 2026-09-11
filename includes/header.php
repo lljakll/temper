@@ -1292,6 +1292,443 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .page-title-row {
             gap: 0.5rem;
         }
+
+        /* ── Phone / small-tablet shell (banking-style) ──────────────────── */
+        @media (max-width: 767.98px) {
+            .mobile-topbar {
+                min-height: 3.15rem;
+                padding-top: 0.4rem !important;
+                padding-bottom: 0.4rem !important;
+            }
+            .mobile-topbar .btn {
+                min-width: 2.75rem;
+                min-height: 2.75rem;
+            }
+            .mobile-bottom-nav {
+                padding: 0.2rem 0.15rem calc(0.25rem + env(safe-area-inset-bottom, 0px));
+            }
+            .mobile-bottom-nav a {
+                min-height: 3.35rem;
+                font-size: 0.68rem;
+                font-weight: 600;
+                gap: 0.2rem;
+                padding: 0.3rem 0.1rem;
+            }
+            .mobile-bottom-nav a i {
+                font-size: 1.35rem;
+            }
+            body.has-mobile-nav {
+                padding-bottom: calc(4.6rem + env(safe-area-inset-bottom, 0px));
+            }
+            .temper-hotkey-banner {
+                bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+            }
+            .temper-lookup-title {
+                white-space: normal;
+            }
+            .temper-lookup-filter-wrap {
+                max-width: none;
+                flex: 1 1 100%;
+            }
+            .temper-lookup-actions {
+                width: 100%;
+            }
+            .temper-lookup-actions .btn {
+                flex: 1 1 auto;
+            }
+        }
+
+        /* ── Ledger mobile card list ─────────────────────────────────────── */
+        .ledger-card-list {
+            display: none;
+        }
+        @media (max-width: 767.98px) {
+            .ledger-page {
+                min-height: calc(100dvh - 8.75rem - env(safe-area-inset-bottom, 0px));
+            }
+            .ledger-workspace {
+                height: auto;
+                flex: 1 1 auto;
+                min-height: 220px;
+            }
+            .ledger-action-bar {
+                background: var(--bs-body-bg);
+            }
+            .ledger-action-bar #addTxBtn {
+                flex: 1 1 100%;
+            }
+            .ledger-action-bar #ledgerTotalLabel {
+                flex: 1 1 100%;
+                text-align: right;
+            }
+            .ledger-desktop-table {
+                display: none !important;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-desktop-table {
+                display: block !important;
+                flex: 0 0 auto !important;
+                max-height: min(70vh, 22rem);
+                min-height: 0;
+                overflow: auto;
+                border-bottom: 1px solid var(--bs-border-color);
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table {
+                min-width: 0 !important;
+                width: 100%;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table thead,
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table thead tr {
+                display: block;
+                width: 100%;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table tbody {
+                display: none;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table thead.ledger-sticky-head th {
+                display: block;
+                width: 100%;
+                position: static;
+                background-color: var(--bs-tertiary-bg) !important;
+                color: var(--bs-body-color) !important;
+                box-shadow: none;
+                border-bottom: 1px solid var(--bs-border-color);
+                padding: 0.55rem 0.75rem;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table .ledger-sort-btn {
+                color: var(--bs-body-color) !important;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table .ledger-filter-toggle.text-white-50 {
+                color: var(--bs-secondary-color) !important;
+            }
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table .ledger-th-check,
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table .ledger-th-attach,
+            .ledger-page.ledger-mobile-filters-open .ledger-tx-table thead th:not(.ledger-th-filter) {
+                display: none;
+            }
+            .ledger-card-list {
+                display: flex;
+                flex-direction: column;
+                flex: 1 1 auto;
+                min-height: 0;
+                overflow: auto;
+                -webkit-overflow-scrolling: touch;
+                padding: 0.5rem 0.65rem 0.85rem;
+                gap: 0.55rem;
+                background: var(--bs-body-bg);
+            }
+            .ledger-card-list-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 0.5rem;
+                padding: 0.15rem 0.15rem 0.35rem;
+            }
+            .ledger-card {
+                display: flex;
+                align-items: stretch;
+                gap: 0.55rem;
+                width: 100%;
+                margin: 0;
+                padding: 0.7rem 0.8rem;
+                border: 1px solid var(--bs-border-color);
+                border-radius: 0.7rem;
+                background: var(--bs-body-bg);
+                box-shadow: 0 0.08rem 0.35rem rgba(0, 0, 0, 0.05);
+                min-height: 4.35rem;
+                text-align: left;
+                color: inherit;
+                cursor: pointer;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .ledger-card:active,
+            .ledger-card.is-selected {
+                background-color: rgba(var(--bs-primary-rgb), 0.08);
+                border-color: rgba(var(--bs-primary-rgb), 0.35);
+            }
+            .ledger-card-check {
+                display: flex;
+                align-items: flex-start;
+                padding-top: 0.15rem;
+                flex: 0 0 auto;
+            }
+            .ledger-card-check .form-check-input {
+                width: 1.25rem;
+                height: 1.25rem;
+                margin: 0;
+            }
+            .ledger-card-main {
+                flex: 1 1 auto;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 0.15rem;
+            }
+            .ledger-card-top {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 0.75rem;
+            }
+            .ledger-card-date {
+                font-size: 0.78rem;
+                color: var(--bs-secondary-color);
+                font-weight: 600;
+                letter-spacing: 0.01em;
+            }
+            .ledger-card-amount {
+                text-align: right;
+                flex: 0 0 auto;
+                font-variant-numeric: tabular-nums;
+            }
+            .ledger-card-amt-value {
+                font-size: 1.12rem;
+                font-weight: 700;
+                font-family: var(--bs-font-monospace);
+                line-height: 1.15;
+                color: var(--bs-body-color);
+            }
+            .ledger-card-amt-value.is-debit {
+                color: var(--bs-primary);
+            }
+            .ledger-card-amt-value.is-credit {
+                color: var(--bs-success);
+            }
+            .ledger-card-amt-sides {
+                font-size: 0.68rem;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+            }
+            .ledger-card-payee {
+                font-size: 0.98rem;
+                font-weight: 600;
+                line-height: 1.25;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .ledger-card-meta {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 0.35rem 0.55rem;
+                font-size: 0.75rem;
+                color: var(--bs-secondary-color);
+            }
+            .ledger-card-empty {
+                padding: 2.5rem 1rem;
+                text-align: center;
+                color: var(--bs-secondary-color);
+            }
+        }
+
+        /* ── Stacked data tables on phones (dashboard, budget, setup, tasks) */
+        @media (max-width: 767.98px) {
+            table.temper-stack-on-mobile thead {
+                display: none;
+            }
+            table.temper-stack-on-mobile,
+            table.temper-stack-on-mobile tbody {
+                display: block;
+                width: 100%;
+            }
+            table.temper-stack-on-mobile tr {
+                display: block;
+                width: 100%;
+                background: var(--bs-body-bg);
+                border: 1px solid var(--bs-border-color);
+                border-radius: 0.65rem;
+                margin-bottom: 0.65rem;
+                padding: 0.65rem 0.85rem;
+                box-shadow: 0 0.06rem 0.28rem rgba(0, 0, 0, 0.04);
+            }
+            table.temper-stack-on-mobile td {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.75rem;
+                width: 100%;
+                padding: 0.28rem 0;
+                border: 0;
+                text-align: right !important;
+                white-space: normal !important;
+            }
+            table.temper-stack-on-mobile td::before {
+                content: attr(data-label);
+                font-weight: 600;
+                color: var(--bs-secondary-color);
+                text-align: left;
+                flex: 0 1 42%;
+                max-width: 42%;
+            }
+            table.temper-stack-on-mobile td:empty {
+                display: none;
+            }
+            table.temper-stack-on-mobile td:not([data-label])::before,
+            table.temper-stack-on-mobile td[colspan]::before {
+                content: none;
+            }
+            table.temper-stack-on-mobile td[colspan] {
+                display: block;
+                text-align: center !important;
+                justify-content: center;
+            }
+        }
+
+        /* ── Transaction / budget line grids wrap into stacked blocks ───── */
+        @media (max-width: 767.98px) {
+            #txFormModal .tx-date-col,
+            #txFormModal #transaction_date,
+            #txFormModal .tx-ref-col,
+            #txFormModal #reference_number {
+                min-width: 0 !important;
+                width: 100%;
+            }
+            #txLinesTable {
+                min-width: 0 !important;
+                width: 100%;
+            }
+            #txLinesTable thead {
+                display: none;
+            }
+            #txLinesTable,
+            #txLinesTable tbody {
+                display: block;
+                width: 100%;
+            }
+            #txLinesTable tr {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.15rem 0.65rem;
+                width: 100%;
+                border: 1px solid var(--bs-border-color);
+                border-radius: 0.65rem;
+                margin-bottom: 0.75rem;
+                padding: 0.7rem 0.8rem;
+                background: var(--bs-body-bg);
+            }
+            #txLinesTable td {
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.2rem;
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: none !important;
+                border: 0 !important;
+                padding: 0.28rem 0 !important;
+            }
+            #txLinesTable td:nth-child(-n+5),
+            #txLinesTable td:nth-child(8) {
+                grid-column: 1 / -1;
+            }
+            #txLinesTable td::before {
+                content: attr(data-label);
+                font-size: 0.72rem;
+                font-weight: 600;
+                color: var(--bs-secondary-color);
+            }
+            #txLinesTable td:nth-child(8)::before {
+                content: none;
+            }
+            #txLinesTable td:nth-child(8) {
+                align-items: flex-end;
+            }
+            #txLinesTable .line-amount,
+            #txLinesTable .line-note,
+            #txLinesTable .line-cat-label,
+            #txLinesTable select {
+                min-width: 0 !important;
+                max-width: none !important;
+                width: 100%;
+            }
+            #txLinesTable .line-cat-label {
+                white-space: normal;
+                max-width: none;
+            }
+            #linesTable {
+                min-width: 0 !important;
+                width: 100%;
+                table-layout: auto;
+            }
+            #linesTable thead {
+                display: none;
+            }
+            #linesTable,
+            #linesTable tbody {
+                display: block;
+                width: 100%;
+            }
+            #linesTable tr.line-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.15rem 0.65rem;
+                width: 100%;
+                border: 1px solid var(--bs-border-color);
+                border-radius: 0.65rem;
+                margin-bottom: 0.75rem;
+                padding: 0.7rem 0.8rem;
+                background: var(--bs-body-bg);
+            }
+            #linesTable td {
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.2rem;
+                width: 100% !important;
+                min-width: 0 !important;
+                border: 0 !important;
+                padding: 0.28rem 0 !important;
+                overflow: visible;
+                white-space: normal;
+            }
+            #linesTable td.line-cell-cat:first-child,
+            #linesTable td.line-cell-notes {
+                grid-column: 1 / -1;
+            }
+            #linesTable td.line-actions {
+                grid-column: 1 / -1;
+                align-items: flex-end;
+            }
+            #linesTable td::before {
+                content: attr(data-label);
+                font-size: 0.72rem;
+                font-weight: 600;
+                color: var(--bs-secondary-color);
+            }
+            #linesTable td.line-actions::before {
+                content: none;
+            }
+            .budget-lines-table-wrap {
+                overflow-x: visible;
+            }
+        }
+
+        /* ── Modals: full-height on phones, actions stay on screen ──────── */
+        @media (max-width: 575.98px) {
+            .modal-dialog.modal-xl,
+            .modal-dialog.modal-lg,
+            .modal-dialog.modal-fullscreen-sm-down {
+                margin: 0;
+                max-width: 100%;
+            }
+            .modal-dialog-scrollable.modal-fullscreen-sm-down .modal-content {
+                height: 100%;
+                border-radius: 0;
+            }
+            .modal-footer {
+                flex-wrap: wrap;
+                gap: 0.45rem;
+                position: sticky;
+                bottom: 0;
+                background: var(--bs-modal-bg, var(--bs-body-bg));
+                z-index: 3;
+                padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+            }
+            .modal-footer .btn {
+                min-height: 2.75rem;
+            }
+        }
     </style>
 </head>
     <script>
@@ -1876,10 +2313,19 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
     // Highlight active nav item (sidebar + bottom nav)
     window.setActiveNav = function(page) {
         if (!page) return;
+        var setupGroup = page.indexOf('setup_') === 0;
+        var moreGroup = (
+            page === 'tasks' || page === 'profile' || page === 'admin'
+            || page.indexOf('admin-') === 0
+            || page === 'ledger_import' || page === 'ledger_bank_export'
+        );
         document.querySelectorAll('[data-nav-page]').forEach(function(a) {
-            var on = a.getAttribute('data-nav-page') === page;
+            var key = a.getAttribute('data-nav-page');
+            var on = key === page;
+            if (setupGroup && key === 'setup') on = true;
+            if (key === 'more') on = moreGroup;
             a.classList.toggle('active', on);
-            if (on) {
+            if (on && key !== 'more' && key !== 'setup') {
                 var parent = a.closest('.collapse');
                 while (parent) {
                     parent.classList.add('show');

@@ -30,40 +30,50 @@ $footerDb->close();
 
 <?php $footerMustChange = !empty($_SESSION['must_change_password']); ?>
 <?php if (!$footerMustChange): ?>
-<!-- Mobile bottom navigation -->
+<!-- Mobile bottom navigation: primary destinations + More (full menu / offcanvas) -->
 <nav class="mobile-bottom-nav d-md-none" aria-label="Primary">
-<?php if ($footerCan('page.dashboard')): ?>
-    <a href="javascript:void(0)" onclick="loadPage('dashboard')" data-nav-page="dashboard">
-        <i class="bi bi-speedometer2"></i>
-        <span>Home</span>
+<?php
+    $bottomItems = [];
+    if ($footerCan('page.dashboard')) {
+        $bottomItems[] = ['page' => 'dashboard', 'nav' => 'dashboard', 'icon' => 'bi-speedometer2', 'label' => 'Home'];
+    }
+    if ($footerCan('page.ledger')) {
+        $bottomItems[] = ['page' => 'ledger', 'nav' => 'ledger', 'icon' => 'bi-currency-dollar', 'label' => 'Ledger'];
+    }
+    if ($footerCan('page.budget')) {
+        $bottomItems[] = ['page' => 'budget', 'nav' => 'budget', 'icon' => 'bi-graph-up', 'label' => 'Budget'];
+    }
+    if ($footerCan('page.reports')) {
+        $bottomItems[] = ['page' => 'reports', 'nav' => 'reports', 'icon' => 'bi-file-earmark-bar-graph', 'label' => 'Reports'];
+    }
+    if ($footerCan('admin.lookups')) {
+        $bottomItems[] = ['page' => 'setup_funds', 'nav' => 'setup', 'icon' => 'bi-sliders', 'label' => 'Setup'];
+    }
+    // Five destinations fill the bar; otherwise keep More so Tasks/System stay thumb-reachable.
+    $showMore = count($bottomItems) < 5;
+    $bottomItems = array_slice($bottomItems, 0, 5);
+    foreach ($bottomItems as $item):
+?>
+    <a href="javascript:void(0)" onclick="loadPage('<?= htmlspecialchars($item['page'], ENT_QUOTES) ?>')"
+       data-nav-page="<?= htmlspecialchars($item['nav'], ENT_QUOTES) ?>">
+        <i class="bi <?= htmlspecialchars($item['icon']) ?>" aria-hidden="true"></i>
+        <span><?= htmlspecialchars($item['label']) ?></span>
     </a>
-<?php endif; ?>
-<?php if ($footerCan('page.ledger')): ?>
-    <a href="javascript:void(0)" onclick="loadPage('ledger')" data-nav-page="ledger">
-        <i class="bi bi-currency-dollar"></i>
-        <span>Ledger</span>
-    </a>
-<?php endif; ?>
-<?php if ($footerCan('page.reports')): ?>
-    <a href="javascript:void(0)" onclick="loadPage('reports')" data-nav-page="reports">
-        <i class="bi bi-file-earmark-bar-graph"></i>
-        <span>Reports</span>
-    </a>
-<?php endif; ?>
-<?php if ($footerCan('page.tasks')): ?>
-    <a href="javascript:void(0)" onclick="loadPage('tasks')" data-nav-page="tasks">
-        <i class="bi bi-check2-square"></i>
-        <span>Tasks</span>
-    </a>
-<?php endif; ?>
-<?php if (!$footerCan('page.dashboard') && !$footerCan('page.ledger')): ?>
+<?php endforeach; ?>
+<?php if ($bottomItems === []): ?>
     <a href="javascript:void(0)" onclick="loadPage('profile')" data-nav-page="profile">
-        <i class="bi bi-person-circle"></i>
+        <i class="bi bi-person-circle" aria-hidden="true"></i>
         <span>Profile</span>
     </a>
     <a href="logout.php">
-        <i class="bi bi-box-arrow-right"></i>
+        <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
         <span>Logout</span>
+    </a>
+<?php elseif ($showMore): ?>
+    <a href="javascript:void(0)" data-bs-toggle="offcanvas" data-bs-target="#appSidebar"
+       aria-controls="appSidebar" data-nav-page="more" title="More">
+        <i class="bi bi-list" aria-hidden="true"></i>
+        <span>More</span>
     </a>
 <?php endif; ?>
 </nav>
@@ -223,6 +233,43 @@ $footerDb->close();
 
         window.showActionResponse = function(text) {
             window.toastFromPostResponse(text);
+        };
+
+        /**
+         * Copy thead labels onto tbody cells so .temper-stack-on-mobile can
+         * render a card-like stacked row on phones without duplicating markup.
+         */
+        window.temperLabelStackTables = function(root) {
+            const scope = root && root.querySelectorAll ? root : document;
+            const tables = [];
+            if (scope.matches && (scope.matches('table.temper-stack-on-mobile') || scope.matches('table.temper-lookup-table'))) {
+                tables.push(scope);
+            }
+            if (scope.querySelectorAll) {
+                scope.querySelectorAll('table.temper-stack-on-mobile, table.temper-lookup-table').forEach(function(t) {
+                    tables.push(t);
+                });
+            }
+            tables.forEach(function(table) {
+                if (!table.classList.contains('temper-stack-on-mobile')) {
+                    table.classList.add('temper-stack-on-mobile');
+                }
+                const headers = [];
+                const ths = table.querySelectorAll('thead th');
+                ths.forEach(function(th) {
+                    const clone = th.cloneNode(true);
+                    clone.querySelectorAll('.temper-sort-icon').forEach(function(el) { el.remove(); });
+                    headers.push((clone.textContent || '').replace(/\s+/g, ' ').trim());
+                });
+                table.querySelectorAll('tbody tr').forEach(function(tr) {
+                    const cells = tr.cells || [];
+                    for (let i = 0; i < cells.length; i++) {
+                        if (!cells[i].getAttribute('data-label') && headers[i]) {
+                            cells[i].setAttribute('data-label', headers[i]);
+                        }
+                    }
+                });
+            });
         };
 
         window.consumePageFlash = function(id) {
@@ -739,6 +786,9 @@ $footerDb->close();
                             filterInput: filterInput,
                             emptyMessage: opts.emptyMessage || 'No matching rows.'
                         });
+                    }
+                    if (typeof window.temperLabelStackTables === 'function') {
+                        window.temperLabelStackTables(root || table);
                     }
 
                     // ── Table-only font size ───────────────────────────────
@@ -1353,6 +1403,9 @@ $footerDb->close();
             // Lift fragment modals out of #main-content-col stacking context
             if (typeof window.mountFragmentModals === 'function') {
                 window.mountFragmentModals(document.getElementById('main-content'));
+            }
+            if (typeof window.temperLabelStackTables === 'function') {
+                window.temperLabelStackTables(document.getElementById('main-content'));
             }
             const opts = options || {};
             if (opts.skipFlash) {

@@ -329,6 +329,26 @@ Notes / Context / Interpretation: The restore system should not just fail if the
 Completion Status:
 
 
+#27 - 2026-09-11 - Ledger / Mobile / Dashboard - Enhancement - Med
+Expected:
+Mobile ledger has no stacked action button grid. Actions live in a header-triggered flyout that opens from a small icon and closes after use. Filter icon sits in the header to the left of that flyout control. Logout is not duplicated in the top-right (already on the main sidebar). Transaction list shows the full set (same completeness as desktop / infinite scroll). Dashboard no longer shows the old non-working cards.
+Actual:
+Mobile ledger shows large Add/Delete/Clear/Rec/Filters controls and a partial transaction list. Top-right header has a logout icon. Dashboard cards are stale/non-functional after later schema and fund-balance changes.
+Notes / Context / Interpretation:
+Local mobile prototype follow-up. Pancake/main sidebar stays. Flyout is for ledger actions only.
+
+Completion Status:
+
+
+#28 - 2026-09-11 - Ledger / Column filters - Bug - Low
+Expected:
+Filter dropdowns grow to the right when there is room. If they cannot grow further right, they stop. They must not shift their left edge further left or push labels off-screen.
+Actual:
+When the dropdown cannot expand right, it expands left and can carry text off the viewport (desktop and mobile).
+Notes / Context / Interpretation:
+Separate from the mobile chrome work.
+
+Completion Status:
 
 
 

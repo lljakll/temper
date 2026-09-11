@@ -164,7 +164,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
 
     <!-- Natural Categories Table -->
     <div class="table-responsive">
-        <table class="table table-striped table-hover temper-lookup-table" id="naturalTable">
+        <table class="table table-striped table-hover temper-lookup-table temper-stack-on-mobile" id="naturalTable">
             <thead class="table-dark">
                 <tr>
                     <th>Name</th>
@@ -194,7 +194,7 @@ require_once __DIR__ . '/../includes/page_bootstrap.php';
     
     <!-- Add / Edit modal -->
     <div class="modal fade" id="naturalFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-scrollable modal-fullscreen-sm-down">
             <div class="modal-content">
                 <form id="naturalFormContent" method="POST" data-dirty-track>
                     <div class="modal-header">

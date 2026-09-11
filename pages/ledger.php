@@ -1967,6 +1967,101 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             . $badge
             . '</button></td>';
     };
+    $fmtCardDate = static function ($iso): string {
+        $raw = trim((string)$iso);
+        if ($raw === '') {
+            return '';
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return $raw;
+        }
+        return date('M j, Y', $ts);
+    };
+    $fmtCardAmount = static function (float $debAmt, float $credAmt) use ($fmtLedgerAmt): string {
+        $debDisplay = $fmtLedgerAmt($debAmt);
+        $credDisplay = $fmtLedgerAmt($credAmt);
+        $balanced = abs($debAmt - $credAmt) < 0.005;
+        $total = max(abs($debAmt), abs($credAmt));
+        $totalDisplay = $fmtLedgerAmt($total) !== '' ? $fmtLedgerAmt($total) : '$0.00';
+        if ($debDisplay !== '' && $credDisplay === '') {
+            return '<div class="ledger-card-amount">'
+                . '<div class="ledger-card-amt-value is-debit">' . htmlspecialchars($debDisplay) . '</div>'
+                . '<div class="ledger-card-amt-sides"><span class="text-primary">Debit</span></div>'
+                . '</div>';
+        }
+        if ($credDisplay !== '' && $debDisplay === '') {
+            return '<div class="ledger-card-amount">'
+                . '<div class="ledger-card-amt-value is-credit">' . htmlspecialchars($credDisplay) . '</div>'
+                . '<div class="ledger-card-amt-sides"><span class="text-success">Credit</span></div>'
+                . '</div>';
+        }
+        $sides = $balanced
+            ? '<span class="text-primary">Dr</span> <span class="text-success">Cr</span>'
+            : '<span class="text-primary">Dr ' . htmlspecialchars($debDisplay) . '</span> '
+                . '<span class="text-success">Cr ' . htmlspecialchars($credDisplay) . '</span>';
+        return '<div class="ledger-card-amount">'
+            . '<div class="ledger-card-amt-value">' . htmlspecialchars($totalDisplay) . '</div>'
+            . '<div class="ledger-card-amt-sides">' . $sides . '</div>'
+            . '</div>';
+    };
+    $fmtCardAttach = static function (int $txId, int $docCount): string {
+        if ($docCount < 1) {
+            return '';
+        }
+        $label = $docCount === 1 ? 'View 1 attachment' : ('View ' . $docCount . ' attachments');
+        $badge = $docCount > 1
+            ? '<span class="badge rounded-pill text-bg-secondary ledger-attach-count">' . $docCount . '</span>'
+            : '';
+        return '<button type="button" class="btn btn-link btn-sm p-0 ledger-attach-btn"'
+            . ' data-tx-id="' . $txId . '"'
+            . ' title="' . htmlspecialchars($label) . '"'
+            . ' aria-label="' . htmlspecialchars($label) . '">'
+            . '<i class="bi bi-paperclip" aria-hidden="true"></i>'
+            . $badge
+            . '</button>';
+    };
+    $renderTxCard = static function (array $r) use ($fmtCardDate, $fmtCardAmount, $fmtCardAttach): string {
+        $tid = (int)($r['id'] ?? 0);
+        $isCleared = !empty($r['is_cleared']) || (($r['status'] ?? '') === 'cleared' || !empty($r['cleared_date']));
+        $statusBadge = 'bg-secondary';
+        $statusText = 'Pending';
+        if (($r['status'] ?? '') === 'cleared') { $statusBadge = 'bg-success'; $statusText = 'Cleared'; }
+        elseif (($r['status'] ?? '') === 'reconciled') { $statusBadge = 'bg-info'; $statusText = 'Reconciled'; }
+        $debAmt = (float)($r['debits'] ?? $r['total_debits'] ?? 0);
+        $credAmt = (float)($r['credits'] ?? $r['total_credits'] ?? 0);
+        $payTo = trim((string)($r['pay_to'] ?? ''));
+        $descFull = trim((string)($r['description'] ?? ''));
+        $payee = $payTo !== '' ? $payTo : ($descFull !== '' ? $descFull : '—');
+        $ref = trim((string)($r['reference_number'] ?? ''));
+        $checkNo = trim((string)($r['check_number'] ?? ''));
+        $docCount = (int)($r['doc_count'] ?? 0);
+        $attach = $fmtCardAttach($tid, $docCount);
+        return '<article class="ledger-card" data-id="' . $tid . '"'
+            . ' data-cleared="' . ($isCleared ? '1' : '0') . '"'
+            . ' data-status="' . htmlspecialchars((string)($r['status'] ?? 'pending')) . '"'
+            . ' data-debits="' . htmlspecialchars((string)$debAmt) . '"'
+            . ' data-credits="' . htmlspecialchars((string)$credAmt) . '"'
+            . ' data-doc-count="' . $docCount . '"'
+            . ' role="button" tabindex="0">'
+            . '<div class="ledger-card-check">'
+            . '<input type="checkbox" class="form-check-input ledger-card-cb" value="' . $tid . '" aria-label="Select transaction">'
+            . '</div>'
+            . '<div class="ledger-card-main">'
+            . '<div class="ledger-card-top">'
+            . '<span class="ledger-card-date">' . htmlspecialchars($fmtCardDate($r['transaction_date'] ?? '')) . '</span>'
+            . $fmtCardAmount($debAmt, $credAmt)
+            . '</div>'
+            . '<div class="ledger-card-payee">' . htmlspecialchars($payee) . '</div>'
+            . '<div class="ledger-card-meta">'
+            . ($ref !== '' ? '<span class="font-monospace">' . htmlspecialchars($ref) . '</span>' : '')
+            . ($checkNo !== '' ? '<span>Chk ' . htmlspecialchars($checkNo) . '</span>' : '')
+            . '<span class="badge ' . $statusBadge . '">' . $statusText . '</span>'
+            . $attach
+            . '</div>'
+            . '</div>'
+            . '</article>';
+    };
 
     $hasActiveFilters = false;
     foreach ($active_filters as $fk => $fv) {
@@ -2013,11 +2108,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">Add Transaction</span><span class="d-sm-none">Add</span>
         </button>
         <?php endif; ?>
-        <button type="button" id="viewTxBtn" class="btn btn-outline-secondary" disabled title="View selected (Ctrl+V)">
+        <button type="button" id="viewTxBtn" class="btn btn-outline-secondary d-none d-md-inline-flex" disabled title="View selected (Ctrl+V)">
             <i class="bi bi-eye"></i> View
         </button>
         <?php if ($canWriteLedger): ?>
-        <button type="button" id="editTxBtn" class="btn btn-outline-secondary" disabled title="Edit selected (Ctrl+E)">
+        <button type="button" id="editTxBtn" class="btn btn-outline-secondary d-none d-md-inline-flex" disabled title="Edit selected (Ctrl+E)">
             <i class="bi bi-pencil"></i> Edit
         </button>
         <?php if ($canDeleteLedger): ?>
@@ -2027,7 +2122,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         <?php endif; ?>
         <?php if ($canBulkApply): ?>
         <!-- TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired -->
-        <button type="button" id="bulkApplyBtn" class="btn btn-outline-secondary" disabled
+        <button type="button" id="bulkApplyBtn" class="btn btn-outline-secondary d-none d-md-inline-flex" disabled
                 title="Temporary: apply account, fund, description, or line note to selected pending transactions">
             <i class="bi bi-layer-forward"></i> <span class="d-none d-sm-inline">Bulk apply</span>
         </button>
@@ -2041,9 +2136,15 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         <?php else: ?>
         <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
         <?php endif; ?>
+        <button type="button" id="ledgerMobileFilterBtn" class="btn btn-outline-secondary d-md-none"
+                aria-expanded="false" aria-controls="ledgerTableScroll" title="Show column filters">
+            <i class="bi bi-funnel"></i> Filters
+            <span id="ledgerMobileFilterBadge" class="badge text-bg-warning ms-1<?= $hasActiveFilters ? '' : ' d-none' ?>">On</span>
+        </button>
         <div class="d-flex align-items-center gap-1 ledger-dblclick-toggle"
-             title="Default action when double-clicking a transaction row">
-            <span class="small text-muted text-nowrap d-none d-sm-inline">Double-click</span>
+             title="Default action when double-clicking a transaction row (tap on phones)">
+            <span class="small text-muted text-nowrap d-none d-md-inline">Double-click</span>
+            <span class="small text-muted text-nowrap d-md-none">Tap opens</span>
             <div class="btn-group btn-group-sm" role="group" aria-label="Double-click row action">
                 <input type="radio" class="btn-check" name="ledgerDblClickMode" id="ledgerDblClickView"
                        value="view" autocomplete="off" checked>
@@ -2057,7 +2158,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         <button type="button" id="clearAllFiltersBtn" class="btn btn-outline-secondary btn-sm ms-md-2" title="Clear all column filters (Ctrl+C)"<?= $hasActiveFilters ? '' : ' disabled' ?>>
             <i class="bi bi-funnel"></i> Clear all filters
         </button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-ledger-hotkey-help
+        <button type="button" class="btn btn-outline-secondary btn-sm d-none d-md-inline-flex" data-ledger-hotkey-help
                 title="Keyboard shortcuts (Ctrl+?)" aria-label="Keyboard shortcuts">
             <i class="bi bi-keyboard" aria-hidden="true"></i>
         </button>
@@ -2069,10 +2170,10 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             <div class="card-header py-2 d-flex flex-wrap align-items-center gap-2 flex-shrink-0">
                 <strong>Transactions</strong>
                 <small class="text-muted d-none d-md-inline">(double-click uses the View/Edit toggle; checkbox / Ctrl / Shift for multi-select)</small>
-                <small class="text-muted d-md-none">(double-tap uses the View/Edit toggle)</small>
+                <small class="text-muted d-md-none">Tap a transaction to open it</small>
             </div>
             <div class="card-body p-0 d-flex flex-column" style="flex:1 1 auto; min-height:0;">
-                <div class="table-responsive ledger-table-scroll" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
+                <div class="table-responsive ledger-table-scroll ledger-desktop-table" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
                     <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 1240px;">
                         <thead class="table-dark ledger-sticky-head">
                             <tr class="ledger-col-titles">
@@ -2169,6 +2270,9 @@ foreach ($colDefs as $col):
                             </tr>
                         </thead>
                         <tbody id="txTableBody">
+                            <?php
+                                $txCardsHtml = '';
+                            ?>
                             <?php if (count($tx_list_rows) > 0): ?>
                                 <?php foreach ($tx_list_rows as $r): ?>
                                     <?php
@@ -2207,6 +2311,7 @@ foreach ($colDefs as $col):
                                         <td class="text-center"><?= (int)$r['num_lines'] ?></td>
                                         <?= $fmtAttachCell($tid, (int)($r['doc_count'] ?? 0)) ?>
                                     </tr>
+                                    <?php $txCardsHtml .= $renderTxCard($r); ?>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr class="ledger-empty-row">
@@ -2215,6 +2320,22 @@ foreach ($colDefs as $col):
                             <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+                <div id="ledgerCardList" class="ledger-card-list" aria-label="Transactions">
+                    <div class="ledger-card-list-head">
+                        <label class="d-flex align-items-center gap-2 small mb-0">
+                            <input type="checkbox" id="selectAllCards" class="form-check-input" title="Select all loaded">
+                            Select all
+                        </label>
+                        <span class="small text-muted">Tap to <?= $canWriteLedger ? 'view or edit' : 'view' ?></span>
+                    </div>
+                    <div id="ledgerCardListBody">
+                        <?php if ($txCardsHtml !== ''): ?>
+                            <?= $txCardsHtml ?>
+                        <?php else: ?>
+                            <div class="ledger-card-empty">No transactions match the current filters.<?= $canWriteLedger ? ' Use Add to create one.' : '' ?></div>
+                        <?php endif; ?>
+                    </div>
                 </div>
                 <div id="ledgerLoadMoreBar" class="d-flex justify-content-center align-items-center px-2 py-2 small bg-body-tertiary border-top flex-shrink-0 gap-2<?= $list_has_more ? '' : ' d-none' ?>">
                     <div id="ledgerLoadingIndicator" class="d-none text-muted">
@@ -2230,7 +2351,7 @@ foreach ($colDefs as $col):
 
 <!-- Transaction Add / Edit / View modal -->
 <div class="modal fade" id="txFormModal" tabindex="-1" aria-labelledby="formTitle" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-sm-down">
         <div class="modal-content">
             <form id="txForm" method="post" data-dirty-track>
                 <div class="modal-header py-2">
@@ -2251,11 +2372,11 @@ foreach ($colDefs as $col):
                     <input type="hidden" name="lines_json" id="lines_json">
 
                     <div class="row g-2">
-                        <div class="col-6 col-sm-auto col-md-3 col-xl-2 tx-date-col">
+                        <div class="col-12 col-sm-6 col-md-3 col-xl-2 tx-date-col">
                             <label class="form-label small mb-1">Date *</label>
                             <input type="date" class="form-control form-control-sm" name="transaction_date" id="transaction_date" required>
                         </div>
-                        <div class="col-6 col-sm-auto col-md-2 col-xl-2 tx-ref-col">
+                        <div class="col-12 col-sm-6 col-md-2 col-xl-2 tx-ref-col">
                             <label class="form-label small mb-1" for="reference_number">
                                 Ref # *
                                 <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
@@ -2277,7 +2398,7 @@ foreach ($colDefs as $col):
                             <label class="form-label small mb-1">Pay To</label>
                             <input type="text" class="form-control form-control-sm" name="pay_to" id="pay_to" placeholder="Vendor or person">
                         </div>
-                        <div class="col-6 col-sm-4 col-md-3 col-xl-2">
+                        <div class="col-12 col-sm-4 col-md-3 col-xl-2">
                             <label class="form-label small mb-1">Check #</label>
                             <input type="text" class="form-control form-control-sm" name="check_number" id="check_number">
                         </div>
@@ -2415,7 +2536,7 @@ foreach ($colDefs as $col):
                         </div>
                     </div>
                 </div>
-                <div class="modal-footer py-2 flex-wrap gap-2">
+                <div class="modal-footer py-2 flex-wrap gap-2 sticky-bottom">
                     <?php if ($canDeleteLedger): ?>
                     <button type="button" id="deleteFromEditBtn" class="btn btn-sm btn-outline-danger d-none me-auto"
                             title="Delete this pending transaction">
@@ -3147,8 +3268,12 @@ foreach ($colDefs as $col):
     }
 
     function updateClearAllFiltersBtn() {
-        if (!clearAllFiltersBtn) return;
-        clearAllFiltersBtn.disabled = !hasAnyActiveFilter();
+        const active = hasAnyActiveFilter();
+        if (clearAllFiltersBtn) clearAllFiltersBtn.disabled = !active;
+        const badge = document.getElementById('ledgerMobileFilterBadge');
+        if (badge) badge.classList.toggle('d-none', !active);
+        const filterBtn = document.getElementById('ledgerMobileFilterBtn');
+        if (filterBtn) filterBtn.classList.toggle('btn-warning', active);
     }
 
     function isColumnFilterActive(col, f) {
@@ -3511,6 +3636,155 @@ foreach ($colDefs as $col):
             + '</tr>';
     }
 
+    function fmtCardDateJs(iso) {
+        const raw = String(iso || '').trim();
+        if (!raw) return '';
+        const d = new Date(raw + 'T12:00:00');
+        if (isNaN(d.getTime())) return raw;
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function cardAmountHtml(debAmt, credAmt) {
+        const debDisplay = fmtLedgerAmtJs(debAmt);
+        const credDisplay = fmtLedgerAmtJs(credAmt);
+        const debN = parseFloat(debAmt) || 0;
+        const credN = parseFloat(credAmt) || 0;
+        const balanced = Math.abs(debN - credN) < 0.005;
+        const totalDisplay = fmtLedgerAmtJs(Math.max(Math.abs(debN), Math.abs(credN))) || '$0.00';
+        if (debDisplay && !credDisplay) {
+            return '<div class="ledger-card-amount"><div class="ledger-card-amt-value is-debit">' + escHtml(debDisplay)
+                + '</div><div class="ledger-card-amt-sides"><span class="text-primary">Debit</span></div></div>';
+        }
+        if (credDisplay && !debDisplay) {
+            return '<div class="ledger-card-amount"><div class="ledger-card-amt-value is-credit">' + escHtml(credDisplay)
+                + '</div><div class="ledger-card-amt-sides"><span class="text-success">Credit</span></div></div>';
+        }
+        const sides = balanced
+            ? '<span class="text-primary">Dr</span> <span class="text-success">Cr</span>'
+            : '<span class="text-primary">Dr ' + escHtml(debDisplay) + '</span> <span class="text-success">Cr ' + escHtml(credDisplay) + '</span>';
+        return '<div class="ledger-card-amount"><div class="ledger-card-amt-value">' + escHtml(totalDisplay)
+            + '</div><div class="ledger-card-amt-sides">' + sides + '</div></div>';
+    }
+
+    function cardAttachHtml(txId, docCount) {
+        const n = parseInt(docCount, 10) || 0;
+        if (n < 1) return '';
+        const label = n === 1 ? 'View 1 attachment' : ('View ' + n + ' attachments');
+        const badge = n > 1
+            ? '<span class="badge rounded-pill text-bg-secondary ledger-attach-count">' + n + '</span>'
+            : '';
+        return '<button type="button" class="btn btn-link btn-sm p-0 ledger-attach-btn" data-tx-id="'
+            + (parseInt(txId, 10) || 0)
+            + '" title="' + escHtml(label) + '" aria-label="' + escHtml(label) + '">'
+            + '<i class="bi bi-paperclip" aria-hidden="true"></i>'
+            + badge
+            + '</button>';
+    }
+
+    function renderTxCard(r) {
+        const tid = parseInt(r.id, 10) || 0;
+        const isCleared = r.is_cleared || r.status === 'cleared' || !!r.cleared_date;
+        const debAmt = r.debits != null ? r.debits : (r.total_debits || 0);
+        const credAmt = r.credits != null ? r.credits : (r.total_credits || 0);
+        const payTo = String(r.pay_to || '').trim();
+        const desc = String(r.description || '').trim();
+        const payee = payTo || desc || '—';
+        const ref = String(r.reference_number || '').trim();
+        const checkNo = String(r.check_number || '').trim();
+        const st = String(r.status || 'pending');
+        let badge = 'bg-secondary';
+        let text = 'Pending';
+        if (st === 'cleared') { badge = 'bg-success'; text = 'Cleared'; }
+        else if (st === 'reconciled') { badge = 'bg-info'; text = 'Reconciled'; }
+        const meta = [];
+        if (ref) meta.push('<span class="font-monospace">' + escHtml(ref) + '</span>');
+        if (checkNo) meta.push('<span>Chk ' + escHtml(checkNo) + '</span>');
+        meta.push('<span class="badge ' + badge + '">' + text + '</span>');
+        meta.push(cardAttachHtml(tid, r.doc_count));
+        return '<article class="ledger-card" data-id="' + tid + '" data-cleared="' + (isCleared ? '1' : '0')
+            + '" data-status="' + escHtml(st) + '" data-debits="' + escHtml(String(debAmt))
+            + '" data-credits="' + escHtml(String(credAmt)) + '" data-doc-count="'
+            + (parseInt(r.doc_count, 10) || 0) + '" role="button" tabindex="0">'
+            + '<div class="ledger-card-check"><input type="checkbox" class="form-check-input ledger-card-cb" value="'
+            + tid + '" aria-label="Select transaction"></div>'
+            + '<div class="ledger-card-main"><div class="ledger-card-top">'
+            + '<span class="ledger-card-date">' + escHtml(fmtCardDateJs(r.transaction_date || '')) + '</span>'
+            + cardAmountHtml(debAmt, credAmt)
+            + '</div><div class="ledger-card-payee">' + escHtml(payee) + '</div>'
+            + '<div class="ledger-card-meta">' + meta.join('') + '</div></div></article>';
+    }
+
+    function ledgerCardListBody() {
+        return document.getElementById('ledgerCardListBody');
+    }
+
+    function emptyCardHtml() {
+        return '<div class="ledger-card-empty">No transactions match the current filters.</div>';
+    }
+
+    function emptyRowHtml() {
+        return '<tr class="ledger-empty-row"><td colspan="13" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+    }
+
+    function paintTxList(rows, reset) {
+        const cards = ledgerCardListBody();
+        if (reset) {
+            if (!txTableBody) return;
+            if (!rows.length) {
+                txTableBody.innerHTML = emptyRowHtml();
+                if (cards) cards.innerHTML = emptyCardHtml();
+            } else {
+                txTableBody.innerHTML = rows.map(renderTxRow).join('');
+                if (cards) cards.innerHTML = rows.map(renderTxCard).join('');
+            }
+            if (selectAll) selectAll.checked = false;
+            const selectAllCards = document.getElementById('selectAllCards');
+            if (selectAllCards) selectAllCards.checked = false;
+            lastAnchorRow = null;
+            updateButtonStates();
+            syncCardSelectionFromTable();
+            return;
+        }
+        if (rows.length && txTableBody) {
+            const empty = txTableBody.querySelector('.ledger-empty-row');
+            if (empty) empty.remove();
+            txTableBody.insertAdjacentHTML('beforeend', rows.map(renderTxRow).join(''));
+            if (cards) {
+                const emptyCard = cards.querySelector('.ledger-card-empty');
+                if (emptyCard) emptyCard.remove();
+                cards.insertAdjacentHTML('beforeend', rows.map(renderTxCard).join(''));
+            }
+        }
+        syncCardSelectionFromTable();
+    }
+
+    function syncCardSelectionFromTable() {
+        if (!txTableBody) return;
+        const selected = {};
+        txTableBody.querySelectorAll('.tx-cb:checked').forEach(function(cb) {
+            selected[String(cb.value)] = true;
+        });
+        document.querySelectorAll('#ledgerCardListBody .ledger-card').forEach(function(card) {
+            const id = String(card.dataset.id || '');
+            const on = !!selected[id];
+            card.classList.toggle('is-selected', on);
+            const ccb = card.querySelector('.ledger-card-cb');
+            if (ccb) ccb.checked = on;
+        });
+        const selectAllCards = document.getElementById('selectAllCards');
+        if (selectAllCards && txTableBody) {
+            const all = txTableBody.querySelectorAll('.tx-cb');
+            const checked = txTableBody.querySelectorAll('.tx-cb:checked');
+            selectAllCards.checked = all.length > 0 && checked.length === all.length;
+        }
+    }
+
+    function setTableRowChecked(id, checked) {
+        if (!txTableBody || !id) return;
+        const cb = txTableBody.querySelector('.tx-cb[value="' + id + '"]');
+        if (cb) cb.checked = !!checked;
+    }
+
     function attachCellHtml(txId, docCount) {
         const n = parseInt(docCount, 10) || 0;
         if (n < 1) {
@@ -3536,15 +3810,27 @@ foreach ($colDefs as $col):
         const body = document.getElementById('txTableBody');
         if (!body) return;
         const row = body.querySelector('tr[data-id="' + id + '"]');
-        if (!row) return;
         const n = parseInt(docCount, 10) || 0;
-        row.dataset.docCount = String(n);
-        const cell = row.querySelector('.ledger-attach-cell');
-        if (cell) {
-            const tmp = document.createElement('tbody');
-            tmp.innerHTML = '<tr>' + attachCellHtml(id, n) + '</tr>';
-            const next = tmp.querySelector('td');
-            if (next) cell.replaceWith(next);
+        if (row) {
+            row.dataset.docCount = String(n);
+            const cell = row.querySelector('.ledger-attach-cell');
+            if (cell) {
+                const tmp = document.createElement('tbody');
+                tmp.innerHTML = '<tr>' + attachCellHtml(id, n) + '</tr>';
+                const next = tmp.querySelector('td');
+                if (next) cell.replaceWith(next);
+            }
+        }
+        const card = document.querySelector('#ledgerCardListBody .ledger-card[data-id="' + id + '"]');
+        if (card) {
+            card.dataset.docCount = String(n);
+            const meta = card.querySelector('.ledger-card-meta');
+            if (meta) {
+                meta.querySelectorAll('.ledger-attach-btn').forEach(function(btn) { btn.remove(); });
+                if (n > 0) {
+                    meta.insertAdjacentHTML('beforeend', cardAttachHtml(id, n));
+                }
+            }
         }
     }
 
@@ -3635,22 +3921,7 @@ foreach ($colDefs as $col):
                     return;
                 }
                 const rows = data.rows || [];
-                if (reset) {
-                    if (!txTableBody) return;
-                    if (rows.length === 0) {
-                        txTableBody.innerHTML = '<tr class="ledger-empty-row"><td colspan="13" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
-                    } else {
-                        txTableBody.innerHTML = rows.map(renderTxRow).join('');
-                    }
-                    if (selectAll) selectAll.checked = false;
-                    lastAnchorRow = null;
-                    updateButtonStates();
-                } else if (rows.length && txTableBody) {
-                    // Remove empty placeholder if present
-                    const empty = txTableBody.querySelector('.ledger-empty-row');
-                    if (empty) empty.remove();
-                    txTableBody.insertAdjacentHTML('beforeend', rows.map(renderTxRow).join(''));
-                }
+                paintTxList(rows, reset);
                 listState.total = data.total || 0;
                 listState.offset = (data.offset || 0) + rows.length;
                 listState.limit = data.limit || limit;
@@ -3852,14 +4123,32 @@ foreach ($colDefs as $col):
         if (clearAllFiltersBtn) {
             clearAllFiltersBtn.addEventListener('click', () => clearAllFilters());
         }
-        // Infinite scroll
+        const mobileFilterBtn = document.getElementById('ledgerMobileFilterBtn');
+        if (mobileFilterBtn) {
+            mobileFilterBtn.addEventListener('click', function() {
+                const pageEl = document.querySelector('.ledger-page');
+                if (!pageEl) return;
+                const open = pageEl.classList.toggle('ledger-mobile-filters-open');
+                mobileFilterBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+                mobileFilterBtn.classList.toggle('active', open);
+            });
+        }
+        function maybeLoadMore(el) {
+            if (!el || listState.loading || !listState.has_more) return;
+            if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
+                fetchTransactionList({ reset: false });
+            }
+        }
+        // Infinite scroll (desktop table + mobile card list)
         if (ledgerTableScroll) {
             ledgerTableScroll.addEventListener('scroll', function() {
-                if (listState.loading || !listState.has_more) return;
-                const el = ledgerTableScroll;
-                if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
-                    fetchTransactionList({ reset: false });
-                }
+                maybeLoadMore(ledgerTableScroll);
+            });
+        }
+        const cardList = document.getElementById('ledgerCardList');
+        if (cardList) {
+            cardList.addEventListener('scroll', function() {
+                maybeLoadMore(cardList);
             });
         }
         updateListFooter();
@@ -4100,20 +4389,20 @@ foreach ($colDefs as $col):
         // Debit / Credit columns: user enters amount in either column for any account.
         // Natural / Functional are read-only labels pulled from the account (budget-page pattern).
         row.innerHTML = `
-            <td><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
-            <td><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
-            <td><span class="line-cat-label line-natural-label" title="">—</span></td>
-            <td><span class="line-cat-label line-functional-label" title="">—</span></td>
-            <td>
+            <td data-label="Account"><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
+            <td data-label="Fund"><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
+            <td data-label="Natural"><span class="line-cat-label line-natural-label" title="">—</span></td>
+            <td data-label="Functional"><span class="line-cat-label line-functional-label" title="">—</span></td>
+            <td data-label="Note">
                 <input type="text" class="form-control form-control-sm line-note" maxlength="255" placeholder="" autocomplete="off"${ro}>
             </td>
-            <td>
+            <td data-label="Debit">
                 <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
             </td>
-            <td>
+            <td data-label="Credit">
                 <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-credit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
             </td>
-            <td><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
+            <td data-label=""><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
         `;
         row.dataset.lineType = '';
         row.dataset.naturalId = '';
@@ -5810,14 +6099,21 @@ foreach ($colDefs as $col):
         if (!txTableBody || !id) return;
         const row = txTableBody.querySelector('tr[data-id="' + id + '"]');
         if (row) row.remove();
+        const card = document.querySelector('#ledgerCardListBody .ledger-card[data-id="' + id + '"]');
+        if (card) card.remove();
         const remaining = txTableBody.querySelectorAll('tr[data-id]');
         if (remaining.length === 0 && !txTableBody.querySelector('.ledger-empty-row')) {
             const tr = document.createElement('tr');
             tr.className = 'ledger-empty-row';
             tr.innerHTML = '<td colspan="13" class="text-center text-muted py-4">No transactions match the current filters.</td>';
             txTableBody.appendChild(tr);
+            const cards = ledgerCardListBody();
+            if (cards && !cards.querySelector('.ledger-card-empty')) {
+                cards.innerHTML = emptyCardHtml();
+            }
         }
         updateButtonStates();
+        syncCardSelectionFromTable();
     }
 
     function submitPendingDelete() {
@@ -6820,7 +7116,17 @@ foreach ($colDefs as $col):
 
     function afterSelectionChanged() {
         updateButtonStates();
-        // Selection alone does not open the form; use View / Edit / double-click.
+        syncCardSelectionFromTable();
+        // Selection alone does not open the form; use View / Edit / double-click / tap.
+    }
+
+    function openRowDefaultAction(id) {
+        if (!id) return;
+        if (getDblClickAction() === 'edit' && canWriteLedger) {
+            openEditForId(id);
+        } else {
+            openViewForId(id);
+        }
     }
 
     function loadView(id) {
@@ -6906,11 +7212,63 @@ foreach ($colDefs as $col):
             lastAnchorRow = row;
             syncSelectAllState();
             afterSelectionChanged();
-            if (getDblClickAction() === 'edit' && canWriteLedger) {
-                openEditForId(id);
-            } else {
-                openViewForId(id);
+            openRowDefaultAction(id);
+        });
+    }
+
+    const cardListBody = ledgerCardListBody();
+    const selectAllCards = document.getElementById('selectAllCards');
+    if (selectAllCards) {
+        selectAllCards.addEventListener('change', function() {
+            if (selectAll) {
+                selectAll.checked = selectAllCards.checked;
+                selectAll.dispatchEvent(new Event('change'));
+            } else if (txTableBody) {
+                txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+                    cb.checked = selectAllCards.checked;
+                });
+                afterSelectionChanged();
             }
+        });
+    }
+    if (cardListBody) {
+        cardListBody.addEventListener('change', function(e) {
+            const cb = e.target.closest('.ledger-card-cb');
+            if (!cb) return;
+            setTableRowChecked(parseInt(cb.value, 10), cb.checked);
+            syncSelectAllState();
+            afterSelectionChanged();
+        });
+        cardListBody.addEventListener('click', function(e) {
+            const attachBtn = e.target.closest('.ledger-attach-btn');
+            if (attachBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const attachId = parseInt(attachBtn.dataset.txId, 10);
+                if (attachId) openAttachmentPortfolio(attachId);
+                return;
+            }
+            if (e.target.closest('.ledger-card-cb') || e.target.tagName === 'INPUT') return;
+            const card = e.target.closest('.ledger-card[data-id]');
+            if (!card) return;
+            const id = parseInt(card.dataset.id, 10);
+            if (!id) return;
+            if (txTableBody) {
+                txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+                    cb.checked = (parseInt(cb.value, 10) === id);
+                });
+                lastAnchorRow = txTableBody.querySelector('tr[data-id="' + id + '"]');
+            }
+            syncSelectAllState();
+            afterSelectionChanged();
+            openRowDefaultAction(id);
+        });
+        cardListBody.addEventListener('keydown', function(e) {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const card = e.target.closest('.ledger-card[data-id]');
+            if (!card || e.target.closest('input, button')) return;
+            e.preventDefault();
+            card.click();
         });
     }
 

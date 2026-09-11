@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.948](#v0948)
 - [v0.947](#v0947)
 - [v0.946](#v0946)
 - [v0.945](#v0945)
@@ -154,6 +155,31 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.948
+
+**Phone-friendly Ledger, navigation, and primary pages** — 2026-09-09
+
+> No schema update required for this release (responsive UI only).  
+> **Patch file (history row):** `updates/20260909_0948_mobile_ledger_nav.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.948
+
+- Small screens use a thumb-friendly bottom bar for Dashboard, Ledger, Budget, Reports, and Setup (as allowed by role), plus the existing hamburger / More menu for everything else. Desktop sidebar is unchanged.
+- Ledger no longer forces the wide Excel table as the only phone view. Phones get a banking-style card list (date, payee/description, amount with Dr/Cr, status, paperclip). Tap a row to open View or Edit using the existing double-click preference.
+- Add, Filters, and Clear all filters stay on-screen; column filters collapse into a Filters panel instead of a horizontal header strip.
+- Transaction Add / Edit / View stacks fields and each line (account, fund, debit, credit) into readable blocks. Save / Cancel stay on screen at the bottom of the modal.
+- Dashboard, Budget, Reports, and Setup list pages use stacked cards/fields on phones so they are not a squashed desktop table. Accounting rules, posting, permissions, and APIs are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.948**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.947 | `updates/20260909_0948_mobile_ledger_nav.sql` (records 0.948; no DDL) |
+| Fresh setup (0.944) | Apply 0.945, 0.946, 0.947, then this process-only patch after `php setup_db.php` |
 
 ---
 
