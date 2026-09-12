@@ -19,6 +19,9 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.951](#v0951)
+- [v0.950](#v0950)
+- [v0.949](#v0949)
 - [v0.948](#v0948)
 - [v0.947](#v0947)
 - [v0.946](#v0946)
@@ -155,6 +158,77 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.951
+
+**Mobile transaction modal scroll + desktop filter resize mouse-up** — 2026-09-11
+
+> No schema update required for this release (modal/filter UI only).  
+> **Patch file (history row):** `updates/20260911_0951_modal_scroll_filter_resize.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.951
+
+- Phone Add / Edit / View transaction modal body scrolls vertically so header fields, lines, attachments, audit trail, and Save / Cancel stay reachable. The page behind the modal does not become the only (frozen) scroll surface. Dirty-form protection is unchanged.
+- Desktop column-filter: releasing the resize handle no longer dismisses the dropdown. The panel stays open at the new size. Clicking outside still closes it. Filter logic is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.951**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.950 | `updates/20260911_0951_modal_scroll_filter_resize.sql` (records 0.951; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.950, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.950
+
+**Ledger filter panel overflow and mobile full-page filters** — 2026-09-11
+
+> No schema update required for this release (filter UI only).  
+> **Patch file (history row):** `updates/20260911_0950_ledger_filter_panel.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.950
+
+- Desktop column-filter dropdowns grow to the right when space allows. When there is no remaining room on the right, the panel stops expanding. The left edge does not shift further left, so labels and checkboxes are not dragged off the viewport. Horizontal scroll inside the value list is used when content is wider than the panel.
+- Date year/month groups in the filter list start collapsed on desktop and mobile.
+- Phone filters open as a full-page, non-resizable sheet (no resize handle or drag-to-expand). Apply / Clear / Close and search-to-select behavior are unchanged.
+- Filter logic, searchable columns, and posting/permissions are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.950**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.949 | `updates/20260911_0950_ledger_filter_panel.sql` (records 0.950; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.949, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.949
+
+**Mobile Ledger chrome, full list, Dashboard card removal** — 2026-09-11
+
+> No schema update required for this release (responsive UI only).  
+> **Patch file (history row):** `updates/20260911_0949_mobile_ledger_chrome.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.949
+
+- Phone Ledger no longer uses the large stacked Add / Delete / Clear / Rec / Filters toolbar. Those actions open from a compact flyout on a header icon and the flyout closes after an action or an outside tap. The main hamburger sidebar is unchanged.
+- Mobile header top-right is the ledger-actions icon; Filters is the icon immediately to its left. The duplicate logout control is removed from the header (logout remains on the main sidebar).
+- The mobile transaction card list loads the same set as desktop through existing infinite-scroll / load-more behavior (bounded list pane plus a Load more control). Card/row layout is unchanged.
+- Dashboard summary, quick-link, funds, and tasks cards are removed. The Dashboard page remains as a simple shell until a replacement card system is designed.
+- Desktop Ledger layout, posting, permissions, and column-filter dropdown positioning are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.949**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.948 | `updates/20260911_0949_mobile_ledger_chrome.sql` (records 0.949; no DDL) |
+| Fresh setup (0.944) | Apply 0.945, 0.946, 0.947, 0.948, then this process-only patch after `php setup_db.php` |
 
 ---
 

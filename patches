@@ -3,6 +3,9 @@ updates/20260904_0945_ledger_list_check_budget_columns.sql
 updates/20260906_0946_budget_duplicate_to_draft.sql
 updates/20260907_0947_storage_path_app_root.sql
 updates/20260909_0948_mobile_ledger_nav.sql
+updates/20260911_0949_mobile_ledger_chrome.sql
+updates/20260911_0950_ledger_filter_panel.sql
+updates/20260911_0951_modal_scroll_filter_resize.sql
 
 
 

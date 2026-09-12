@@ -337,18 +337,29 @@ Mobile ledger shows large Add/Delete/Clear/Rec/Filters controls and a partial tr
 Notes / Context / Interpretation:
 Local mobile prototype follow-up. Pancake/main sidebar stays. Flyout is for ledger actions only.
 
-Completion Status:
+Completion Status: Complete (0.949)
 
 
 #28 - 2026-09-11 - Ledger / Column filters - Bug - Low
 Expected:
 Filter dropdowns grow to the right when there is room. If they cannot grow further right, they stop. They must not shift their left edge further left or push labels off-screen.
 Actual:
-When the dropdown cannot expand right, it expands left and can carry text off the viewport (desktop and mobile).
+When the dropdown cannot expand right, it expands left and can carry text off the viewport (desktop and mobile).  Also: on desktop, releasing the resize handle closes the filter dropdown. User must reopen it to see the new size. Mouse-up on the resize handle must not treat as dismiss.
 Notes / Context / Interpretation:
 Separate from the mobile chrome work.
 
-Completion Status:
+Completion Status: Complete (0.950 overflow; 0.951 resize mouse-up)
+
+
+#29 - 2026-09-11 - Ledger / Mobile Add-Edit-View - Bug - High
+Expected:
+On a phone, the transaction View/Edit (and Add) modal content scrolls so Date, lines, attachments, and Save/Cancel are all reachable.
+Actual:
+Cannot scroll inside the transaction modal on mobile Ledger. Fields below the fold are inaccessible.
+Notes / Context / Interpretation:
+Follow-up to the mobile prototype. Desktop modal can stay as-is. Likely overflow/height/position:fixed on the modal body.
+
+Completion Status: Complete (0.951)
 
 
 

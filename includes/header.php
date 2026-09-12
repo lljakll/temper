@@ -573,10 +573,13 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
 
         /* ── Mobile top bar (matches sidebar theme) ──────────────────────── */
         .mobile-topbar {
-            z-index: 1020;
+            z-index: 1045; /* above ledger actions flyout/backdrop; below modals */
             color: var(--bs-body-color);
             background-color: var(--bs-tertiary-bg) !important;
             border: 1px solid var(--bs-border-color);
+        }
+        .mobile-topbar-end {
+            flex: 0 0 auto;
         }
 
         /* ── Bottom navigation (phones / small tablets) ──────────────────── */
@@ -741,10 +744,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
         .ledger-filter-menu {
             z-index: 1080;
-            /* Resizable Excel-style panel (drag bottom-right handle) */
+            /* Resizable Excel-style panel (drag bottom-right handle).
+             * Width is capped in JS to remaining space on the RIGHT of the
+             * left edge so the panel never shifts left off the viewport. */
             width: 18rem;
-            min-width: 14rem;
-            max-width: min(92vw, 48rem);
+            min-width: 10rem;
+            max-width: 100vw;
             min-height: 14rem;
             max-height: min(75vh, 36rem);
             height: 18rem;
@@ -752,6 +757,13 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             overflow: hidden;
             box-sizing: border-box;
             position: relative;
+        }
+        .ledger-f-menu-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            margin-bottom: 0.35rem;
         }
         /* Only when open — do not override Bootstrap .dropdown-menu { display:none } */
         .dropdown-menu.ledger-filter-menu.show {
@@ -1206,48 +1218,31 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 width: 84px;
             }
         }
-        @media (max-width: 767.98px) {
-            .ledger-workspace {
-                height: calc(100vh - 190px);
-                min-height: 240px;
-            }
-            .ledger-action-bar .btn {
-                flex: 1 1 calc(50% - 0.25rem);
-            }
-            .ledger-action-bar .ledger-dblclick-toggle {
-                flex: 1 1 100%;
-            }
-            .ledger-action-bar .ledger-dblclick-toggle .btn {
-                flex: 0 1 auto;
-            }
-        }
         .ledger-dblclick-toggle {
             flex: 0 0 auto;
         }
+        .ledger-actions-backdrop {
+            display: none;
+        }
+        .ledger-actions-flyout-head {
+            display: none;
+        }
+        .ledger-header-filter-dot {
+            position: absolute;
+            top: 0.35rem;
+            right: 0.35rem;
+            width: 0.45rem;
+            height: 0.45rem;
+            border-radius: 50%;
+            background: var(--bs-warning);
+            pointer-events: none;
+        }
+        #ledgerMobileFilterBtn,
+        #ledgerActionsFlyoutBtn {
+            position: relative;
+        }
 
-        /* ── Dashboard cards ─────────────────────────────────────────────── */
-        .dashboard-card-setup-btn {
-            flex: 0 0 auto;
-            line-height: 1;
-            min-width: 1.75rem;
-            min-height: 1.75rem;
-            color: inherit;
-            text-decoration: none;
-            opacity: 0.85;
-        }
-        .dashboard-card-setup-btn:hover,
-        .dashboard-card-setup-btn:focus-visible {
-            opacity: 1;
-            color: inherit;
-        }
-        @media (max-width: 575.98px) {
-            .dashboard-summary-card .card-header h5 {
-                font-size: 0.95rem;
-            }
-            .dashboard-summary-card .card-body h3 {
-                font-size: 1.5rem;
-            }
-        }
+        /* Dashboard is a simple shell until a new card system is designed. */
 
         /* ── Modals on small screens ─────────────────────────────────────── */
         @media (max-width: 575.98px) {
@@ -1344,22 +1339,87 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
         @media (max-width: 767.98px) {
             .ledger-page {
-                min-height: calc(100dvh - 8.75rem - env(safe-area-inset-bottom, 0px));
+                height: calc(100dvh - 9.6rem - env(safe-area-inset-bottom, 0px));
+                max-height: calc(100dvh - 9.6rem - env(safe-area-inset-bottom, 0px));
+                min-height: 0;
+                overflow: hidden;
             }
             .ledger-workspace {
                 height: auto;
                 flex: 1 1 auto;
-                min-height: 220px;
+                min-height: 0;
+            }
+            .ledger-tx-list {
+                min-height: 0;
+            }
+            .ledger-tx-list .card-body {
+                min-height: 0;
+            }
+            .ledger-actions-backdrop {
+                display: block;
+                position: fixed;
+                inset: 0;
+                z-index: 1035;
+                background: rgba(0, 0, 0, 0.35);
+            }
+            .ledger-actions-backdrop[hidden] {
+                display: none !important;
             }
             .ledger-action-bar {
+                position: fixed;
+                top: 3.7rem;
+                right: 0.5rem;
+                left: auto;
+                bottom: auto;
+                width: min(18rem, calc(100vw - 1rem));
+                max-height: calc(100dvh - 8.5rem - env(safe-area-inset-bottom, 0px));
+                overflow-x: hidden;
+                overflow-y: auto;
+                display: flex !important;
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                gap: 0.45rem;
+                margin: 0;
+                padding: 0.75rem;
                 background: var(--bs-body-bg);
+                border: 1px solid var(--bs-border-color);
+                border-radius: 0.75rem;
+                box-shadow: 0 0.45rem 1.4rem rgba(0, 0, 0, 0.18);
+                z-index: 1040;
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+                transform: translateY(-0.35rem);
+                transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
             }
-            .ledger-action-bar #addTxBtn {
-                flex: 1 1 100%;
+            .ledger-page.ledger-actions-open .ledger-action-bar {
+                opacity: 1;
+                visibility: visible;
+                pointer-events: auto;
+                transform: none;
             }
-            .ledger-action-bar #ledgerTotalLabel {
-                flex: 1 1 100%;
-                text-align: right;
+            .ledger-actions-flyout-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 0.5rem;
+                padding-bottom: 0.15rem;
+                margin-bottom: 0.15rem;
+                border-bottom: 1px solid var(--bs-border-color);
+            }
+            .ledger-action-bar > .btn {
+                flex: 0 0 auto;
+                width: 100%;
+                justify-content: flex-start;
+            }
+            .ledger-action-bar .ledger-dblclick-toggle {
+                flex: 0 0 auto;
+                width: 100%;
+                flex-wrap: wrap;
+            }
+            .ledger-action-bar .ledger-dblclick-toggle .btn-group {
+                flex: 1 1 auto;
             }
             .ledger-desktop-table {
                 display: none !important;
@@ -1404,6 +1464,46 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             .ledger-page.ledger-mobile-filters-open .ledger-tx-table .ledger-th-attach,
             .ledger-page.ledger-mobile-filters-open .ledger-tx-table thead th:not(.ledger-th-filter) {
                 display: none;
+            }
+            /* Full content-area filter sheet: no resize, no anchored dropdown */
+            .dropdown-menu.ledger-filter-menu {
+                resize: none !important;
+            }
+            .dropdown-menu.ledger-filter-menu::after {
+                display: none !important;
+            }
+            .dropdown-menu.ledger-filter-menu.show {
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
+                max-width: none !important;
+                max-height: none !important;
+                min-width: 0 !important;
+                min-height: 0 !important;
+                margin: 0 !important;
+                transform: none !important;
+                inset: 0 !important;
+                border-radius: 0 !important;
+                border: 0 !important;
+                box-shadow: none;
+                z-index: 1080 !important;
+                padding: calc(0.85rem + env(safe-area-inset-top, 0px)) 0.9rem calc(0.9rem + env(safe-area-inset-bottom, 0px));
+            }
+            body.ledger-filter-sheet-open {
+                overflow: hidden;
+            }
+            .ledger-f-menu-head {
+                padding-bottom: 0.35rem;
+                margin-bottom: 0.5rem;
+                border-bottom: 1px solid var(--bs-border-color);
+            }
+            .ledger-f-menu-head .small {
+                font-size: 1rem;
+                color: var(--bs-body-color) !important;
             }
             .ledger-card-list {
                 display: flex;
@@ -1704,6 +1804,34 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             }
         }
 
+        /*
+         * Scrollable modals whose header/body/footer live inside a <form>
+         * (Ledger Add/Edit/View, lookup dialogs). Bootstrap sizes .modal-content
+         * and scrolls .modal-body only when those are direct flex children.
+         */
+        #txFormModal.modal {
+            overflow: hidden;
+        }
+        .modal-dialog-scrollable .modal-content > form {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        .modal-dialog-scrollable .modal-content > form > .modal-header,
+        .modal-dialog-scrollable .modal-content > form > .modal-footer {
+            flex: 0 0 auto;
+        }
+        .modal-dialog-scrollable .modal-content > form > .modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+        }
+
         /* ── Modals: full-height on phones, actions stay on screen ──────── */
         @media (max-width: 575.98px) {
             .modal-dialog.modal-xl,
@@ -1714,6 +1842,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             }
             .modal-dialog-scrollable.modal-fullscreen-sm-down .modal-content {
                 height: 100%;
+                max-height: 100%;
                 border-radius: 0;
             }
             .modal-footer {
@@ -1727,6 +1856,14 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             }
             .modal-footer .btn {
                 min-height: 2.75rem;
+            }
+        }
+        @media (max-width: 767.98px) {
+            #txFormModal .modal-dialog {
+                max-height: 100%;
+            }
+            #txFormModal .modal-content {
+                max-height: 100dvh;
             }
         }
     </style>

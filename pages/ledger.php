@@ -2101,11 +2101,30 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     'loaded' => count($tx_list_rows),
 ], JSON_UNESCAPED_UNICODE) ?></script>
 
-    <!-- Top Action Buttons -->
-    <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar align-items-center">
+    <div id="ledgerMobileHeaderTools" hidden>
+        <button type="button" id="ledgerMobileFilterBtn" class="btn btn-outline-secondary btn-sm px-2"
+                aria-expanded="false" aria-controls="ledgerTableScroll" title="Filters">
+            <i class="bi bi-funnel" aria-hidden="true"></i>
+            <span class="visually-hidden">Filters</span>
+            <span id="ledgerMobileFilterBadge" class="ledger-header-filter-dot<?= $hasActiveFilters ? '' : ' d-none' ?>" aria-hidden="true"></span>
+        </button>
+        <button type="button" id="ledgerActionsFlyoutBtn" class="btn btn-outline-secondary btn-sm px-2"
+                aria-expanded="false" aria-controls="ledgerActionBar" title="Ledger actions">
+            <i class="bi bi-three-dots-vertical" aria-hidden="true"></i>
+            <span class="visually-hidden">Ledger actions</span>
+        </button>
+    </div>
+    <div id="ledgerActionsBackdrop" class="ledger-actions-backdrop d-md-none" hidden></div>
+
+    <!-- Top Action Buttons (desktop toolbar; compact flyout on phones) -->
+    <div class="d-flex flex-wrap gap-2 mb-2 ledger-action-bar align-items-center" id="ledgerActionBar" role="toolbar" aria-label="Ledger actions">
+        <div class="ledger-actions-flyout-head d-md-none">
+            <strong>Actions</strong>
+            <button type="button" class="btn-close" id="ledgerActionsFlyoutClose" aria-label="Close actions"></button>
+        </div>
         <?php if ($canWriteLedger): ?>
         <button type="button" id="addTxBtn" class="btn btn-primary" title="Add Transaction (Ctrl+A)">
-            <i class="bi bi-plus-lg"></i> <span class="d-none d-sm-inline">Add Transaction</span><span class="d-sm-none">Add</span>
+            <i class="bi bi-plus-lg"></i> Add Transaction
         </button>
         <?php endif; ?>
         <button type="button" id="viewTxBtn" class="btn btn-outline-secondary d-none d-md-inline-flex" disabled title="View selected (Ctrl+V)">
@@ -2131,16 +2150,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             <i class="bi bi-check2-circle"></i> Clear
         </button>
         <button type="button" id="reconcileTxBtn" class="btn btn-outline-info" disabled>
-            <i class="bi bi-journal-check"></i> <span class="d-none d-sm-inline">Reconcile</span><span class="d-sm-none">Rec.</span>
+            <i class="bi bi-journal-check"></i> Reconcile
         </button>
         <?php else: ?>
         <span class="text-muted small align-self-center"><i class="bi bi-eye"></i> Read-only access</span>
         <?php endif; ?>
-        <button type="button" id="ledgerMobileFilterBtn" class="btn btn-outline-secondary d-md-none"
-                aria-expanded="false" aria-controls="ledgerTableScroll" title="Show column filters">
-            <i class="bi bi-funnel"></i> Filters
-            <span id="ledgerMobileFilterBadge" class="badge text-bg-warning ms-1<?= $hasActiveFilters ? '' : ' d-none' ?>">On</span>
-        </button>
         <div class="d-flex align-items-center gap-1 ledger-dblclick-toggle"
              title="Default action when double-clicking a transaction row (tap on phones)">
             <span class="small text-muted text-nowrap d-none d-md-inline">Double-click</span>
@@ -2162,7 +2176,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 title="Keyboard shortcuts (Ctrl+?)" aria-label="Keyboard shortcuts">
             <i class="bi bi-keyboard" aria-hidden="true"></i>
         </button>
-        <span class="text-muted small ms-auto align-self-center" id="ledgerTotalLabel"><?= (int)$total ?> total</span>
+        <span class="text-muted small ms-auto align-self-center d-none d-md-inline" id="ledgerTotalLabel"><?= (int)$total ?> total</span>
     </div>
 
     <div class="d-flex flex-column ledger-workspace">
@@ -2243,8 +2257,11 @@ foreach ($colDefs as $col):
                                                     aria-expanded="false" title="Filter <?= htmlspecialchars($col['label']) ?>">
                                                 <i class="bi <?= $filterActive ? 'bi-funnel-fill' : 'bi-funnel' ?>"></i>
                                             </button>
-                                            <div class="dropdown-menu dropdown-menu-end p-2 shadow ledger-filter-menu">
-                                                <div class="small text-muted mb-1 fw-semibold flex-shrink-0"><?= htmlspecialchars($col['label']) ?> filter</div>
+                                            <div class="dropdown-menu p-2 shadow ledger-filter-menu">
+                                                <div class="ledger-f-menu-head flex-shrink-0">
+                                                    <div class="small text-muted fw-semibold"><?= htmlspecialchars($col['label']) ?> filter</div>
+                                                    <button type="button" class="btn-close ledger-f-close d-md-none" aria-label="Close filter"></button>
+                                                </div>
                                                 <input type="search" class="form-control form-control-sm mb-2 ledger-f-search flex-shrink-0" placeholder="Search…" data-dirty-ignore autocomplete="off">
                                                 <div class="ledger-f-select-all-wrap flex-shrink-0">
                                                     <input class="form-check-input ledger-f-select-all" type="checkbox" id="ledgerFAll_<?= htmlspecialchars($ck) ?>" data-dirty-ignore checked>
@@ -2327,7 +2344,7 @@ foreach ($colDefs as $col):
                             <input type="checkbox" id="selectAllCards" class="form-check-input" title="Select all loaded">
                             Select all
                         </label>
-                        <span class="small text-muted">Tap to <?= $canWriteLedger ? 'view or edit' : 'view' ?></span>
+                        <span class="small text-muted" data-ledger-total><?= (int)$total ?> total</span>
                     </div>
                     <div id="ledgerCardListBody">
                         <?php if ($txCardsHtml !== ''): ?>
@@ -2342,6 +2359,9 @@ foreach ($colDefs as $col):
                         <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                         Loading more…
                     </div>
+                    <button type="button" id="ledgerLoadMoreBtn" class="btn btn-sm btn-outline-secondary<?= $list_has_more ? '' : ' d-none' ?>">
+                        Load more
+                    </button>
                     <span id="ledgerEndOfList" class="text-muted d-none">End of list</span>
                 </div>
             </div>
@@ -2896,8 +2916,161 @@ foreach ($colDefs as $col):
     const ledgerTableScroll = document.getElementById('ledgerTableScroll');
     const ledgerTotalLabel = document.getElementById('ledgerTotalLabel');
     const ledgerLoadMoreBar = document.getElementById('ledgerLoadMoreBar');
+    const ledgerLoadMoreBtn = document.getElementById('ledgerLoadMoreBtn');
     const ledgerLoadingIndicator = document.getElementById('ledgerLoadingIndicator');
     const ledgerEndOfList = document.getElementById('ledgerEndOfList');
+    const ledgerActionBar = document.getElementById('ledgerActionBar');
+    const ledgerActionsFlyoutBtn = document.getElementById('ledgerActionsFlyoutBtn');
+    const ledgerActionsFlyoutClose = document.getElementById('ledgerActionsFlyoutClose');
+    const ledgerActionsBackdrop = document.getElementById('ledgerActionsBackdrop');
+    const ledgerPageRoot = document.querySelector('.ledger-page');
+
+    function isLedgerMobileChrome() {
+        return window.matchMedia('(max-width: 767.98px)').matches;
+    }
+
+    function mountLedgerMobileHeaderTools() {
+        const slot = document.getElementById('mobileTopbarEnd');
+        const tools = document.getElementById('ledgerMobileHeaderTools');
+        if (!slot || !tools) return;
+        while (tools.firstChild) {
+            slot.appendChild(tools.firstChild);
+        }
+    }
+
+    function unmountLedgerMobileHeaderTools() {
+        const slot = document.getElementById('mobileTopbarEnd');
+        if (!slot) return;
+        const tools = document.getElementById('ledgerMobileHeaderTools');
+        if (tools) {
+            while (slot.firstChild) {
+                tools.appendChild(slot.firstChild);
+            }
+        } else {
+            slot.replaceChildren();
+        }
+    }
+
+    function setLedgerMobileFiltersOpen(open) {
+        if (!ledgerPageRoot) return;
+        ledgerPageRoot.classList.toggle('ledger-mobile-filters-open', !!open);
+        const filterBtn = document.getElementById('ledgerMobileFilterBtn');
+        if (filterBtn) {
+            filterBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            filterBtn.classList.toggle('active', !!open);
+        }
+    }
+
+    function closeLedgerActionsFlyout() {
+        if (ledgerPageRoot) ledgerPageRoot.classList.remove('ledger-actions-open');
+        if (ledgerActionsFlyoutBtn) {
+            ledgerActionsFlyoutBtn.setAttribute('aria-expanded', 'false');
+            ledgerActionsFlyoutBtn.classList.remove('active');
+        }
+        if (ledgerActionBar) ledgerActionBar.setAttribute('aria-hidden', isLedgerMobileChrome() ? 'true' : 'false');
+        if (ledgerActionsBackdrop) ledgerActionsBackdrop.hidden = true;
+    }
+
+    function openLedgerActionsFlyout() {
+        if (!ledgerPageRoot) return;
+        setLedgerMobileFiltersOpen(false);
+        ledgerPageRoot.classList.add('ledger-actions-open');
+        if (ledgerActionsFlyoutBtn) {
+            ledgerActionsFlyoutBtn.setAttribute('aria-expanded', 'true');
+            ledgerActionsFlyoutBtn.classList.add('active');
+        }
+        if (ledgerActionBar) ledgerActionBar.setAttribute('aria-hidden', 'false');
+        if (ledgerActionsBackdrop) ledgerActionsBackdrop.hidden = false;
+    }
+
+    function toggleLedgerActionsFlyout() {
+        if (ledgerPageRoot && ledgerPageRoot.classList.contains('ledger-actions-open')) {
+            closeLedgerActionsFlyout();
+        } else {
+            openLedgerActionsFlyout();
+        }
+    }
+
+    function onLedgerActionsFlyoutKeydown(e) {
+        if (e.key !== 'Escape') return;
+        const openFilter = document.querySelector('.ledger-filter-menu.show');
+        if (openFilter) {
+            e.preventDefault();
+            closeFilterDropdown(openFilter.closest('th'));
+            return;
+        }
+        if (ledgerPageRoot && ledgerPageRoot.classList.contains('ledger-actions-open')) {
+            e.preventDefault();
+            closeLedgerActionsFlyout();
+        }
+    }
+
+    function onMainSidebarShow() {
+        closeLedgerActionsFlyout();
+    }
+
+    let ledgerFilterChromeIsMobile = isLedgerMobileChrome();
+
+    function onLedgerChromeResize() {
+        const mobile = isLedgerMobileChrome();
+        if (!mobile) {
+            closeLedgerActionsFlyout();
+            if (ledgerActionBar) ledgerActionBar.setAttribute('aria-hidden', 'false');
+        }
+        if (mobile !== ledgerFilterChromeIsMobile) {
+            ledgerFilterChromeIsMobile = mobile;
+            document.querySelectorAll('.ledger-filter-toggle').forEach(function(toggle) {
+                const dd = typeof bootstrap !== 'undefined' && bootstrap.Dropdown
+                    ? bootstrap.Dropdown.getInstance(toggle)
+                    : null;
+                if (dd) dd.hide();
+                initLedgerFilterDropdown(toggle);
+            });
+        }
+        const openMenu = document.querySelector('.ledger-filter-menu.show');
+        if (openMenu) constrainOpenFilterMenu(openMenu, { growToContent: false });
+        fillLedgerListIfShort();
+    }
+
+    function wireLedgerActionsFlyout() {
+        mountLedgerMobileHeaderTools();
+        if (isLedgerMobileChrome() && ledgerActionBar) {
+            ledgerActionBar.setAttribute('aria-hidden', 'true');
+        }
+        if (ledgerActionsFlyoutBtn) {
+            ledgerActionsFlyoutBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleLedgerActionsFlyout();
+            });
+        }
+        if (ledgerActionsFlyoutClose) {
+            ledgerActionsFlyoutClose.addEventListener('click', function(e) {
+                e.preventDefault();
+                closeLedgerActionsFlyout();
+            });
+        }
+        if (ledgerActionsBackdrop) {
+            ledgerActionsBackdrop.addEventListener('click', function() {
+                closeLedgerActionsFlyout();
+            });
+        }
+        if (ledgerActionBar) {
+            ledgerActionBar.addEventListener('click', function(e) {
+                if (!isLedgerMobileChrome()) return;
+                if (!ledgerPageRoot || !ledgerPageRoot.classList.contains('ledger-actions-open')) return;
+                if (e.target.closest('#ledgerActionsFlyoutClose')) return;
+                const actionEl = e.target.closest('button, label.btn');
+                if (!actionEl) return;
+                if (actionEl.disabled || actionEl.classList.contains('disabled')) return;
+                closeLedgerActionsFlyout();
+            });
+        }
+        document.addEventListener('keydown', onLedgerActionsFlyoutKeydown);
+        window.addEventListener('resize', onLedgerChromeResize);
+        const sidebar = document.getElementById('appSidebar');
+        if (sidebar) sidebar.addEventListener('show.bs.offcanvas', onMainSidebarShow);
+    }
 
     // Transaction form modal (Add / Edit / View)
     let txFormModalEl = document.getElementById('txFormModal');
@@ -3345,7 +3518,7 @@ foreach ($colDefs as $col):
                 (yNode.months || []).forEach(m => (m.days || []).forEach(d => yearDays.push(String(d.value))));
                 const yearAll = yearDays.every(d => allChecked || selectedSet.has(d));
                 const yearSome = yearDays.some(d => allChecked || selectedSet.has(d));
-                html += '<details class="mb-1" open>'
+                html += '<details class="mb-1">'
                     + '<summary class="ledger-date-year ledger-f-item">'
                     + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-year-cb" data-year="' + escAttr(yNode.year) + '"'
                     + (yearAll ? ' checked' : '') + (yearSome && !yearAll ? ' data-indeterminate="1"' : '')
@@ -3357,7 +3530,7 @@ foreach ($colDefs as $col):
                     const monthDays = (mNode.days || []).map(d => String(d.value));
                     const mAll = monthDays.every(d => allChecked || selectedSet.has(d));
                     const mSome = monthDays.some(d => allChecked || selectedSet.has(d));
-                    html += '<details class="mb-1" open>'
+                    html += '<details class="mb-1">'
                         + '<summary class="ledger-date-month ledger-f-item">'
                         + '<input type="checkbox" class="form-check-input ledger-f-cb ledger-f-month-cb" data-year="' + escAttr(yNode.year) + '" data-month="' + escAttr(mNode.month) + '"'
                         + (mAll ? ' checked' : '') + (mSome && !mAll ? ' data-indeterminate="1"' : '')
@@ -3479,6 +3652,7 @@ foreach ($colDefs as $col):
                     if (wrap && wrap.style.display !== 'none') any = true;
                 });
                 det.style.display = any || !q ? '' : 'none';
+                if (q && any) det.open = true;
             });
         } else {
             menu.querySelectorAll('.ledger-f-values .ledger-f-item').forEach(item => {
@@ -3575,6 +3749,7 @@ foreach ($colDefs as $col):
                 } else {
                     syncSelectAllCheckbox(th);
                 }
+                constrainOpenFilterMenu(menu, { growToContent: true });
             })
             .catch(err => {
                 console.error(err);
@@ -3855,9 +4030,13 @@ foreach ($colDefs as $col):
     }
 
     function updateListFooter() {
+        const totalText = (listState.total || 0) + ' total';
         if (ledgerTotalLabel) {
-            ledgerTotalLabel.textContent = (listState.total || 0) + ' total';
+            ledgerTotalLabel.textContent = totalText;
         }
+        document.querySelectorAll('[data-ledger-total]').forEach(function(el) {
+            el.textContent = totalText;
+        });
         if (ledgerLoadMoreBar) {
             if (listState.has_more || listState.loading) {
                 ledgerLoadMoreBar.classList.remove('d-none');
@@ -3867,12 +4046,32 @@ foreach ($colDefs as $col):
                 ledgerLoadMoreBar.classList.add('d-none');
             }
         }
+        if (ledgerLoadMoreBtn) {
+            ledgerLoadMoreBtn.classList.toggle('d-none', !listState.has_more || listState.loading);
+            ledgerLoadMoreBtn.disabled = !listState.has_more || listState.loading;
+        }
         if (ledgerEndOfList) {
             const showEnd = !listState.has_more && !listState.loading && (listState.total || 0) > 0 && listState.offset > 0;
             ledgerEndOfList.classList.toggle('d-none', !showEnd);
         }
         updateClearAllFiltersBtn();
         updateFilterHeaderIndicators();
+    }
+
+    function getActiveLedgerScroller() {
+        if (isLedgerMobileChrome()) {
+            return document.getElementById('ledgerCardList');
+        }
+        return ledgerTableScroll;
+    }
+
+    function fillLedgerListIfShort() {
+        if (listState.loading || !listState.has_more) return;
+        const scroller = getActiveLedgerScroller();
+        if (!scroller || scroller.clientHeight < 40) return;
+        if (scroller.scrollHeight <= scroller.clientHeight + 48) {
+            fetchTransactionList({ reset: false });
+        }
     }
 
     function updateFilterHeaderIndicators() {
@@ -3913,6 +4112,7 @@ foreach ($colDefs as $col):
         const params = buildFilterParams(true, offset, limit);
         params.set('list_transactions', '1');
         setListLoading(true);
+        let loadedOk = false;
         return fetch('pages/ledger.php?' + params.toString())
             .then(r => r.json())
             .then(data => {
@@ -3930,6 +4130,7 @@ foreach ($colDefs as $col):
                 if (data.sort_dir) listState.sort_dir = data.sort_dir;
                 if (data.filters) listState.filters = normalizeFilters(data.filters);
                 updateListFooter();
+                loadedOk = true;
             })
             .catch(err => {
                 console.error(err);
@@ -3938,6 +4139,7 @@ foreach ($colDefs as $col):
             .finally(() => {
                 setListLoading(false);
                 updateListFooter();
+                if (loadedOk) fillLedgerListIfShort();
             });
     }
 
@@ -3951,12 +4153,164 @@ foreach ($colDefs as $col):
         return fetchTransactionList({ reset: true });
     }
 
+    let ledgerFilterMenuResizeObs = null;
+    let ledgerFilterResizeGuard = false;
+    let ledgerFilterResizeGuardTimer = null;
+
+    function armFilterResizeGuard() {
+        ledgerFilterResizeGuard = true;
+        if (ledgerFilterResizeGuardTimer) {
+            clearTimeout(ledgerFilterResizeGuardTimer);
+            ledgerFilterResizeGuardTimer = null;
+        }
+    }
+
+    function releaseFilterResizeGuardSoon() {
+        if (ledgerFilterResizeGuardTimer) clearTimeout(ledgerFilterResizeGuardTimer);
+        ledgerFilterResizeGuardTimer = setTimeout(function() {
+            ledgerFilterResizeGuard = false;
+            ledgerFilterResizeGuardTimer = null;
+        }, 120);
+    }
+
+    function isFilterResizeGripEvent(menu, e) {
+        if (!menu || isLedgerMobileChrome()) return false;
+        const r = menu.getBoundingClientRect();
+        const grip = 28;
+        return e.clientX >= (r.right - grip) && e.clientX <= (r.right + 8)
+            && e.clientY >= (r.bottom - grip) && e.clientY <= (r.bottom + 8);
+    }
+
+    function onFilterResizePointerDownCapture(e) {
+        const menu = e.target && e.target.closest ? e.target.closest('.ledger-filter-menu.show') : null;
+        if (!menu) return;
+        if (isFilterResizeGripEvent(menu, e)) {
+            armFilterResizeGuard();
+        }
+    }
+
+    function onFilterResizePointerUp() {
+        if (ledgerFilterResizeGuard) releaseFilterResizeGuardSoon();
+    }
+
+    function onFilterResizeClickCapture(e) {
+        if (!ledgerFilterResizeGuard) return;
+        const menu = document.querySelector('.ledger-filter-menu.show');
+        if (!menu) return;
+        if (menu.contains(e.target)) return;
+        e.stopPropagation();
+    }
+
+    function constrainOpenFilterMenu(menu, { growToContent = false } = {}) {
+        if (!menu || !menu.classList.contains('show')) return;
+        if (isLedgerMobileChrome()) {
+            menu.style.minWidth = '';
+            menu.style.maxWidth = '';
+            menu.style.width = '';
+            menu.style.left = '';
+            menu.style.right = '';
+            menu.style.top = '';
+            menu.style.bottom = '';
+            menu.style.transform = '';
+            menu.style.inset = '';
+            return;
+        }
+        const rect = menu.getBoundingClientRect();
+        const pad = 8;
+        const avail = Math.max(160, Math.floor(window.innerWidth - rect.left - pad));
+        const minW = Math.min(14 * 16, avail);
+        menu.style.minWidth = minW + 'px';
+        menu.style.maxWidth = avail + 'px';
+        if (growToContent) {
+            const box = menu.querySelector('.ledger-f-values');
+            const extra = 28;
+            const contentW = box ? (box.scrollWidth + extra) : menu.scrollWidth;
+            const preferred = Math.min(avail, Math.max(minW, contentW, menu.offsetWidth));
+            menu.style.width = preferred + 'px';
+        } else if (menu.offsetWidth > avail) {
+            menu.style.width = avail + 'px';
+        }
+    }
+
+    function pinFilterMenuGrowRight(menu) {
+        if (!menu || isLedgerMobileChrome()) return;
+        const r = menu.getBoundingClientRect();
+        menu.style.position = 'fixed';
+        menu.style.transform = 'none';
+        menu.style.inset = 'auto';
+        menu.style.left = Math.max(0, Math.round(r.left)) + 'px';
+        menu.style.top = Math.max(0, Math.round(r.top)) + 'px';
+        menu.style.right = 'auto';
+        menu.style.bottom = 'auto';
+        constrainOpenFilterMenu(menu, { growToContent: true });
+    }
+
+    function watchOpenFilterMenu(menu) {
+        if (ledgerFilterMenuResizeObs) {
+            ledgerFilterMenuResizeObs.disconnect();
+            ledgerFilterMenuResizeObs = null;
+        }
+        if (!menu || isLedgerMobileChrome() || typeof ResizeObserver !== 'function') return;
+        ledgerFilterMenuResizeObs = new ResizeObserver(function() {
+            constrainOpenFilterMenu(menu, { growToContent: false });
+        });
+        ledgerFilterMenuResizeObs.observe(menu);
+    }
+
+    function unwatchOpenFilterMenu() {
+        if (ledgerFilterMenuResizeObs) {
+            ledgerFilterMenuResizeObs.disconnect();
+            ledgerFilterMenuResizeObs = null;
+        }
+        document.body.classList.remove('ledger-filter-sheet-open');
+    }
+
+    function ledgerFilterPopperConfig(defaultConfig) {
+        if (isLedgerMobileChrome()) {
+            return defaultConfig;
+        }
+        const modifiers = (defaultConfig.modifiers || []).map(function(mod) {
+            if (mod.name === 'flip') {
+                return Object.assign({}, mod, { enabled: false });
+            }
+            if (mod.name === 'preventOverflow') {
+                return Object.assign({}, mod, {
+                    options: Object.assign({}, mod.options || {}, {
+                        mainAxis: false,
+                        altAxis: false,
+                        tether: false
+                    })
+                });
+            }
+            return mod;
+        });
+        return Object.assign({}, defaultConfig, {
+            strategy: 'fixed',
+            placement: 'bottom-start',
+            modifiers: modifiers
+        });
+    }
+
+    function initLedgerFilterDropdown(toggle) {
+        if (!toggle || typeof bootstrap === 'undefined' || !bootstrap.Dropdown) return null;
+        const existing = bootstrap.Dropdown.getInstance(toggle);
+        if (existing) existing.dispose();
+        return new bootstrap.Dropdown(toggle, {
+            autoClose: 'outside',
+            display: isLedgerMobileChrome() ? 'static' : 'dynamic',
+            popperConfig: ledgerFilterPopperConfig
+        });
+    }
+
     function closeFilterDropdown(th) {
         const toggle = th && th.querySelector('.ledger-filter-toggle');
         if (toggle && typeof bootstrap !== 'undefined') {
             const dd = bootstrap.Dropdown.getInstance(toggle);
             if (dd) dd.hide();
         }
+        const menu = th && th.querySelector('.ledger-filter-menu.show');
+        if (menu) menu.classList.remove('show');
+        unwatchOpenFilterMenu();
     }
 
     function applyColumnFilterFromMenu(th) {
@@ -4037,6 +4391,13 @@ foreach ($colDefs as $col):
                 clearColumnFilterFromMenu(clearBtn.closest('th'));
                 return;
             }
+            const closeBtn = e.target.closest('.ledger-f-close');
+            if (closeBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeFilterDropdown(closeBtn.closest('th'));
+                return;
+            }
             // Keep checkbox clicks from toggling <details> open/close
             if (e.target.classList && e.target.classList.contains('ledger-f-cb')) {
                 e.stopPropagation();
@@ -4113,12 +4474,54 @@ foreach ($colDefs as $col):
 
         // Load unique values when a filter dropdown opens (respects other active filters)
         table.querySelectorAll('.ledger-filter-toggle').forEach(toggle => {
+            initLedgerFilterDropdown(toggle);
             toggle.addEventListener('show.bs.dropdown', function() {
                 const th = toggle.closest('th');
                 if (!th) return;
                 loadFilterValuesForMenu(th);
             });
+            toggle.addEventListener('shown.bs.dropdown', function() {
+                const th = toggle.closest('th');
+                const menu = th && th.querySelector('.ledger-filter-menu');
+                if (!menu) return;
+                if (isLedgerMobileChrome()) {
+                    document.body.classList.add('ledger-filter-sheet-open');
+                    menu.style.minWidth = '';
+                    menu.style.maxWidth = '';
+                    menu.style.width = '';
+                    menu.style.height = '';
+                    menu.style.left = '';
+                    menu.style.right = '';
+                    menu.style.top = '';
+                    menu.style.bottom = '';
+                    menu.style.transform = 'none';
+                    menu.style.position = 'fixed';
+                    menu.style.inset = '0';
+                } else {
+                    document.body.classList.remove('ledger-filter-sheet-open');
+                    pinFilterMenuGrowRight(menu);
+                    watchOpenFilterMenu(menu);
+                }
+            });
+            toggle.addEventListener('hide.bs.dropdown', function(e) {
+                if (ledgerFilterResizeGuard) {
+                    e.preventDefault();
+                }
+            });
+            toggle.addEventListener('hidden.bs.dropdown', function() {
+                unwatchOpenFilterMenu();
+            });
         });
+        table.addEventListener('toggle', function(e) {
+            if (!e.target || e.target.tagName !== 'DETAILS') return;
+            const menu = e.target.closest('.ledger-filter-menu');
+            if (menu) constrainOpenFilterMenu(menu, { growToContent: true });
+        }, true);
+        document.addEventListener('pointerdown', onFilterResizePointerDownCapture, true);
+        document.addEventListener('mousedown', onFilterResizePointerDownCapture, true);
+        document.addEventListener('pointerup', onFilterResizePointerUp, true);
+        document.addEventListener('mouseup', onFilterResizePointerUp, true);
+        document.addEventListener('click', onFilterResizeClickCapture, true);
 
         if (clearAllFiltersBtn) {
             clearAllFiltersBtn.addEventListener('click', () => clearAllFilters());
@@ -4126,11 +4529,10 @@ foreach ($colDefs as $col):
         const mobileFilterBtn = document.getElementById('ledgerMobileFilterBtn');
         if (mobileFilterBtn) {
             mobileFilterBtn.addEventListener('click', function() {
-                const pageEl = document.querySelector('.ledger-page');
-                if (!pageEl) return;
-                const open = pageEl.classList.toggle('ledger-mobile-filters-open');
-                mobileFilterBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-                mobileFilterBtn.classList.toggle('active', open);
+                if (!ledgerPageRoot) return;
+                const open = !ledgerPageRoot.classList.contains('ledger-mobile-filters-open');
+                if (open) closeLedgerActionsFlyout();
+                setLedgerMobileFiltersOpen(open);
             });
         }
         function maybeLoadMore(el) {
@@ -4151,7 +4553,14 @@ foreach ($colDefs as $col):
                 maybeLoadMore(cardList);
             });
         }
+        if (ledgerLoadMoreBtn) {
+            ledgerLoadMoreBtn.addEventListener('click', function() {
+                if (!listState.has_more || listState.loading) return;
+                fetchTransactionList({ reset: false });
+            });
+        }
         updateListFooter();
+        fillLedgerListIfShort();
     }
 
     function parseLineAmount(val) {
@@ -8462,7 +8871,6 @@ foreach ($colDefs as $col):
     }
 
     // ── Ctrl/Cmd hotkeys (work even when a form field has focus) ──
-    const ledgerPageRoot = document.querySelector('.ledger-page');
     let ledgerHelpPopover = null;
 
     function ledgerModLabel() {
@@ -8819,7 +9227,7 @@ foreach ($colDefs as $col):
 
     function onLedgerHotkeyKeyDown(e) {
         if (!ledgerPageRoot || !ledgerPageRoot.isConnected) {
-            disposeLedgerHotkeys();
+            disposeLedgerPage();
             return;
         }
 
@@ -8845,9 +9253,26 @@ foreach ($colDefs as $col):
         runLedgerHotkeyCommand(letter === '/' ? 'f' : letter);
     }
 
-    function disposeLedgerHotkeys() {
+    function disposeLedgerPage() {
         disposeLedgerHelpPopover();
         document.removeEventListener('keydown', onLedgerHotkeyKeyDown, true);
+        document.removeEventListener('keydown', onLedgerActionsFlyoutKeydown);
+        window.removeEventListener('resize', onLedgerChromeResize);
+        document.removeEventListener('pointerdown', onFilterResizePointerDownCapture, true);
+        document.removeEventListener('mousedown', onFilterResizePointerDownCapture, true);
+        document.removeEventListener('pointerup', onFilterResizePointerUp, true);
+        document.removeEventListener('mouseup', onFilterResizePointerUp, true);
+        document.removeEventListener('click', onFilterResizeClickCapture, true);
+        if (ledgerFilterResizeGuardTimer) {
+            clearTimeout(ledgerFilterResizeGuardTimer);
+            ledgerFilterResizeGuardTimer = null;
+        }
+        ledgerFilterResizeGuard = false;
+        const sidebar = document.getElementById('appSidebar');
+        if (sidebar) sidebar.removeEventListener('show.bs.offcanvas', onMainSidebarShow);
+        closeLedgerActionsFlyout();
+        unwatchOpenFilterMenu();
+        unmountLedgerMobileHeaderTools();
         if (window.TemperLedgerPage && window.TemperLedgerPage._bound === onLedgerHotkeyKeyDown) {
             window.TemperLedgerPage = { disposeActive: function() {} };
         }
@@ -8857,10 +9282,11 @@ foreach ($colDefs as $col):
     document.addEventListener('keydown', onLedgerHotkeyKeyDown, true);
     window.TemperLedgerPage = {
         _bound: onLedgerHotkeyKeyDown,
-        disposeActive: disposeLedgerHotkeys
+        disposeActive: disposeLedgerPage
     };
 
     // Initial state
+    wireLedgerActionsFlyout();
     updateButtonStates();
     showBlankForm();
     wireLedgerFiltersAndSort();

@@ -1435,9 +1435,11 @@ $footerDb->close();
             const mobileBottom = document.querySelector('.mobile-bottom-nav');
             if (sidebarCol) sidebarCol.classList.toggle('d-none', hide);
             if (mobileTop) {
-                // Keep logout only: hide hamburger when forced
+                // Hide hamburger when forced; logout lives on the sidebar / password form
                 const burger = mobileTop.querySelector('[data-bs-target="#appSidebar"]');
                 if (burger) burger.classList.toggle('d-none', hide);
+                const pageTools = mobileTop.querySelector('#mobileTopbarEnd');
+                if (pageTools) pageTools.classList.toggle('d-none', hide);
             }
             if (mobileBottom) mobileBottom.classList.toggle('d-none', hide);
             if (mainCol) {

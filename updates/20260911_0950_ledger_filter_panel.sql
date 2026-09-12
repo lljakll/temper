@@ -1,0 +1,59 @@
+-- =============================================================================
+-- TEMPER SCHEMA PATCH
+-- =============================================================================
+-- Filename     : 20260911_0950_ledger_filter_panel.sql
+-- Schema ver.  : 20260827_0944_setup_baseline_consolidation   (carried forward — no DDL)
+-- App version  : 0.950
+-- Min app ver. : 0.950
+-- Author date  : 2026-09-11
+--
+-- NOTES / PURPOSE
+-- ---------------
+-- Process-only release: Ledger column-filter dropdowns grow only to the right
+-- and stop at the viewport edge (no left-edge shift). Mobile filters open as a
+-- full-page non-resizable sheet. Date year/month groups start collapsed.
+-- Filter logic, search-to-select, and filterable columns are unchanged. No DDL.
+--
+-- DATA CONFLICTS / PRE-CHECKS
+-- ---------------------------
+-- Requires app_version history through at least v0.949 (or apply prior patches
+-- first). Safe to re-run: INSERT is skipped when 0.950 / this patch_file exists.
+--
+--   SELECT id, version, schema_version, patch_file FROM app_version ORDER BY id;
+--
+-- HELPFUL DATA RESOLUTION (optional — run only if needed)
+-- -------------------------------------------------------
+-- None.
+--
+-- MYSQL COMMAND (copy-paste; adjust -u/-h/-p and database name as needed)
+-- ----------------------------------------------------------------------
+--   mysql -u temper_user -p temper_db < updates/20260911_0950_ledger_filter_panel.sql
+--
+-- Or interactive:
+--   mysql -u temper_user -p temper_db
+--   SOURCE /var/www/temper/updates/20260911_0950_ledger_filter_panel.sql;
+--
+-- BACKUP FIRST. There is no automatic rollback.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Schema changes
+-- ---------------------------------------------------------------------------
+-- None (filter UI is application code only). Schema stem carried
+-- forward from 0.944 / 0.949:
+--   20260827_0944_setup_baseline_consolidation
+
+-- ---------------------------------------------------------------------------
+-- Record application in version history (required)
+-- ---------------------------------------------------------------------------
+INSERT INTO app_version (version, schema_version, patch_file, notes)
+SELECT
+    '0.950',
+    '20260827_0944_setup_baseline_consolidation',
+    '20260911_0950_ledger_filter_panel.sql',
+    'Ledger filter panels grow right only; mobile full-page non-resizable sheet; date groups collapsed; no DDL'
+WHERE NOT EXISTS (
+    SELECT 1 FROM app_version
+    WHERE version = '0.950'
+       OR patch_file = '20260911_0950_ledger_filter_panel.sql'
+);

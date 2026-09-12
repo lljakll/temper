@@ -115,7 +115,8 @@ body.temper-force-password-mode #appSidebar,
 body.temper-force-password-mode .mobile-bottom-nav {
     display: none !important;
 }
-body.temper-force-password-mode .mobile-topbar [data-bs-target="#appSidebar"] {
+body.temper-force-password-mode .mobile-topbar [data-bs-target="#appSidebar"],
+body.temper-force-password-mode #mobileTopbarEnd {
     display: none !important;
 }
 body.temper-force-password-mode #main-content-col {
@@ -331,9 +332,7 @@ function temper_render_nav_links(
         <i class="bi bi-bank me-2"></i>
         <strong class="text-truncate"><?= $mustChangePassword ? 'Set your password' : 'Hope Baptist Treasurer' ?></strong>
     </div>
-    <a href="logout.php" class="btn btn-outline-secondary btn-sm px-2" title="Logout" aria-label="Logout">
-        <i class="bi bi-box-arrow-right"></i>
-    </a>
+    <div class="mobile-topbar-end d-flex align-items-center gap-1" id="mobileTopbarEnd"></div>
 </div>
 
 <div class="row g-2">
