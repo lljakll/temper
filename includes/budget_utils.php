@@ -446,6 +446,38 @@ function budgetListGroupedByYear(mysqli $db): array {
     return $grouped;
 }
 
+/**
+ * Display order for budget lines: CoA number ascending, empty CoA last.
+ * Stable on name then line id. Does not add a stored sort column.
+ *
+ * @param list<array<string, mixed>> $lines
+ * @return list<array<string, mixed>>
+ */
+function budgetSortLinesByCoa(array $lines): array
+{
+    usort($lines, static function ($a, $b) {
+        $ca = trim((string)($a['coa_number'] ?? ''));
+        $cb = trim((string)($b['coa_number'] ?? ''));
+        $aEmpty = ($ca === '');
+        $bEmpty = ($cb === '');
+        if ($aEmpty !== $bEmpty) {
+            return $aEmpty ? 1 : -1;
+        }
+        $cmp = strcmp($ca, $cb);
+        if ($cmp !== 0) {
+            return $cmp;
+        }
+        $na = (string)($a['account_name'] ?? '');
+        $nb = (string)($b['account_name'] ?? '');
+        $cmp = strcasecmp($na, $nb);
+        if ($cmp !== 0) {
+            return $cmp;
+        }
+        return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
+    });
+    return $lines;
+}
+
 function budgetValidIsoDate(string $date): bool {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         return false;

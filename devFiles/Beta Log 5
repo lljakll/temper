@@ -1,0 +1,21 @@
+#34 - 2026-09-13 - Budget - Enhancement - Low
+You are working in the **Beta Thread**.
+
+Task: Default-sort Budget lines by CoA ascending on load and refresh.
+
+Requirements:
+1. When a budget is opened, created, or refreshed (desktop table and mobile line list), display lines in CoA number ascending order.
+2. Do not add column filters, search, or a mobile Sort button in this change.
+3. Do not change Remaining, duplicate, activate/close, or save behavior. Sort is display order (and persist order only if the app already rewrites line order on save — do not invent a new stored sort column unless required to keep the display stable).
+4. Lines without a CoA should sort last.
+
+First explore how budget lines are loaded and rendered, then apply CoA ascending as the default order.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

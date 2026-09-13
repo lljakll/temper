@@ -32,7 +32,10 @@ require_once __DIR__ . '/../includes/permissions.php';
              LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
              LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
              WHERE bl.budget_id = ?
-             ORDER BY bl.id"
+             ORDER BY (a.coa_number IS NULL OR TRIM(a.coa_number) = '') ASC,
+                      a.coa_number ASC,
+                      a.name ASC,
+                      bl.id ASC"
         );
         $lst->bind_param('i', $id);
         $lst->execute();
@@ -54,6 +57,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             ];
         }
         $lst->close();
+        $lines = budgetSortLinesByCoa($lines);
         $budget['lines'] = budgetAttachLineRemainings(
             $db,
             $lines,
@@ -1184,6 +1188,22 @@ require_once __DIR__ . '/../includes/permissions.php';
     function accountById(id) {
         return (lookups.accounts || []).find(o => String(o.id) === String(id)) || null;
     }
+    function sortLinesByCoa(lines) {
+        return [...(lines || [])].sort((a, b) => {
+            const acctA = accountById(a.account_id);
+            const acctB = accountById(b.account_id);
+            const ca = String(a.coa_number || acctA?.coa_number || '').trim();
+            const cb = String(b.coa_number || acctB?.coa_number || '').trim();
+            const aEmpty = ca === '' || ca === '—';
+            const bEmpty = cb === '' || cb === '—';
+            if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
+            const cmp = ca.localeCompare(cb, 'en', { numeric: true, sensitivity: 'base' });
+            if (cmp !== 0) return cmp;
+            const na = String(a.account_name || acctA?.name || '');
+            const nb = String(b.account_name || acctB?.name || '');
+            return na.localeCompare(nb, 'en', { sensitivity: 'base' });
+        });
+    }
     function accountOpts(val) {
         return '<option value="">— Select account —</option>' + (lookups.accounts || []).map(o =>
             `<option value="${o.id}"${o.id == val ? ' selected' : ''} data-coa-number="${escAttr(o.coa_number || '')}" data-natural-name="${escAttr(o.natural_name)}" data-functional-name="${escAttr(o.functional_name)}">${escAttr(o.name)}</option>`
@@ -1669,7 +1689,9 @@ require_once __DIR__ . '/../includes/permissions.php';
         actualsRange = { start: b.start_date || '', end: b.end_date || '' };
         linesBody.innerHTML = '';
         const hasLines = Array.isArray(b.lines) && b.lines.length;
-        const lines = hasLines ? b.lines : (mode === 'draft' && !isBudgetMobileChrome() ? [{}] : []);
+        const lines = hasLines
+            ? sortLinesByCoa(b.lines)
+            : (mode === 'draft' && !isBudgetMobileChrome() ? [{}] : []);
         lines.forEach(l => addLine(l, mode));
         setFormMode(mode);
         renderMobileLineCards();
