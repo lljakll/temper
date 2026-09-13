@@ -362,6 +362,50 @@ Follow-up to the mobile prototype. Desktop modal can stay as-is. Likely overflow
 Completion Status: Complete (0.951)
 
 
+#30 - 2026-09-12 - Budget - Enhancement - Med
+Expected:
+Each budget line shows Remaining = budgeted amount minus actual activity for that account (and fund, if the line is fund-specific) within the budget period. Works on desktop and mobile. Duplicate/New/Activate/Delete live in a mobile header flyout like Ledger. Read-only budgets do not repeat a full details form. Mobile lines are compact cards; tap or Add Line opens a sheet to edit one line. Desktop line table stays a table.
+Actual:
+Remaining is a placeholder (—). Mobile Budget is a stack of large action buttons, a duplicate details form, and oversized line cards with inline editors.
+Notes / Context / Interpretation:
+Remaining was deferred at 0.900. Use the same fund-balance rules already in place (asset tags ignored). Do not invent a new posting engine.
+
+Completion Status: Complete (0.952)
+
+
+#31 - 2026-09-12 - Funds - Enhancement - Med
+Expected:
+A read-only Funds screen (balances and notes) available from the sidebar immediately under Ledger. No edit/create on this screen. Lookups remain the place to maintain fund records.Expected to mention starting balance, period TXN count/amount, current balance, expandable transactions, and default current year.
+Actual:
+Fund balances only via Reports. No quick operational screen in the main nav.
+Notes / Context / Interpretation:
+Display only. Balances follow the established rule: fund tags on non-asset lines only. Dashboard discussion is separate.
+
+Completion Status: Complete (0.954)
+
+
+#32 - 2026-09-13 - Dashboard - Enhancement - Med
+Expected:
+Home is a glance page: Cash total, period in/out for current budget dates, short restricted snapshot, uncleared count, tasks if still used. Cards have real numbers and tap through to Ledger/Funds/Budget. Leftover Total Cash gear / users.preferences dashboard keys from the earlier card (removed with the old dashboard) are reused or deleted — not left as dead code.
+Actual:
+Dashboard cards were removed because they were stale. Earlier Total Cash + gear + preferences work may still exist unused.
+Notes / Context / Interpretation:
+Do not build add/remove card layout yet. One column on mobile, simple grid on desktop. Cash default = all asset accounts; restore gear only if that code is still sound.
+
+Completion Status:Complete (0.955)
+
+
+#33 - 2026-09-13 - Budget / Mobile - Bug - Low
+Expected:
+Selected budget summary card stays readable in the dark mobile theme (adequate contrast for labels and values).
+Actual:
+On select/view, the summary card background turns light blue and field labels become nearly invisible.
+Notes / Context / Interpretation:
+Selected-state style is a light-theme leftover. Easy CSS/theme fix. Optional: read-only still shows a second “View Budget” block under the card; can stay for this pass if the contrast fix is the only change.
+
+Completion Status: Complete (0.953)
+
+
 
 #<##> - yyyy-mm-dd - <page/action> - <category> - <severity>
 Expected:

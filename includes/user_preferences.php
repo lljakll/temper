@@ -15,11 +15,12 @@
  * Values must be small JSON-serializable scalars, lists, or maps — never HTML,
  * file blobs, or unrelated dumps under a key.
  *
- * Areas / examples (reuse these prefixes for near-future cards):
+ * Areas / examples:
  *
  *     dashboard.<card_id>.<option>
  *         dashboard.total_cash.account_ids   list<int> Chart of Accounts ids
- *                                            included in Total Cash / Bank
+ *                                            included in Home Cash / bank
+ *                                            (and This period in / out)
  *
  *     ledger.<option>
  *         ledger.double_click                reserved (browser localStorage
@@ -32,7 +33,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
     exit;
 }
 
-/** Dashboard Total Cash / Bank: selected asset account ids. */
+/** Home Cash / bank (and period in/out): selected asset account ids. */
 const USER_PREF_DASHBOARD_TOTAL_CASH_ACCOUNT_IDS = 'dashboard.total_cash.account_ids';
 
 /** Soft cap on the whole preferences JSON document (bytes). */

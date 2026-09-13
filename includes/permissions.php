@@ -44,6 +44,7 @@ function temperPagePermissionMap(): array {
     return [
         'dashboard' => 'page.dashboard',
         'ledger' => 'page.ledger',
+        'funds' => 'page.ledger',
         'reports' => 'page.reports',
         'budget' => 'page.budget',
         'tasks' => 'page.tasks',

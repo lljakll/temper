@@ -357,6 +357,71 @@ function budgetActiveSummary(mysqli $db): array {
     ];
 }
 
+/**
+ * Default reporting period: current (active) budget start/end, else calendar year.
+ *
+ * Prefer an active budget covering today; else an active budget for the current
+ * fiscal year; else the latest active budget. If none, Jan 1–Dec 31 of this year.
+ *
+ * @return array{
+ *   start_date:string,
+ *   end_date:string,
+ *   source:'budget'|'calendar',
+ *   budget_id:?int,
+ *   budget_name:?string,
+ *   fiscal_year:?int
+ * }
+ */
+function budgetCurrentPeriodDates(mysqli $db): array {
+    $year = budgetCurrentFiscalYear();
+    $calendar = [
+        'start_date' => sprintf('%04d-01-01', $year),
+        'end_date' => sprintf('%04d-12-31', $year),
+        'source' => 'calendar',
+        'budget_id' => null,
+        'budget_name' => null,
+        'fiscal_year' => $year,
+    ];
+
+    $today = date('Y-m-d');
+    $id = budgetDefaultIdForDate($db, $today);
+    if ($id) {
+        $b = budgetFetchById($db, $id);
+        if ($b && ($b['status'] ?? '') === 'active') {
+            return [
+                'start_date' => $b['start_date'],
+                'end_date' => $b['end_date'],
+                'source' => 'budget',
+                'budget_id' => $b['id'],
+                'budget_name' => $b['name'],
+                'fiscal_year' => $b['fiscal_year'],
+            ];
+        }
+    }
+
+    $active = budgetFetchActiveList($db);
+    if ($active === []) {
+        return $calendar;
+    }
+
+    $pick = $active[0];
+    foreach ($active as $b) {
+        if ((int)$b['fiscal_year'] === $year) {
+            $pick = $b;
+            break;
+        }
+    }
+
+    return [
+        'start_date' => (string)$pick['start_date'],
+        'end_date' => (string)$pick['end_date'],
+        'source' => 'budget',
+        'budget_id' => (int)$pick['id'],
+        'budget_name' => (string)$pick['name'],
+        'fiscal_year' => isset($pick['fiscal_year']) ? (int)$pick['fiscal_year'] : $year,
+    ];
+}
+
 function budgetListGroupedByYear(mysqli $db): array {
     $grouped = [];
     $r = $db->query(
@@ -543,4 +608,149 @@ function budgetDuplicateToDraft(
         'fiscal_year' => $fiscalYear,
         'line_count' => count($lines),
     ];
+}
+
+/**
+ * Signed activity of a transaction line in the account's normal-balance direction.
+ * Debit-normal: debit +, credit −. Credit-normal: credit +, debit −.
+ * Same CASE used by Budget vs Actual (reports.php), without the later abs() wrap
+ * so remaining can go negative when a line is overspent.
+ */
+function budgetSignedActivitySql(string $linesAlias = 'tl', string $accountsAlias = 'a'): string
+{
+    return "CASE
+        WHEN {$accountsAlias}.normal_balance = 'debit' AND {$linesAlias}.type = 'debit' THEN {$linesAlias}.amount
+        WHEN {$accountsAlias}.normal_balance = 'debit' AND {$linesAlias}.type = 'credit' THEN -{$linesAlias}.amount
+        WHEN {$accountsAlias}.normal_balance = 'credit' AND {$linesAlias}.type = 'credit' THEN {$linesAlias}.amount
+        WHEN {$accountsAlias}.normal_balance = 'credit' AND {$linesAlias}.type = 'debit' THEN -{$linesAlias}.amount
+        ELSE 0
+    END";
+}
+
+/**
+ * Actual activity posted to accounts during a date range, keyed by account_id.
+ *
+ * When $fundId is set, fund-balance-affecting account types (income, expense,
+ * equity) are limited to that fund. Asset/liability fund tags do not drive fund
+ * activity — those accounts count all activity regardless of fund tag.
+ *
+ * @param list<int> $accountIds
+ * @return array<int, float>
+ */
+function budgetFetchAccountActuals(
+    mysqli $db,
+    string $startDate,
+    string $endDate,
+    array $accountIds,
+    ?int $fundId = null
+): array {
+    $ids = [];
+    foreach ($accountIds as $id) {
+        $id = (int)$id;
+        if ($id > 0) {
+            $ids[$id] = $id;
+        }
+    }
+    $ids = array_values($ids);
+    if ($ids === [] || !budgetValidIsoDate($startDate) || !budgetValidIsoDate($endDate)) {
+        return [];
+    }
+
+    $signed = budgetSignedActivitySql('tl', 'a');
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "SELECT tl.account_id AS account_id,
+                   COALESCE(SUM({$signed}), 0) AS actual
+            FROM transaction_lines tl
+            JOIN transaction_details td ON td.id = tl.transaction_detail_id
+            JOIN accounts a ON a.id = tl.account_id
+            WHERE td.transaction_date >= ? AND td.transaction_date <= ?
+              AND tl.account_id IN ({$placeholders})";
+    $params = array_merge([$startDate, $endDate], $ids);
+    $types = 'ss' . str_repeat('i', count($ids));
+
+    if ($fundId !== null && $fundId > 0) {
+        require_once __DIR__ . '/fund_utils.php';
+        $fundTypes = fundBalanceAccountTypePredicate('a');
+        $sql .= " AND (({$fundTypes} AND tl.fund_id = ?) OR NOT ({$fundTypes}))";
+        $params[] = $fundId;
+        $types .= 'i';
+    }
+    $sql .= ' GROUP BY tl.account_id';
+
+    $stmt = $db->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $out = [];
+    while ($row = $res->fetch_assoc()) {
+        $out[(int)$row['account_id']] = round((float)$row['actual'], 2);
+    }
+    $stmt->close();
+    return $out;
+}
+
+/**
+ * Attach actual + remaining to budget line arrays.
+ * Remaining = budgeted amount − actual activity on that line's account
+ * (and fund, when the line is tied to a fund) during the budget period.
+ *
+ * @param list<array<string, mixed>> $lines
+ * @return list<array<string, mixed>>
+ */
+function budgetAttachLineRemainings(mysqli $db, array $lines, string $startDate, string $endDate): array
+{
+    $noFundIds = [];
+    $byFund = [];
+    foreach ($lines as $line) {
+        $aid = (int)($line['account_id'] ?? 0);
+        if ($aid <= 0) {
+            continue;
+        }
+        $fid = isset($line['fund_id']) && $line['fund_id'] !== '' && $line['fund_id'] !== null
+            ? (int)$line['fund_id']
+            : 0;
+        if ($fid > 0) {
+            $byFund[$fid][$aid] = $aid;
+        } else {
+            $noFundIds[$aid] = $aid;
+        }
+    }
+
+    $actualsNoFund = budgetFetchAccountActuals($db, $startDate, $endDate, array_values($noFundIds), null);
+    $actualsByFund = [];
+    foreach ($byFund as $fid => $aids) {
+        $actualsByFund[(int)$fid] = budgetFetchAccountActuals(
+            $db,
+            $startDate,
+            $endDate,
+            array_values($aids),
+            (int)$fid
+        );
+    }
+
+    foreach ($lines as &$line) {
+        $aid = (int)($line['account_id'] ?? 0);
+        $fid = isset($line['fund_id']) && $line['fund_id'] !== '' && $line['fund_id'] !== null
+            ? (int)$line['fund_id']
+            : 0;
+        $budgeted = round((float)($line['budgeted_amount'] ?? 0), 2);
+        if ($aid <= 0) {
+            $line['actual'] = 0.0;
+            $line['remaining'] = null;
+            continue;
+        }
+        if ($fid > 0) {
+            $actual = (float)($actualsByFund[$fid][$aid] ?? 0.0);
+        } else {
+            $actual = (float)($actualsNoFund[$aid] ?? 0.0);
+        }
+        $line['actual'] = $actual;
+        $line['remaining'] = round($budgeted - $actual, 2);
+    }
+    unset($line);
+
+    return $lines;
 }

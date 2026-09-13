@@ -1238,11 +1238,10 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             pointer-events: none;
         }
         #ledgerMobileFilterBtn,
-        #ledgerActionsFlyoutBtn {
+        #ledgerActionsFlyoutBtn,
+        #budgetActionsFlyoutBtn {
             position: relative;
         }
-
-        /* Dashboard is a simple shell until a new card system is designed. */
 
         /* ── Modals on small screens ─────────────────────────────────────── */
         @media (max-width: 575.98px) {
@@ -2519,6 +2518,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         }
         if (window.TemperLedgerPage && typeof window.TemperLedgerPage.disposeActive === 'function') {
             window.TemperLedgerPage.disposeActive();
+        }
+        if (window.TemperBudgetPage && typeof window.TemperBudgetPage.disposeActive === 'function') {
+            window.TemperBudgetPage.disposeActive();
+        }
+        if (window.TemperFundsPage && typeof window.TemperFundsPage.disposeActive === 'function') {
+            window.TemperFundsPage.disposeActive();
         }
 
         // Show loading indicator

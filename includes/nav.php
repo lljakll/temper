@@ -199,6 +199,14 @@ function temper_render_nav_links(
                 <?php endif; ?>
             </li>
             <?php endif; ?>
+            <?php if ($canLedger): ?>
+            <li class="nav-item">
+                <a href="javascript:void(0)" onclick="loadPage('funds')" class="nav-link" data-nav-page="funds" title="Funds">
+                    <i class="bi bi-wallet2" aria-hidden="true"></i>
+                    <span class="sidebar-label">Funds</span>
+                </a>
+            </li>
+            <?php endif; ?>
             <?php if ($canReports): ?>
             <li class="nav-item">
                 <a href="javascript:void(0)" onclick="loadPage('reports')" class="nav-link" data-nav-page="reports" title="Reports">

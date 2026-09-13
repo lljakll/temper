@@ -19,6 +19,10 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.955](#v0955)
+- [v0.954](#v0954)
+- [v0.953](#v0953)
+- [v0.952](#v0952)
 - [v0.951](#v0951)
 - [v0.950](#v0950)
 - [v0.949](#v0949)
@@ -158,6 +162,105 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.955
+
+**Home treasurer glance dashboard** — 2026-09-13
+
+> No schema update required for this release (dashboard page rebuild using existing tables and `users.preferences`).  
+> **Patch file (history row):** `updates/20260913_0955_dashboard_glance.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.955
+
+- Dashboard / Home is a treasurer glance page: cash/bank total, this period in/out, a short restricted (WDR) snapshot, uncleared/unreconciled count, and Tasks only when the tasks module has open items.
+- Cash / bank sums the selected asset accounts (default: all `account_type = asset`). The existing gear picker and `dashboard.total_cash.account_ids` preference are reused; period in/out uses the same accounts and the current budget date range (calendar year if no current budget).
+- Restricted snapshot uses the established fund-balance rule (asset-account fund tags ignored) and links into Funds. Uncleared / unreconciled links into Ledger. Cards are glance + navigation — not a second Ledger or Funds, and not the old add/remove/reorder card set.
+- Leftover dashboard-shell copy and the unused Total Cash card markup from 0.949 are gone. Preference helpers stay; there is one dashboard config path.
+- Ledger, Funds, Budget, and nav are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.955**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.954 | `updates/20260913_0955_dashboard_glance.sql` (records 0.955; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.954, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.954
+
+**Read-only Funds screen** — 2026-09-13
+
+> No schema update required for this release (new page using existing fund/ledger tables).  
+> **Patch file (history row):** `updates/20260913_0954_funds_screen.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.954
+
+- New **Funds** item in the sidebar and mobile nav, immediately under Ledger. Same `page.ledger` permission as the ledger (no new role).
+- Read-only list of funds for a selected period: name, restriction type, notes, starting balance, compact period activity (`n TXNs | +in | −out | Bal current`), and current balance.
+- Period defaults to the current budget’s start and end dates; if no current budget exists, the current calendar year. Desktop date-range controls sit in the page header; mobile uses a period filter popout.
+- Expanding a fund lists its assigned transactions in the period (date, ref, payee/description, amount, direction). No create/edit/archive on this screen.
+- Fund balances still ignore asset-account fund tags; only income, expense, and net-asset lines with fund tags affect starting/in/out/current figures.
+- Setup / Lookups remains the place to maintain fund records. Fund Balances and Restricted Funds reports are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.954**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.953 | `updates/20260913_0954_funds_screen.sql` (records 0.954; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.953, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.953
+
+**Mobile Budget selected-card contrast** — 2026-09-13
+
+> No schema update required for this release (selected-state CSS only).  
+> **Patch file (history row):** `updates/20260913_0953_budget_mobile_selected_contrast.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.953
+
+- Phone Budget list cards no longer use Bootstrap’s light-blue `.table-primary` fill when selected. Selected and unselected cards keep body/secondary text colors so labels and values stay readable in the dark theme.
+- Remaining calculation, flyout actions, line editor, and desktop Budget table styling are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.953**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.952 | `updates/20260913_0953_budget_mobile_selected_contrast.sql` (records 0.953; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.952, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.952
+
+**Budget Remaining + mobile Budget chrome** — 2026-09-12
+
+> No schema update required for this release (budget remaining is calculated, not stored).  
+> **Patch file (history row):** `updates/20260912_0952_budget_remaining_mobile.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.952
+
+- Budget line **Remaining** is now calculated: budgeted amount minus actual activity posted to that line’s account (and fund, if a line is tied to a fund) during the budget’s start/end dates. Asset-account fund tags do not drive fund activity. Currency is shown; negative remaining (overspent) is visible.
+- Same remaining figure on the desktop line table and mobile line cards.
+- Mobile Budget actions (Activate/Close, New Budget, Duplicate, Delete) move into a compact header flyout like mobile Ledger.
+- Read-only (active/closed) mobile view: summary card + line cards, not a duplicate details form. Draft/new keeps stacked details fields; desktop lines stay a table.
+- Mobile lines are compact cards (account, CoA, amount, remaining). Tap a card or Add Line to edit in a sheet.
+- Activate/close rules, duplicate behavior, and desktop table structure (aside from filling Remaining) are unchanged. No Dashboard work in this release.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.952**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.951 | `updates/20260912_0952_budget_remaining_mobile.sql` (records 0.952; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.951, then this process-only patch after `php setup_db.php` |
 
 ---
 

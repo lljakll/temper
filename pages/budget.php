@@ -54,8 +54,34 @@ require_once __DIR__ . '/../includes/permissions.php';
             ];
         }
         $lst->close();
-        $budget['lines'] = $lines;
+        $budget['lines'] = budgetAttachLineRemainings(
+            $db,
+            $lines,
+            (string)($budget['start_date'] ?? ''),
+            (string)($budget['end_date'] ?? '')
+        );
         echo json_encode($budget);
+        exit;
+    }
+
+    if (isset($_GET['line_actuals'])) {
+        header('Content-Type: application/json');
+        $start = (string)($_GET['start_date'] ?? '');
+        $end = (string)($_GET['end_date'] ?? '');
+        $fundId = (int)($_GET['fund_id'] ?? 0);
+        $ids = [];
+        foreach (explode(',', (string)($_GET['account_ids'] ?? '')) as $part) {
+            $aid = (int)trim($part);
+            if ($aid > 0) {
+                $ids[] = $aid;
+            }
+        }
+        $map = budgetFetchAccountActuals($db, $start, $end, $ids, $fundId > 0 ? $fundId : null);
+        $actuals = [];
+        foreach ($map as $accountId => $actual) {
+            $actuals[(string)$accountId] = $actual;
+        }
+        echo json_encode(['actuals' => $actuals]);
         exit;
     }
 
@@ -350,6 +376,185 @@ require_once __DIR__ . '/../includes/permissions.php';
         pointer-events: none;
     }
     .budget-lines-table-wrap { overflow-x: auto; }
+    .budget-line-remaining.is-negative,
+    #linesRemaining.is-negative,
+    #mobileLinesRemaining.is-negative,
+    #lineEditRemaining.is-negative {
+        color: var(--bs-danger);
+    }
+    .budget-summary-card,
+    .budget-line-cards,
+    .budget-actions-flyout-head,
+    .budget-actions-backdrop {
+        display: none;
+    }
+    .budget-line-card {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+        margin: 0 0 0.55rem;
+        padding: 0.7rem 0.8rem;
+        border: 1px solid var(--bs-border-color);
+        border-radius: 0.7rem;
+        background: var(--bs-body-bg);
+        box-shadow: 0 0.08rem 0.35rem rgba(0, 0, 0, 0.05);
+        text-align: left;
+        color: inherit;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .budget-line-card:last-child { margin-bottom: 0; }
+    .budget-line-card:active {
+        background-color: rgba(var(--bs-primary-rgb), 0.08);
+        border-color: rgba(var(--bs-primary-rgb), 0.35);
+    }
+    .budget-line-card-main { min-width: 0; flex: 1 1 auto; }
+    .budget-line-card-name {
+        font-weight: 600;
+        line-height: 1.25;
+        word-break: break-word;
+    }
+    .budget-line-card-coa {
+        font-size: 0.78rem;
+        color: var(--bs-secondary-color);
+        font-family: var(--bs-font-monospace);
+    }
+    .budget-line-card-figures {
+        text-align: right;
+        flex: 0 0 auto;
+        font-variant-numeric: tabular-nums;
+    }
+    .budget-line-card-amount {
+        font-weight: 700;
+        font-family: var(--bs-font-monospace);
+        line-height: 1.15;
+    }
+    .budget-line-card-remaining {
+        font-size: 0.75rem;
+        color: var(--bs-secondary-color);
+        margin-top: 0.15rem;
+    }
+    .budget-line-card-remaining.is-negative { color: var(--bs-danger); }
+    .budget-line-cards-empty {
+        color: var(--bs-secondary-color);
+        font-size: 0.875rem;
+        padding: 0.85rem 0.25rem;
+        text-align: center;
+    }
+    .budget-line-cards-foot {
+        border-top: 1px solid var(--bs-border-color);
+        margin-top: 0.35rem;
+        padding-top: 0.65rem;
+    }
+    .budget-summary-dl { margin-bottom: 0; }
+    .budget-summary-dl dt { color: var(--bs-secondary-color); font-weight: 600; }
+    .budget-summary-dl dd { margin-bottom: 0.35rem; }
+    @media (max-width: 767.98px) {
+        .budget-page .budget-lines-table-wrap { display: none !important; }
+        .budget-line-cards { display: block; }
+        .budget-page.is-readonly-view .budget-field-core { display: none !important; }
+        .budget-page.is-locked-view .budget-field-desc { display: none !important; }
+        .budget-page.is-readonly-view .budget-summary-card { display: block; }
+        .budget-page.is-readonly-view:not(.is-locked-view) .budget-summary-desc { display: none; }
+        .budget-actions-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 1035;
+            background: rgba(0, 0, 0, 0.35);
+        }
+        .budget-actions-backdrop[hidden] { display: none !important; }
+        .budget-action-bar {
+            position: fixed;
+            top: 3.7rem;
+            right: 0.5rem;
+            left: auto;
+            bottom: auto;
+            width: min(18rem, calc(100vw - 1rem));
+            max-height: calc(100dvh - 8.5rem - env(safe-area-inset-bottom, 0px));
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex !important;
+            flex-direction: column;
+            flex-wrap: nowrap;
+            align-items: stretch;
+            gap: 0.45rem;
+            margin: 0;
+            padding: 0.75rem;
+            background: var(--bs-body-bg);
+            border: 1px solid var(--bs-border-color);
+            border-radius: 0.75rem;
+            box-shadow: 0 0.45rem 1.4rem rgba(0, 0, 0, 0.18);
+            z-index: 1040;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateY(-0.35rem);
+            transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+        }
+        .budget-page.budget-actions-open .budget-action-bar {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transform: none;
+        }
+        .budget-actions-flyout-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding-bottom: 0.15rem;
+            margin-bottom: 0.15rem;
+            border-bottom: 1px solid var(--bs-border-color);
+        }
+        .budget-action-bar > .btn {
+            flex: 0 0 auto;
+            width: 100%;
+            justify-content: flex-start;
+        }
+        /*
+         * Stacked budget list cards: Bootstrap .table-primary uses a light-blue
+         * cell fill and black table text. Caption labels (::before) keep
+         * --bs-secondary-color, which in dark theme is light — unreadable on
+         * that fill. Paint the card with a theme-aware primary tint instead.
+         */
+        .budget-page table.temper-stack-on-mobile tbody tr {
+            --bs-table-color: var(--bs-body-color);
+            --bs-table-bg: transparent;
+            --bs-table-accent-bg: transparent;
+            --bs-table-striped-bg: transparent;
+            --bs-table-striped-color: var(--bs-body-color);
+            --bs-table-active-bg: transparent;
+            --bs-table-active-color: var(--bs-body-color);
+            --bs-table-hover-bg: transparent;
+            --bs-table-hover-color: var(--bs-body-color);
+            color: var(--bs-body-color);
+            background-color: var(--bs-body-bg);
+        }
+        .budget-page table.temper-stack-on-mobile tbody tr > * {
+            background-color: transparent !important;
+            color: inherit;
+            box-shadow: none;
+        }
+        .budget-page table.temper-stack-on-mobile tbody tr.budget-row-current-fy {
+            background-color: rgba(var(--bs-primary-rgb), 0.08);
+        }
+        .budget-page table.temper-stack-on-mobile tbody tr.table-primary {
+            --bs-table-color: var(--bs-body-color);
+            --bs-table-bg: transparent;
+            color: var(--bs-body-color);
+            background-color: rgba(var(--bs-primary-rgb), 0.2);
+            border-color: rgba(var(--bs-primary-rgb), 0.55);
+        }
+        .budget-page table.temper-stack-on-mobile tbody tr.table-primary td {
+            color: var(--bs-body-color);
+        }
+        .budget-page table.temper-stack-on-mobile tbody tr.table-primary td::before {
+            color: var(--bs-secondary-color);
+        }
+    }
     #linesTable {
         table-layout: fixed;
         width: 100%;
@@ -417,7 +622,15 @@ require_once __DIR__ . '/../includes/permissions.php';
 <?php if (!empty($pageFlash)): ?>
 <script type="application/json" id="page-flash"><?= json_encode($pageFlash) ?></script>
 <?php endif; ?>
-<div class="container-fluid mt-2 mt-md-4 px-0 px-sm-2">
+<div class="container-fluid mt-2 mt-md-4 px-0 px-sm-2 budget-page" id="budgetPage">
+    <div id="budgetMobileHeaderTools" hidden>
+        <button type="button" id="budgetActionsFlyoutBtn" class="btn btn-outline-secondary btn-sm px-2"
+                aria-expanded="false" aria-controls="budgetActionBar" title="Budget actions">
+            <i class="bi bi-three-dots-vertical" aria-hidden="true"></i>
+            <span class="visually-hidden">Budget actions</span>
+        </button>
+    </div>
+    <div id="budgetActionsBackdrop" class="budget-actions-backdrop d-md-none" hidden></div>
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3 page-title-row">
         <div>
             <h2 class="mb-1">Budget</h2>
@@ -442,15 +655,17 @@ require_once __DIR__ . '/../includes/permissions.php';
     </div>
     <?php endif; ?>
 
-    <div class="row mb-3">
-        <div class="col d-flex flex-wrap gap-2 justify-content-md-end">
-            <button type="button" id="cycleBtn" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
-            <?php if ($canWriteBudget): ?>
-            <button type="button" id="addBtn" class="btn btn-primary">New Budget</button>
-            <button type="button" id="duplicateBtn" class="btn btn-outline-secondary" disabled>Duplicate</button>
-            <?php endif; ?>
-            <button id="deleteBtn" class="btn btn-danger" disabled>Delete</button>
+    <div class="d-flex flex-wrap gap-2 mb-3 budget-action-bar justify-content-md-end" id="budgetActionBar" role="toolbar" aria-label="Budget actions">
+        <div class="budget-actions-flyout-head d-md-none">
+            <strong>Actions</strong>
+            <button type="button" class="btn-close" id="budgetActionsFlyoutClose" aria-label="Close actions"></button>
         </div>
+        <button type="button" id="cycleBtn" class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Activate / Close</button>
+        <?php if ($canWriteBudget): ?>
+        <button type="button" id="addBtn" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Budget</button>
+        <button type="button" id="duplicateBtn" class="btn btn-outline-secondary" disabled><i class="bi bi-copy"></i> Duplicate</button>
+        <?php endif; ?>
+        <button type="button" id="deleteBtn" class="btn btn-danger" disabled><i class="bi bi-trash"></i> Delete</button>
     </div>
 
     <div class="table-responsive mb-4">
@@ -506,12 +721,30 @@ require_once __DIR__ . '/../includes/permissions.php';
                 <input type="hidden" name="budget_id" id="budgetId">
                 <input type="hidden" name="lines_json" id="linesJson">
 
-                <div class="row g-2 g-md-3 mb-3">
-                    <div class="col-6 col-md-2">
+                <div id="budgetSummaryCard" class="budget-summary-card card border mb-3">
+                    <div class="card-body py-3">
+                        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                            <div class="min-w-0">
+                                <div class="fw-semibold" id="budgetSummaryName"></div>
+                                <div class="small text-muted" id="budgetSummaryPeriod"></div>
+                            </div>
+                            <span class="badge" id="budgetSummaryStatus"></span>
+                        </div>
+                        <dl class="row small budget-summary-dl">
+                            <dt class="col-4">Year</dt><dd class="col-8" id="budgetSummaryYear"></dd>
+                            <dt class="col-4">Reference</dt><dd class="col-8" id="budgetSummaryRef"></dd>
+                            <dt class="col-4">Approved</dt><dd class="col-8" id="budgetSummaryApproved"></dd>
+                            <dt class="col-4 budget-summary-desc">Description</dt><dd class="col-8 budget-summary-desc" id="budgetSummaryDesc"></dd>
+                        </dl>
+                    </div>
+                </div>
+
+                <div class="row g-2 g-md-3 mb-3" id="budgetDetailsFields">
+                    <div class="col-6 col-md-2 budget-field-core">
                         <label class="form-label">Year</label>
                         <input type="number" class="form-control budget-field" name="fiscal_year" id="fiscalYear" required min="2000" max="2100">
                     </div>
-                    <div class="col-12 col-md-4">
+                    <div class="col-12 col-md-4 budget-field-core">
                         <label class="form-label" for="budgetName">Name</label>
                         <div class="budget-name-wrap position-relative">
                             <input type="text" class="form-control budget-field" name="name" id="budgetName" required
@@ -523,7 +756,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                             </div>
                         </div>
                     </div>
-                    <div class="col-6 col-md-2">
+                    <div class="col-6 col-md-2 budget-field-core">
                         <label class="form-label">Status</label>
                         <select class="form-select budget-field" name="status" id="budgetStatus">
                             <option value="draft">Draft</option>
@@ -531,25 +764,25 @@ require_once __DIR__ . '/../includes/permissions.php';
                         </select>
                         <input type="text" class="form-control d-none" id="budgetStatusDisplay" readonly disabled>
                     </div>
-                    <div class="col-12 col-md-4">
+                    <div class="col-12 col-md-4 budget-field-core">
                         <label class="form-label">Reference # <span class="text-danger">*</span></label>
                         <input type="text" class="form-control budget-field" name="reference_number" id="referenceNumber">
                         <div class="invalid-feedback">Required. Should identify the business meeting minutes where this budget was approved.</div>
                     </div>
-                    <div class="col-6 col-md-3">
+                    <div class="col-6 col-md-3 budget-field-core">
                         <label class="form-label">Start Date</label>
                         <input type="date" class="form-control budget-field" name="start_date" id="startDate" required>
                     </div>
-                    <div class="col-6 col-md-3">
+                    <div class="col-6 col-md-3 budget-field-core">
                         <label class="form-label">End Date</label>
                         <input type="date" class="form-control budget-field" name="end_date" id="endDate" required>
                     </div>
-                    <div class="col-6 col-md-3">
+                    <div class="col-6 col-md-3 budget-field-core">
                         <label class="form-label">Approved Date <span class="text-danger">*</span></label>
                         <input type="date" class="form-control budget-field" name="approved_date" id="approvedDate">
                         <div class="invalid-feedback">Required when approving a budget.</div>
                     </div>
-                    <div class="col-12 col-md-3">
+                    <div class="col-12 col-md-3 budget-field-desc">
                         <label class="form-label">Description</label>
                         <input type="text" class="form-control budget-field" name="description" id="budgetDesc" placeholder="Optional longer description">
                     </div>
@@ -561,7 +794,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                         <button type="button" class="btn btn-outline-secondary btn-sm" id="addLineBtn"><i class="bi bi-plus"></i> Add Line</button>
                     </div>
                     <div class="card-body p-0">
-                        <div class="budget-lines-table-wrap">
+                        <div class="budget-lines-table-wrap d-none d-md-block">
                             <table class="table table-sm table-bordered mb-0" id="linesTable">
                                 <colgroup>
                                     <col class="col-account">
@@ -592,6 +825,16 @@ require_once __DIR__ . '/../includes/permissions.php';
                                     </tr>
                                 </tfoot>
                             </table>
+                        </div>
+                        <div id="budgetLineCards" class="budget-line-cards p-2 d-md-none">
+                            <div id="budgetLineCardList"></div>
+                            <div class="budget-line-cards-foot d-flex justify-content-between align-items-start px-1">
+                                <span class="fw-semibold">Total</span>
+                                <div class="text-end">
+                                    <div id="mobileLinesTotal" class="fw-semibold">$0.00</div>
+                                    <div class="small" id="mobileLinesRemaining">Remaining —</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -653,6 +896,60 @@ require_once __DIR__ . '/../includes/permissions.php';
     </div>
 </div>
 <?php endif; ?>
+
+<!-- Budget Line editor (mobile sheet; also used to view a line) -->
+<div class="modal fade" id="budgetLineModal" tabindex="-1" aria-labelledby="budgetLineModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="budgetLineModalTitle">Budget Line</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="lineEditUid">
+                <div class="mb-3">
+                    <label class="form-label" for="lineEditAccount">Account</label>
+                    <select class="form-select" id="lineEditAccount"></select>
+                    <div class="form-control-plaintext d-none fw-semibold" id="lineEditAccountDisplay"></div>
+                </div>
+                <div class="row g-2 mb-3 small">
+                    <div class="col-4">
+                        <div class="text-muted">CoA #</div>
+                        <div class="font-monospace" id="lineEditCoa">—</div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-muted">Natural</div>
+                        <div id="lineEditNatural">—</div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-muted">Functional</div>
+                        <div id="lineEditFunctional">—</div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="lineEditAmount">Amount</label>
+                    <input type="text" class="form-control text-end" id="lineEditAmount" inputmode="numeric">
+                    <div class="form-control-plaintext d-none text-end fw-semibold" id="lineEditAmountDisplay"></div>
+                </div>
+                <div class="mb-3">
+                    <div class="text-muted small">Remaining</div>
+                    <div class="fs-5 fw-semibold" id="lineEditRemaining">—</div>
+                </div>
+                <div class="mb-0">
+                    <label class="form-label" for="lineEditNotes">Notes</label>
+                    <input type="text" class="form-control" id="lineEditNotes">
+                </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-outline-danger" id="lineEditDelete">Remove</button>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="lineEditApply">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Activate / Close Budget Modal -->
 <div class="modal fade" id="cycleModal" tabindex="-1" aria-labelledby="cycleModalLabel" aria-hidden="true">
@@ -744,13 +1041,130 @@ require_once __DIR__ . '/../includes/permissions.php';
     const duplicateModal = duplicateModalEl
         ? bootstrap.Modal.getOrCreateInstance(duplicateModalEl)
         : null;
+    let lineModalEl = document.getElementById('budgetLineModal');
+    if (lineModalEl && typeof window.mountModalOnBody === 'function') {
+        lineModalEl = window.mountModalOnBody(lineModalEl);
+    }
+    const lineModal = lineModalEl
+        ? bootstrap.Modal.getOrCreateInstance(lineModalEl)
+        : null;
+    const pageRoot = document.getElementById('budgetPage');
+    const actionBar = document.getElementById('budgetActionBar');
+    const actionsFlyoutBtn = document.getElementById('budgetActionsFlyoutBtn');
+    const actionsFlyoutClose = document.getElementById('budgetActionsFlyoutClose');
+    const actionsBackdrop = document.getElementById('budgetActionsBackdrop');
+    const lineCardList = document.getElementById('budgetLineCardList');
     let selectedRow = null;
     let originalStatus = 'draft';
     let formMode = 'draft';
     let savedSnapshot = null;
     let cycleData = { active: [], approved: [], current_fiscal_year: <?= (int)$currentFiscalYear ?> };
+    let lineUidSeq = 1;
+    let actualsCache = {};
+    let actualsRange = { start: '', end: '' };
+    let lineEditUid = null;
+    let lineEditIsNew = false;
+    let lineEditAmountBound = false;
 
-    function fmt(n) { return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+    function isBudgetMobileChrome() {
+        return window.matchMedia('(max-width: 767.98px)').matches;
+    }
+    function fmt(n) {
+        const v = Number(n);
+        const num = Number.isFinite(v) ? v : 0;
+        const formatted = Math.abs(num).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        return (num < 0 ? '-$' : '$') + formatted;
+    }
+    function remainingText(n) {
+        if (n === null || n === undefined || n === '') return '—';
+        const v = Number(n);
+        if (!Number.isFinite(v)) return '—';
+        return fmt(v);
+    }
+    function setRemainingEl(el, value, extraClass) {
+        if (!el) return;
+        const has = value !== null && value !== undefined && Number.isFinite(Number(value));
+        el.textContent = has ? remainingText(value) : '—';
+        el.classList.toggle('is-negative', has && Number(value) < 0);
+        el.classList.toggle('text-muted', !has);
+        if (extraClass) el.classList.toggle(extraClass, has && Number(value) < 0);
+    }
+    function currentPeriod() {
+        return {
+            start: document.getElementById('startDate')?.value || '',
+            end: document.getElementById('endDate')?.value || ''
+        };
+    }
+    function seedActual(accountId, actual) {
+        if (!accountId) return;
+        actualsCache[String(accountId)] = Number(actual) || 0;
+    }
+    function getCachedActual(accountId) {
+        if (!accountId) return 0;
+        const v = actualsCache[String(accountId)];
+        return v === undefined ? 0 : Number(v) || 0;
+    }
+    function remainingForAmount(amount, accountId) {
+        const period = currentPeriod();
+        if (!accountId || !period.start || !period.end) return null;
+        return Math.round(((Number(amount) || 0) - getCachedActual(accountId)) * 100) / 100;
+    }
+    function fetchActuals(accountIds) {
+        const period = currentPeriod();
+        if (period.start !== actualsRange.start || period.end !== actualsRange.end) {
+            actualsCache = {};
+            actualsRange = { start: period.start, end: period.end };
+        }
+        const ids = [...new Set((accountIds || []).map(id => String(id)).filter(id => id && id !== '0'))];
+        if (!period.start || !period.end || !ids.length) return Promise.resolve();
+        const missing = ids.filter(id => actualsCache[id] === undefined);
+        if (!missing.length) return Promise.resolve();
+        const q = new URLSearchParams({
+            line_actuals: '1',
+            start_date: period.start,
+            end_date: period.end,
+            account_ids: missing.join(',')
+        });
+        return fetch(`pages/${page}.php?${q.toString()}`)
+            .then(r => r.json())
+            .then(data => {
+                Object.entries(data.actuals || {}).forEach(([k, v]) => {
+                    actualsCache[String(k)] = Number(v) || 0;
+                });
+                missing.forEach(id => {
+                    if (actualsCache[id] === undefined) actualsCache[id] = 0;
+                });
+            })
+            .catch(() => {
+                missing.forEach(id => { if (actualsCache[id] === undefined) actualsCache[id] = 0; });
+            });
+    }
+    function rowAccountId(tr) {
+        return tr.querySelector('.line-account')?.value || tr.dataset.accountId || '';
+    }
+    function rowAmount(tr) {
+        const input = tr.querySelector('.line-amount');
+        if (input) return parseFloat(input.dataset.amount || '0') || 0;
+        return parseFloat(tr.dataset.amount || '0') || 0;
+    }
+    function applyRowRemaining(tr) {
+        const aid = rowAccountId(tr);
+        const rem = remainingForAmount(rowAmount(tr), aid);
+        if (aid) tr.dataset.actual = String(getCachedActual(aid));
+        else delete tr.dataset.actual;
+        const cell = tr.querySelector('.line-cell-remaining');
+        setRemainingEl(cell, rem);
+    }
+    function refreshAllRemainings() {
+        const ids = [...linesBody.querySelectorAll('tr.line-row')].map(rowAccountId).filter(Boolean);
+        return fetchActuals(ids).then(() => {
+            linesBody.querySelectorAll('tr.line-row').forEach(applyRowRemaining);
+            updateTotal();
+        });
+    }
+    function escHtml(s) {
+        return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
     function escAttr(s) {
         return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     }
@@ -803,12 +1217,34 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
     function updateTotal() {
         let t = 0;
+        let rem = 0;
+        let remCount = 0;
         linesBody.querySelectorAll('tr.line-row').forEach(tr => {
-            const input = tr.querySelector('.line-amount');
-            if (input) t += parseFloat(input.dataset.amount || 0);
-            else if (tr.dataset.amount) t += parseFloat(tr.dataset.amount);
+            const amt = rowAmount(tr);
+            t += amt;
+            const r = remainingForAmount(amt, rowAccountId(tr));
+            if (r !== null) {
+                rem += r;
+                remCount++;
+            }
         });
-        linesTotal.textContent = fmt(t);
+        if (linesTotal) linesTotal.textContent = fmt(t);
+        const remEl = document.getElementById('linesRemaining');
+        setRemainingEl(remEl, remCount ? rem : null);
+        if (remEl) remEl.classList.toggle('fw-bold', true);
+        const mobTotal = document.getElementById('mobileLinesTotal');
+        const mobRem = document.getElementById('mobileLinesRemaining');
+        if (mobTotal) mobTotal.textContent = fmt(t);
+        if (mobRem) {
+            if (!remCount) {
+                mobRem.textContent = 'Remaining —';
+                mobRem.classList.remove('is-negative');
+            } else {
+                mobRem.textContent = 'Remaining ' + remainingText(rem);
+                mobRem.classList.toggle('is-negative', rem < 0);
+            }
+        }
+        renderMobileLineCards();
     }
     function bindAmountInput(input, amount) {
         const amt = parseFloat(amount) || 0;
@@ -819,7 +1255,11 @@ require_once __DIR__ . '/../includes/permissions.php';
             const val = parseInt(digits || '0', 10) / 100;
             input.dataset.amount = val;
             input.value = fmt(val);
-            updateTotal();
+            const tr = input.closest('tr');
+            if (tr) {
+                applyRowRemaining(tr);
+                updateTotal();
+            }
         });
         input.addEventListener('focus', () => input.select());
     }
@@ -893,9 +1333,14 @@ require_once __DIR__ . '/../includes/permissions.php';
         data = data || {};
         const tr = document.createElement('tr');
         tr.classList.add('line-row');
+        tr.dataset.uid = data.uid || ('n' + (lineUidSeq++));
         if (data.id) tr.dataset.lineId = data.id;
         if (data.account_id) tr.dataset.accountId = data.account_id;
         const amt = parseFloat(data.budgeted_amount) || 0;
+        if (data.actual !== undefined && data.actual !== null && data.account_id) {
+            seedActual(data.account_id, data.actual);
+            tr.dataset.actual = String(Number(data.actual) || 0);
+        }
         const acctInfo = accountById(data.account_id);
         const coaRaw = data.coa_number || (acctInfo && acctInfo.coa_number) || '';
         const coaLabel = String(coaRaw).trim() !== '' ? String(coaRaw).trim() : '—';
@@ -909,34 +1354,251 @@ require_once __DIR__ . '/../includes/permissions.php';
                 <td class="line-cell-cat" data-label="Natural"><span class="line-cat-label line-natural-label" title="">—</span></td>
                 <td class="line-cell-cat" data-label="Functional"><span class="line-cat-label line-functional-label" title="">—</span></td>
                 <td class="line-cell-amount" data-label="Amount"><input type="text" class="form-control form-control-sm text-end line-amount" inputmode="numeric"></td>
-                <td class="text-end text-muted line-cell-remaining" data-label="Remaining">—</td>
+                <td class="text-end line-cell-remaining" data-label="Remaining">—</td>
                 <td class="line-cell-notes" data-label="Notes"><input type="text" class="form-control form-control-sm line-notes" value="${escAttr(data.notes || '')}"></td>
                 <td class="line-actions" data-label=""><button type="button" class="btn btn-sm btn-outline-danger rm-line"><i class="bi bi-x"></i></button></td>`;
             bindAmountInput(tr.querySelector('.line-amount'), data.budgeted_amount);
             const accSel = tr.querySelector('.line-account');
-            accSel.addEventListener('change', () => syncLineCategoryLabels(tr));
+            accSel.addEventListener('change', () => {
+                syncLineCategoryLabels(tr);
+                const aid = accSel.value;
+                if (aid) tr.dataset.accountId = aid;
+                else delete tr.dataset.accountId;
+                fetchActuals(aid ? [aid] : []).then(() => {
+                    applyRowRemaining(tr);
+                    updateTotal();
+                });
+            });
             syncLineCategoryLabels(tr);
             tr.querySelector('.rm-line').addEventListener('click', () => { tr.remove(); updateTotal(); });
         } else {
             const notesVal = data.notes || '';
             const notesCell = mode === 'approved'
                 ? `<input type="text" class="form-control form-control-sm line-notes" value="${escAttr(notesVal)}">`
-                : `<span class="line-cell-text" title="${escAttr(notesVal)}">${escAttr(notesVal)}</span>`;
+                : `<span class="line-cell-text line-notes-readonly" title="${escAttr(notesVal)}">${escAttr(notesVal)}</span>`;
             tr.innerHTML = `
                 <td class="line-cell-cat" data-label="Account"><span class="line-cell-text" title="${escAttr(acctLabel)}">${escAttr(acctLabel)}</span></td>
                 <td class="line-cell-cat" data-label="CoA #"><span class="line-cat-label line-coa-label" title="${escAttr(coaLabel)}">${escAttr(coaLabel)}</span></td>
                 <td class="line-cell-cat" data-label="Natural"><span class="line-cat-label" title="${escAttr(natLabel)}">${escAttr(natLabel)}</span></td>
                 <td class="line-cell-cat" data-label="Functional"><span class="line-cat-label" title="${escAttr(funLabel)}">${escAttr(funLabel)}</span></td>
                 <td class="text-end line-cell-amount" data-label="Amount">${fmt(amt)}</td>
-                <td class="text-end text-muted line-cell-remaining" data-label="Remaining">—</td>
+                <td class="text-end line-cell-remaining" data-label="Remaining">—</td>
                 <td class="line-cell-notes" data-label="Notes">${notesCell}</td><td class="line-actions" data-label=""></td>`;
             tr.dataset.amount = amt;
         }
         linesBody.appendChild(tr);
+        applyRowRemaining(tr);
         updateTotal();
+        return tr;
+    }
+    function lineDisplayFromRow(tr) {
+        const aid = rowAccountId(tr);
+        const acct = accountById(aid);
+        const coaEl = tr.querySelector('.line-coa-label');
+        return {
+            uid: tr.dataset.uid,
+            account_id: aid,
+            account_name: acct?.name || tr.querySelector('.line-cell-cat .line-cell-text')?.textContent || '',
+            coa: (coaEl?.textContent || acct?.coa_number || '').trim() || '—',
+            amount: rowAmount(tr),
+            remaining: remainingForAmount(rowAmount(tr), aid),
+            notes: tr.querySelector('.line-notes')?.value ?? tr.querySelector('.line-notes-readonly')?.textContent ?? ''
+        };
+    }
+    function renderMobileLineCards() {
+        if (!lineCardList) return;
+        const rows = [...linesBody.querySelectorAll('tr.line-row')];
+        if (!rows.length) {
+            const empty = formMode === 'draft'
+                ? 'No lines yet. Use Add Line to create one.'
+                : 'No budget lines.';
+            lineCardList.innerHTML = `<div class="budget-line-cards-empty">${empty}</div>`;
+            return;
+        }
+        lineCardList.innerHTML = rows.map(tr => {
+            const d = lineDisplayFromRow(tr);
+            const name = d.account_name || 'Select account…';
+            const remClass = (d.remaining !== null && d.remaining < 0) ? ' is-negative' : '';
+            const remLabel = d.remaining === null ? 'Remaining —' : ('Remaining ' + remainingText(d.remaining));
+            return `<article class="budget-line-card" data-uid="${escAttr(d.uid)}" role="button" tabindex="0">
+                <div class="budget-line-card-main">
+                    <div class="budget-line-card-name">${escHtml(name)}</div>
+                    <div class="budget-line-card-coa">${escHtml(d.coa)}</div>
+                </div>
+                <div class="budget-line-card-figures">
+                    <div class="budget-line-card-amount">${fmt(d.amount)}</div>
+                    <div class="budget-line-card-remaining${remClass}">${escHtml(remLabel)}</div>
+                </div>
+            </article>`;
+        }).join('');
+    }
+    function syncLineEditCategoryLabels() {
+        const sel = document.getElementById('lineEditAccount');
+        const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+        const has = !!(opt && opt.value);
+        document.getElementById('lineEditCoa').textContent = has ? ((opt.dataset.coaNumber || '').trim() || '—') : '—';
+        document.getElementById('lineEditNatural').textContent = has ? (opt.dataset.naturalName || '—') : '—';
+        document.getElementById('lineEditFunctional').textContent = has ? (opt.dataset.functionalName || '—') : '—';
+        updateLineEditRemaining();
+    }
+    function lineEditAmountValue() {
+        const input = document.getElementById('lineEditAmount');
+        return parseFloat(input?.dataset.amount || '0') || 0;
+    }
+    function updateLineEditRemaining() {
+        const aid = document.getElementById('lineEditAccount')?.value || '';
+        const rem = remainingForAmount(lineEditAmountValue(), aid);
+        setRemainingEl(document.getElementById('lineEditRemaining'), rem);
+    }
+    function setLineEditorEditable(canEditAccountAmount, canEditNotes) {
+        const accSel = document.getElementById('lineEditAccount');
+        const accDisp = document.getElementById('lineEditAccountDisplay');
+        const amtInput = document.getElementById('lineEditAmount');
+        const amtDisp = document.getElementById('lineEditAmountDisplay');
+        const notes = document.getElementById('lineEditNotes');
+        const applyBtn = document.getElementById('lineEditApply');
+        const delBtn = document.getElementById('lineEditDelete');
+        accSel.classList.toggle('d-none', !canEditAccountAmount);
+        accDisp.classList.toggle('d-none', canEditAccountAmount);
+        amtInput.classList.toggle('d-none', !canEditAccountAmount);
+        amtDisp.classList.toggle('d-none', canEditAccountAmount);
+        notes.readOnly = !canEditNotes;
+        notes.disabled = !canEditNotes;
+        applyBtn.classList.toggle('d-none', !canEditNotes && !canEditAccountAmount);
+        delBtn.classList.toggle('d-none', !canEditAccountAmount || lineEditIsNew);
+    }
+    function openLineEditor(tr) {
+        if (!lineModal || !lineModalEl) return;
+        lineEditIsNew = !tr;
+        lineEditUid = tr ? tr.dataset.uid : '';
+        const accSel = document.getElementById('lineEditAccount');
+        const accDisp = document.getElementById('lineEditAccountDisplay');
+        const amtInput = document.getElementById('lineEditAmount');
+        const amtDisp = document.getElementById('lineEditAmountDisplay');
+        const notes = document.getElementById('lineEditNotes');
+        const title = document.getElementById('budgetLineModalTitle');
+        const aid = tr ? rowAccountId(tr) : '';
+        const amt = tr ? rowAmount(tr) : 0;
+        const acct = accountById(aid);
+        accSel.innerHTML = accountOpts(aid);
+        accDisp.textContent = acct?.name || (tr ? (tr.querySelector('.line-cell-cat .line-cell-text')?.textContent || '—') : '—');
+        if (!lineEditAmountBound) {
+            bindAmountInput(amtInput, amt);
+            amtInput.addEventListener('input', updateLineEditRemaining);
+            lineEditAmountBound = true;
+        } else {
+            amtInput.dataset.amount = amt;
+            amtInput.value = fmt(amt);
+        }
+        amtDisp.textContent = fmt(amt);
+        notes.value = tr
+            ? (tr.querySelector('.line-notes')?.value ?? tr.querySelector('.line-notes-readonly')?.textContent ?? '')
+            : '';
+        title.textContent = lineEditIsNew ? 'Add Line' : (formMode === 'draft' ? 'Edit Line' : 'Budget Line');
+        const canEditAll = formMode === 'draft';
+        const canEditNotes = formMode === 'draft' || formMode === 'approved';
+        setLineEditorEditable(canEditAll, canEditNotes);
+        syncLineEditCategoryLabels();
+        if (aid) {
+            fetchActuals([aid]).then(updateLineEditRemaining);
+        } else {
+            updateLineEditRemaining();
+        }
+        if (typeof window.mountModalOnBody === 'function') {
+            lineModalEl = window.mountModalOnBody(lineModalEl);
+        }
+        lineModal.show();
+    }
+    function applyLineEditor() {
+        const aid = document.getElementById('lineEditAccount').value;
+        const amt = lineEditAmountValue();
+        const notes = document.getElementById('lineEditNotes').value || '';
+        if (formMode === 'draft') {
+            if (!aid) {
+                showToast('Select an account for this line.', 'warning');
+                return;
+            }
+            if (amt <= 0) {
+                showToast('Amount must be greater than zero.', 'warning');
+                return;
+            }
+        }
+        if (lineEditIsNew) {
+            const acct = accountById(aid);
+            addLine({
+                account_id: aid,
+                budgeted_amount: amt,
+                notes: notes,
+                account_name: acct?.name || '',
+                coa_number: acct?.coa_number || '',
+                natural_name: acct?.natural_name || '',
+                functional_name: acct?.functional_name || '',
+                actual: getCachedActual(aid)
+            }, 'draft');
+        } else {
+            const tr = linesBody.querySelector('tr[data-uid="' + lineEditUid + '"]');
+            if (!tr) return;
+            if (formMode === 'draft') {
+                const sel = tr.querySelector('.line-account');
+                if (sel) sel.value = aid;
+                tr.dataset.accountId = aid;
+                const amtInput = tr.querySelector('.line-amount');
+                if (amtInput) {
+                    amtInput.dataset.amount = amt;
+                    amtInput.value = fmt(amt);
+                }
+                tr.dataset.amount = amt;
+                syncLineCategoryLabels(tr);
+                applyRowRemaining(tr);
+            }
+            const notesInput = tr.querySelector('.line-notes');
+            if (notesInput) notesInput.value = notes;
+            const notesRo = tr.querySelector('.line-notes-readonly');
+            if (notesRo) {
+                notesRo.textContent = notes;
+                notesRo.title = notes;
+            }
+            updateTotal();
+        }
+        if (lineModal) lineModal.hide();
+    }
+    function setPageViewMode(mode) {
+        if (!pageRoot) return;
+        pageRoot.classList.toggle('is-draft-view', mode === 'draft');
+        pageRoot.classList.toggle('is-readonly-view', mode === 'approved' || mode === 'locked');
+        pageRoot.classList.toggle('is-locked-view', mode === 'locked');
+    }
+    const statusBadgeClass = { draft: 'warning', approved: 'info', active: 'success', closed: 'secondary' };
+    function renderSummaryCard() {
+        const name = document.getElementById('budgetName')?.value || 'Budget';
+        const year = document.getElementById('fiscalYear')?.value || '';
+        const start = document.getElementById('startDate')?.value || '';
+        const end = document.getElementById('endDate')?.value || '';
+        const ref = refInput?.value || '';
+        const approved = approvedDateInput?.value || '';
+        const desc = document.getElementById('budgetDesc')?.value || '';
+        const statusRaw = formMode === 'locked'
+            ? (document.getElementById('budgetStatusDisplay')?.value || originalStatus || '')
+            : (document.getElementById('budgetStatus')?.value || originalStatus || '');
+        const status = String(statusRaw).toLowerCase();
+        const statusLabel = status ? status.charAt(0).toUpperCase() + status.slice(1) : '';
+        const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || '—'; };
+        setTxt('budgetSummaryName', name);
+        setTxt('budgetSummaryPeriod', (start && end) ? (start + ' – ' + end) : '');
+        setTxt('budgetSummaryYear', year);
+        setTxt('budgetSummaryRef', ref);
+        setTxt('budgetSummaryApproved', approved);
+        setTxt('budgetSummaryDesc', desc);
+        const badge = document.getElementById('budgetSummaryStatus');
+        if (badge) {
+            badge.textContent = statusLabel;
+            badge.className = 'badge bg-' + (statusBadgeClass[status] || 'secondary');
+        }
     }
     function setFormMode(mode) {
         formMode = mode;
+        setPageViewMode(mode);
+        renderSummaryCard();
         const labels = { draft: '', approved: 'Notes Only', locked: 'Read Only' };
         modeBadge.textContent = labels[mode] || '';
         modeBadge.className = 'badge ' + (mode === 'approved' ? 'bg-info' : 'bg-secondary') + (mode === 'draft' ? ' d-none' : '');
@@ -968,6 +1630,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         form.classList.add('d-none');
         savedSnapshot = null;
         markBudgetClean();
+        setPageViewMode('');
         updateActionButtons();
     }
     function reload() {
@@ -1002,10 +1665,14 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('budgetStatus').value = (b.status === 'approved') ? 'approved' : 'draft';
         document.getElementById('budgetStatusDisplay').value = b.status ? b.status.charAt(0).toUpperCase() + b.status.slice(1) : '';
         document.getElementById('budgetDesc').value = b.description || '';
+        actualsCache = {};
+        actualsRange = { start: b.start_date || '', end: b.end_date || '' };
         linesBody.innerHTML = '';
-        const lines = b.lines?.length ? b.lines : (mode === 'draft' ? [{}] : []);
+        const hasLines = Array.isArray(b.lines) && b.lines.length;
+        const lines = hasLines ? b.lines : (mode === 'draft' && !isBudgetMobileChrome() ? [{}] : []);
         lines.forEach(l => addLine(l, mode));
         setFormMode(mode);
+        renderMobileLineCards();
         const titles = { draft: b.id ? 'Edit Budget' : 'New Budget', approved: 'View Budget (Notes Editable)', locked: 'View Budget' };
         showForm(titles[mode]);
         savedSnapshot = getSnapshot();
@@ -1110,7 +1777,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         selectedRow = null;
         tableBody.querySelectorAll('tr.table-primary').forEach(r => r.classList.remove('table-primary'));
         const y = new Date().getFullYear();
-        populateForm({ fiscal_year: y, start_date: `${y}-01-01`, end_date: `${y}-12-31`, status: 'draft', lines: [{}] });
+        populateForm({ fiscal_year: y, start_date: `${y}-01-01`, end_date: `${y}-12-31`, status: 'draft', lines: [] });
         updateActionButtons();
     });
 
@@ -1265,7 +1932,55 @@ require_once __DIR__ . '/../includes/permissions.php';
             .catch(() => showToast('Budget close failed. Please try again.', 'danger'));
     });
 
-    addLineBtn.addEventListener('click', () => addLine({}, 'draft'));
+    addLineBtn.addEventListener('click', () => {
+        if (isBudgetMobileChrome()) openLineEditor(null);
+        else addLine({}, 'draft');
+    });
+    const lineEditAccount = document.getElementById('lineEditAccount');
+    if (lineEditAccount) {
+        lineEditAccount.addEventListener('change', () => {
+            const aid = lineEditAccount.value;
+            fetchActuals(aid ? [aid] : []).then(() => syncLineEditCategoryLabels());
+        });
+    }
+    const lineEditApply = document.getElementById('lineEditApply');
+    if (lineEditApply) lineEditApply.addEventListener('click', applyLineEditor);
+    const lineEditDelete = document.getElementById('lineEditDelete');
+    if (lineEditDelete) {
+        lineEditDelete.addEventListener('click', () => {
+            if (lineEditIsNew || !lineEditUid) { if (lineModal) lineModal.hide(); return; }
+            const tr = linesBody.querySelector('tr[data-uid="' + lineEditUid + '"]');
+            if (tr) tr.remove();
+            updateTotal();
+            if (lineModal) lineModal.hide();
+        });
+    }
+    if (lineCardList) {
+        lineCardList.addEventListener('click', e => {
+            const card = e.target.closest('.budget-line-card');
+            if (!card) return;
+            const tr = linesBody.querySelector('tr[data-uid="' + card.dataset.uid + '"]');
+            if (tr) openLineEditor(tr);
+        });
+        lineCardList.addEventListener('keydown', e => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const card = e.target.closest('.budget-line-card');
+            if (!card) return;
+            e.preventDefault();
+            const tr = linesBody.querySelector('tr[data-uid="' + card.dataset.uid + '"]');
+            if (tr) openLineEditor(tr);
+        });
+    }
+    ['startDate', 'endDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', () => {
+            actualsCache = {};
+            actualsRange = { start: '', end: '' };
+            refreshAllRemainings();
+            renderSummaryCard();
+        });
+    });
     document.getElementById('cancelBtn').addEventListener('click', () => { if (confirmDiscard()) hideForm(); });
     refInput.addEventListener('input', () => refInput.classList.remove('is-invalid'));
     approvedDateInput.addEventListener('input', () => approvedDateInput.classList.remove('is-invalid'));
@@ -1280,6 +1995,110 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('linesJson').value = JSON.stringify(collectLines());
         postAndApply(new FormData(formEl));
     });
+
+    function mountBudgetMobileHeaderTools() {
+        const slot = document.getElementById('mobileTopbarEnd');
+        const tools = document.getElementById('budgetMobileHeaderTools');
+        if (!slot || !tools) return;
+        while (tools.firstChild) slot.appendChild(tools.firstChild);
+    }
+    function unmountBudgetMobileHeaderTools() {
+        const slot = document.getElementById('mobileTopbarEnd');
+        const tools = document.getElementById('budgetMobileHeaderTools');
+        if (!slot) return;
+        if (tools) {
+            while (slot.firstChild) tools.appendChild(slot.firstChild);
+        } else {
+            slot.replaceChildren();
+        }
+    }
+    function closeBudgetActionsFlyout() {
+        if (pageRoot) pageRoot.classList.remove('budget-actions-open');
+        if (actionsFlyoutBtn) {
+            actionsFlyoutBtn.setAttribute('aria-expanded', 'false');
+            actionsFlyoutBtn.classList.remove('active');
+        }
+        if (actionBar) actionBar.setAttribute('aria-hidden', isBudgetMobileChrome() ? 'true' : 'false');
+        if (actionsBackdrop) actionsBackdrop.hidden = true;
+    }
+    function openBudgetActionsFlyout() {
+        if (!pageRoot) return;
+        pageRoot.classList.add('budget-actions-open');
+        if (actionsFlyoutBtn) {
+            actionsFlyoutBtn.setAttribute('aria-expanded', 'true');
+            actionsFlyoutBtn.classList.add('active');
+        }
+        if (actionBar) actionBar.setAttribute('aria-hidden', 'false');
+        if (actionsBackdrop) actionsBackdrop.hidden = false;
+    }
+    function toggleBudgetActionsFlyout() {
+        if (pageRoot && pageRoot.classList.contains('budget-actions-open')) closeBudgetActionsFlyout();
+        else openBudgetActionsFlyout();
+    }
+    function onBudgetActionsKeydown(e) {
+        if (e.key === 'Escape' && pageRoot && pageRoot.classList.contains('budget-actions-open')) {
+            e.preventDefault();
+            closeBudgetActionsFlyout();
+        }
+    }
+    function onBudgetChromeResize() {
+        if (!isBudgetMobileChrome()) {
+            closeBudgetActionsFlyout();
+            if (actionBar) actionBar.setAttribute('aria-hidden', 'false');
+        }
+    }
+    function onBudgetSidebarShow() { closeBudgetActionsFlyout(); }
+    function wireBudgetActionsFlyout() {
+        mountBudgetMobileHeaderTools();
+        if (isBudgetMobileChrome() && actionBar) actionBar.setAttribute('aria-hidden', 'true');
+        if (actionsFlyoutBtn) {
+            actionsFlyoutBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleBudgetActionsFlyout();
+            });
+        }
+        if (actionsFlyoutClose) {
+            actionsFlyoutClose.addEventListener('click', function(e) {
+                e.preventDefault();
+                closeBudgetActionsFlyout();
+            });
+        }
+        if (actionsBackdrop) {
+            actionsBackdrop.addEventListener('click', function() { closeBudgetActionsFlyout(); });
+        }
+        if (actionBar) {
+            actionBar.addEventListener('click', function(e) {
+                if (!isBudgetMobileChrome()) return;
+                if (!pageRoot || !pageRoot.classList.contains('budget-actions-open')) return;
+                if (e.target.closest('#budgetActionsFlyoutClose')) return;
+                const actionEl = e.target.closest('button');
+                if (!actionEl || actionEl.disabled || actionEl.classList.contains('disabled')) return;
+                closeBudgetActionsFlyout();
+            });
+        }
+        document.addEventListener('keydown', onBudgetActionsKeydown);
+        window.addEventListener('resize', onBudgetChromeResize);
+        const sidebar = document.getElementById('appSidebar');
+        if (sidebar) sidebar.addEventListener('show.bs.offcanvas', onBudgetSidebarShow);
+    }
+    function disposeBudgetPage() {
+        document.removeEventListener('keydown', onBudgetActionsKeydown);
+        window.removeEventListener('resize', onBudgetChromeResize);
+        const sidebar = document.getElementById('appSidebar');
+        if (sidebar) sidebar.removeEventListener('show.bs.offcanvas', onBudgetSidebarShow);
+        closeBudgetActionsFlyout();
+        unmountBudgetMobileHeaderTools();
+        if (window.TemperBudgetPage && window.TemperBudgetPage._bound === disposeBudgetPage) {
+            window.TemperBudgetPage = { disposeActive: function() {} };
+        }
+    }
+
+    wireBudgetActionsFlyout();
+    window.TemperBudgetPage = {
+        _bound: disposeBudgetPage,
+        disposeActive: disposeBudgetPage
+    };
 
     const pendingOpen = sessionStorage.getItem('budgetOpenId');
     if (pendingOpen && /^\d+$/.test(pendingOpen)) {

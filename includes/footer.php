@@ -39,6 +39,7 @@ $footerDb->close();
     }
     if ($footerCan('page.ledger')) {
         $bottomItems[] = ['page' => 'ledger', 'nav' => 'ledger', 'icon' => 'bi-currency-dollar', 'label' => 'Ledger'];
+        $bottomItems[] = ['page' => 'funds', 'nav' => 'funds', 'icon' => 'bi-wallet2', 'label' => 'Funds'];
     }
     if ($footerCan('page.budget')) {
         $bottomItems[] = ['page' => 'budget', 'nav' => 'budget', 'icon' => 'bi-graph-up', 'label' => 'Budget'];
@@ -1394,6 +1395,12 @@ $footerDb->close();
             }
             if (window.TemperLedgerPage && typeof window.TemperLedgerPage.disposeActive === 'function') {
                 window.TemperLedgerPage.disposeActive();
+            }
+            if (window.TemperBudgetPage && typeof window.TemperBudgetPage.disposeActive === 'function') {
+                window.TemperBudgetPage.disposeActive();
+            }
+            if (window.TemperFundsPage && typeof window.TemperFundsPage.disposeActive === 'function') {
+                window.TemperFundsPage.disposeActive();
             }
             // Tear down body-mounted page modals before replacing #main-content
             if (typeof window.cleanupFragmentModals === 'function') {
