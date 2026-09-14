@@ -20,6 +20,42 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     // Ensure budget_id column exists before any ledger queries
     ledgerRequireTables($db);
 
+    /**
+     * Filter/list request source: GET, JSON POST body, or FormData `ledger_filters`.
+     *
+     * Excel-style multi-selects send one value per unique (Ref # is typically 1:1
+     * with transactions). Apache LimitRequestLine (~8190 bytes) and PHP
+     * max_input_vars (1000) start failing around 400–600 GET params — the list
+     * then applies incompletely or unique-value dropdowns fail to load.
+     * JSON POST is not subject to either ceiling.
+     */
+    $ledgerRequestSrc = $_GET;
+    $ledgerJsonPost = false;
+    $ledgerReqMethod = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $ledgerContentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? ''));
+    if ($ledgerReqMethod === 'POST' && str_contains($ledgerContentType, 'application/json')) {
+        $ledgerJsonPost = true;
+        $ledgerRawJson = file_get_contents('php://input');
+        $ledgerDecoded = is_string($ledgerRawJson) && $ledgerRawJson !== ''
+            ? json_decode($ledgerRawJson, true)
+            : null;
+        if (!is_array($ledgerDecoded)) {
+            header('Content-Type: application/json; charset=utf-8');
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Invalid JSON request.']);
+            exit;
+        }
+        $ledgerRequestSrc = array_merge($ledgerRequestSrc, $ledgerDecoded);
+    } elseif ($ledgerReqMethod === 'POST') {
+        $ledgerRequestSrc = array_merge($ledgerRequestSrc, $_POST);
+        if (isset($_POST['ledger_filters']) && is_string($_POST['ledger_filters']) && $_POST['ledger_filters'] !== '') {
+            $ledgerDecodedFilters = json_decode($_POST['ledger_filters'], true);
+            if (is_array($ledgerDecodedFilters)) {
+                $ledgerRequestSrc = array_merge($ledgerRequestSrc, $ledgerDecodedFilters);
+            }
+        }
+    }
+
     if (isset($_GET['download_document']) || isset($_GET['preview_document'])) {
         $isPreview = isset($_GET['preview_document']);
         $docId = (int)($isPreview ? $_GET['preview_document'] : $_GET['download_document']);
@@ -800,9 +836,9 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     };
 
     // JSON list endpoint for infinite scroll / Excel-style server-side filters
-    if (isset($_GET['list_transactions'])) {
+    if (isset($ledgerRequestSrc['list_transactions'])) {
         header('Content-Type: application/json; charset=utf-8');
-        $page = $ledgerFetchTransactionPage($db, $_GET, $ledgerBuildListFilters);
+        $page = $ledgerFetchTransactionPage($db, $ledgerRequestSrc, $ledgerBuildListFilters);
         echo json_encode([
             'success' => true,
             'total' => $page['total'],
@@ -819,16 +855,17 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
 
     // Unique values for Excel-style multi-select auto-filter dropdowns.
     // Other-column filters apply; the opened column's own filter is excluded (Excel behavior).
-    if (isset($_GET['filter_values'])) {
+    // DISTINCT over the full matching set (no row cap) — not the infinite-scroll page.
+    if (isset($ledgerRequestSrc['filter_values'])) {
         header('Content-Type: application/json; charset=utf-8');
-        $column = strtolower(trim((string)($_GET['column'] ?? '')));
+        $column = strtolower(trim((string)($ledgerRequestSrc['column'] ?? '')));
         $allowedCols = ['date', 'reference', 'pay_to', 'check', 'description', 'account', 'fund', 'budget', 'amount', 'status'];
         if (!in_array($column, $allowedCols, true)) {
             echo json_encode(['success' => false, 'error' => 'Invalid filter column.']);
             exit;
         }
 
-        $built = $ledgerBuildListFilters($db, $_GET, [$column]);
+        $built = $ledgerBuildListFilters($db, $ledgerRequestSrc, [$column]);
         $conditions = $built['conditions'];
         $bind_params = $built['bind_params'];
         $bind_types = $built['bind_types'];
@@ -842,8 +879,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     FROM transaction_details td
                     $where_clause
                     GROUP BY td.transaction_date
-                    ORDER BY td.transaction_date DESC
-                    LIMIT 2000";
+                    ORDER BY td.transaction_date DESC";
             $stmt = $db->prepare($sql);
             if ($bind_types !== '') {
                 $stmt->bind_param($bind_types, ...$bind_params);
@@ -899,8 +935,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     INNER JOIN accounts a ON a.id = tl.account_id
                     $where_clause
                     GROUP BY a.id, a.name, a.coa_number
-                    ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC
-                    LIMIT 2000";
+                    ORDER BY (a.coa_number IS NULL OR a.coa_number = '') ASC, a.coa_number ASC, a.name ASC";
             $stmt = $db->prepare($sql);
             if ($bind_types !== '') {
                 $stmt->bind_param($bind_types, ...$bind_params);
@@ -929,8 +964,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     LEFT JOIN budgets b ON b.id = td.budget_id
                     $where_clause
                     GROUP BY td.budget_id, b.name
-                    ORDER BY (td.budget_id IS NULL OR td.budget_id = 0) ASC, name ASC
-                    LIMIT 2000";
+                    ORDER BY (td.budget_id IS NULL OR td.budget_id = 0) ASC, name ASC";
             $stmt = $db->prepare($sql);
             if ($bind_types !== '') {
                 $stmt->bind_param($bind_types, ...$bind_params);
@@ -963,8 +997,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     INNER JOIN funds f ON f.id = tl.fund_id
                     $where_clause
                     GROUP BY f.id, f.name
-                    ORDER BY f.name ASC
-                    LIMIT 2000";
+                    ORDER BY f.name ASC";
             $stmt = $db->prepare($sql);
             if ($bind_types !== '') {
                 $stmt->bind_param($bind_types, ...$bind_params);
@@ -999,8 +1032,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     ) u
                     WHERE amt IS NOT NULL AND amt > 0
                     GROUP BY amt
-                    ORDER BY amt DESC
-                    LIMIT 2000";
+                    ORDER BY amt DESC";
             // Bind params twice (two subqueries)
             $stmt = $db->prepare($sql);
             if ($bind_types !== '') {
@@ -1034,8 +1066,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     FROM transaction_details td
                     $where_clause
                     GROUP BY COALESCE($expr, '')
-                    ORDER BY (COALESCE($expr, '') = '') ASC, value ASC
-                    LIMIT 2000";
+                    ORDER BY (COALESCE($expr, '') = '') ASC, value ASC";
             $stmt = $db->prepare($sql);
             if ($bind_types !== '') {
                 $stmt->bind_param($bind_types, ...$bind_params);
@@ -1072,6 +1103,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if ($ledgerJsonPost) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['success' => false, 'error' => 'Unknown JSON request.']);
+            exit;
+        }
         $action = $_POST['action'] ?? 'save';
         require_once __DIR__ . '/../auth.php';
         $actor = getCurrentUserWithRole($db);
@@ -1931,7 +1967,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     }
 
     // Filters + initial page for continuous list (infinite scroll loads more via JSON)
-    $list_page = $ledgerFetchTransactionPage($db, $_GET, $ledgerBuildListFilters);
+    $list_page = $ledgerFetchTransactionPage($db, $ledgerRequestSrc, $ledgerBuildListFilters);
     $tx_list_rows = $list_page['rows'];
     $total = $list_page['total'];
     $list_offset = $list_page['offset'];
@@ -3392,42 +3428,50 @@ foreach ($colDefs as $col):
         return normalizeFilters(listState.filters || {});
     }
 
-    function buildFilterParams(includeSort = true, offset = null, limit = null) {
-        const p = new URLSearchParams();
+    function ledgerFilterPayload(extra) {
         const f = getActiveFilters();
-        const appendMulti = (paramName, arr) => {
-            if (!arr || !arr.length) return;
-            arr.forEach(v => p.append(paramName + '[]', String(v)));
+        const body = Object.assign({}, extra || {});
+        const put = (key, arr) => {
+            if (arr && arr.length) body[key] = arr.map(String);
         };
-        appendMulti('date', f.dates);
-        appendMulti('reference', f.references);
-        appendMulti('description', f.descriptions);
-        appendMulti('pay_to', f.pay_tos);
-        appendMulti('status', f.statuses);
-        appendMulti('amount', f.amounts);
-        appendMulti('account_id', f.account_ids);
-        appendMulti('fund_id', f.fund_ids);
-        appendMulti('check', f.check_numbers);
-        appendMulti('budget_id', f.budget_ids);
-        if (f.date_from) p.set('date_from', f.date_from);
-        if (f.date_to) p.set('date_to', f.date_to);
-        if (f.check_number) p.set('check_number', f.check_number);
-        if (f.search) p.set('search', f.search);
-        if (f.amount_min) p.set('amount_min', f.amount_min);
-        if (f.amount_max) p.set('amount_max', f.amount_max);
-        if (includeSort) {
-            if (listState.sort) p.set('sort', listState.sort);
-            if (listState.sort_dir) p.set('sort_dir', listState.sort_dir);
-        }
-        if (offset !== null && offset !== undefined) p.set('offset', String(offset));
-        if (limit !== null && limit !== undefined) p.set('limit', String(limit));
-        return p;
+        put('date', f.dates);
+        put('reference', f.references);
+        put('description', f.descriptions);
+        put('pay_to', f.pay_tos);
+        put('status', f.statuses);
+        put('amount', f.amounts);
+        put('account_id', f.account_ids);
+        put('fund_id', f.fund_ids);
+        put('check', f.check_numbers);
+        put('budget_id', f.budget_ids);
+        if (f.date_from) body.date_from = f.date_from;
+        if (f.date_to) body.date_to = f.date_to;
+        if (f.check_number) body.check_number = f.check_number;
+        if (f.search) body.search = f.search;
+        if (f.amount_min) body.amount_min = f.amount_min;
+        if (f.amount_max) body.amount_max = f.amount_max;
+        return body;
     }
 
-    function buildQueryString(_preservePage = true) {
-        const p = buildFilterParams(true, null, null);
-        const s = p.toString();
-        return s ? '?' + s : '';
+    function ledgerPostJson(payload) {
+        return fetch('pages/ledger.php', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(payload || {})
+        }).then(parseJsonResponse);
+    }
+
+    function appendLedgerFiltersToFormData(fd) {
+        if (!fd) return;
+        fd.append('ledger_filters', JSON.stringify(ledgerFilterPayload({
+            sort: listState.sort,
+            sort_dir: listState.sort_dir
+        })));
     }
 
     function hasAnyActiveFilter() {
@@ -3726,11 +3770,10 @@ foreach ($colDefs as $col):
         const box = th.querySelector('.ledger-f-values');
         if (!menu || !box) return Promise.resolve();
         box.innerHTML = '<div class="text-muted small p-2"><span class="spinner-border spinner-border-sm me-1"></span>Loading…</div>';
-        const params = buildFilterParams(false, null, null);
-        params.set('filter_values', '1');
-        params.set('column', col);
-        return fetch('pages/ledger.php?' + params.toString())
-            .then(r => r.json())
+        return ledgerPostJson(ledgerFilterPayload({
+            filter_values: 1,
+            column: col
+        }))
             .then(data => {
                 if (!data || data.success === false) {
                     box.innerHTML = '<div class="text-danger small p-2">' + escHtml((data && data.error) || 'Failed to load values') + '</div>';
@@ -4109,12 +4152,15 @@ foreach ($colDefs as $col):
         if (!reset && !listState.has_more) return Promise.resolve();
         const offset = reset ? 0 : (listState.offset || 0);
         const limit = listState.limit || 50;
-        const params = buildFilterParams(true, offset, limit);
-        params.set('list_transactions', '1');
         setListLoading(true);
         let loadedOk = false;
-        return fetch('pages/ledger.php?' + params.toString())
-            .then(r => r.json())
+        return ledgerPostJson(ledgerFilterPayload({
+            list_transactions: 1,
+            offset: offset,
+            limit: limit,
+            sort: listState.sort,
+            sort_dir: listState.sort_dir
+        }))
             .then(data => {
                 if (!data || data.success === false) {
                     showToast((data && data.error) || 'Failed to load transactions.', 'danger');
@@ -6995,7 +7041,8 @@ foreach ($colDefs as $col):
         const fd = new FormData();
         fd.append('action', 'clear');
         fd.append('selected_ids', JSON.stringify(ids));
-        fetch('pages/ledger.php' + buildQueryString(true), { method: 'POST', body: fd })
+        appendLedgerFiltersToFormData(fd);
+        fetch('pages/ledger.php', { method: 'POST', body: fd, credentials: 'same-origin' })
             .then(r => r.text())
             .then(html => {
                 applyMainContent(html);
@@ -7018,7 +7065,8 @@ foreach ($colDefs as $col):
         const fd = new FormData();
         fd.append('action', 'reconcile');
         fd.append('selected_ids', JSON.stringify(ids));
-        fetch('pages/ledger.php' + buildQueryString(true), { method: 'POST', body: fd })
+        appendLedgerFiltersToFormData(fd);
+        fetch('pages/ledger.php', { method: 'POST', body: fd, credentials: 'same-origin' })
             .then(r => r.text())
             .then(html => {
                 applyMainContent(html);
@@ -7419,9 +7467,12 @@ foreach ($colDefs as $col):
                 const filesToUpload = collectAndClearFilesForSave();
 
                 // Save transaction first; then upload queued files; then delete queued attachments
-                fetch('pages/ledger.php' + buildQueryString(true), {
+                const saveFd = buildTxSaveFormData();
+                appendLedgerFiltersToFormData(saveFd);
+                fetch('pages/ledger.php', {
                     method: 'POST',
-                    body: buildTxSaveFormData()
+                    credentials: 'same-origin',
+                    body: saveFd
                 })
                     .then(r => r.text())
                     .then(html => {

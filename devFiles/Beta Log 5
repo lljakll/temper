@@ -19,3 +19,29 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#35 - 2026-09-14 - Ledger / Column filters - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Fix Ledger column filters failing (or applying incompletely) once the ledger has more than about 600 transactions.
+
+Requirements:
+1. Diagnose why filters break or ignore data above ~600 rows (client-only unique lists, list API page size, a hard LIMIT, first-page-only apply, etc.).
+2. Filters must run against the **full** transaction set, not only the rows already loaded for infinite scroll.
+3. Unique-value lists in the filter dropdown must include values from the whole dataset (or a correct server-side distinct list), not only the first ~600 loaded rows.
+4. Apply / search / select-all / clear must stay consistent with that full-set behavior.
+5. Do not regress infinite scroll, sort, or current Excel-style filter UX.
+6. Do not introduce a new pagination scheme for the main list.
+
+First explore the ledger list API, how filter unique values are built, and any 500/600-row limits, then remove the cap so filters work past 600 entries.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
