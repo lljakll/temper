@@ -727,6 +727,12 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .ledger-th-filter.ledger-filter-active {
             box-shadow: inset 0 -3px 0 var(--bs-warning);
         }
+        #ledgerSelectFilteredBar {
+            flex: 0 0 auto;
+        }
+        #selectAllFilteredBtn {
+            white-space: nowrap;
+        }
         .ledger-sort-btn {
             font-weight: 600;
             font-size: inherit;

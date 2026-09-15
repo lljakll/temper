@@ -1420,6 +1420,9 @@ function ledgerStatusIsPending(mixed $status): bool {
     return strtolower(trim((string)$status)) === 'pending';
 }
 
+/** Max IDs for select-all-filtered / bulk pending delete (one year of history). */
+const LEDGER_FILTERED_SELECTION_MAX = 10000;
+
 /**
  * Delete is allowed only while the active session role is Administrator or Treasurer.
  */
@@ -1995,7 +1998,8 @@ function ledgerDeletePendingTransaction(
     int $transactionId,
     ?int $userId,
     string $username,
-    string $reason
+    string $reason,
+    bool $writeAudit = true
 ): array {
     ledgerRequireTables($db);
 
@@ -2139,13 +2143,15 @@ function ledgerDeletePendingTransaction(
             . ' files_removed=' . count($deletedPaths)
             . ' tx_id=' . $transactionId;
 
-        logAuditAction(
-            $db,
-            $userId,
-            $username,
-            'ledger.transaction_deleted',
-            $details
-        );
+        if ($writeAudit) {
+            logAuditAction(
+                $db,
+                $userId,
+                $username,
+                'ledger.transaction_deleted',
+                $details
+            );
+        }
 
         if ($started) {
             $db->commit();
@@ -2170,6 +2176,220 @@ function ledgerDeletePendingTransaction(
         error_log('[ledger] delete pending transaction failed: ' . $e->getMessage());
         return ['success' => false, 'error' => 'Could not delete the transaction due to a system error.'];
     }
+}
+
+/**
+ * Normalize a posted ID list (JSON array, comma string, or PHP array) to unique positive ints.
+ *
+ * @param mixed $raw
+ * @return list<int>
+ */
+function ledgerNormalizeTransactionIds(mixed $raw): array
+{
+    if (is_string($raw)) {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            $raw = $decoded;
+        } else {
+            $raw = preg_split('/[,\s]+/', $raw) ?: [];
+        }
+    }
+    if (!is_array($raw)) {
+        $raw = [$raw];
+    }
+    $ids = [];
+    foreach ($raw as $v) {
+        $i = (int)$v;
+        if ($i > 0) {
+            $ids[$i] = $i;
+        }
+    }
+    return array_values($ids);
+}
+
+/**
+ * Write one or more audit_log rows for a bulk pending delete. Splits the ref list
+ * across extra rows if it would exceed the details TEXT column (~64KB).
+ *
+ * @param list<string> $refs
+ */
+function ledgerWriteBulkDeleteAudit(
+    mysqli $db,
+    ?int $userId,
+    string $username,
+    string $reason,
+    int $deleted,
+    int $skippedNotPending,
+    int $failed,
+    int $filesRemoved,
+    array $refs
+): void {
+    $reason = trim($reason);
+    $refLabels = [];
+    foreach ($refs as $ref) {
+        $r = trim((string)$ref);
+        $refLabels[] = $r !== '' ? $r : '(none)';
+    }
+    $prefix = 'count=' . $deleted
+        . ' skipped_not_pending=' . $skippedNotPending
+        . ' failed=' . $failed
+        . ' files_removed=' . $filesRemoved
+        . ' reason=' . $reason
+        . ' refs=';
+    $max = 60000;
+    $chunks = [];
+    $current = '';
+    foreach ($refLabels as $label) {
+        $piece = ($current === '') ? $label : (',' . $label);
+        if ($current !== '' && (strlen($prefix) + strlen($current) + strlen($piece)) > $max) {
+            $chunks[] = $current;
+            $current = $label;
+        } else {
+            $current .= $piece;
+        }
+    }
+    if ($current !== '' || $chunks === []) {
+        $chunks[] = $current;
+    }
+    $parts = count($chunks);
+    foreach ($chunks as $i => $chunk) {
+        $details = $prefix . $chunk;
+        if ($parts > 1) {
+            $details = 'part=' . ($i + 1) . '/' . $parts . ' ' . $details;
+        }
+        logAuditAction($db, $userId, $username, 'ledger.transactions_deleted', $details);
+    }
+}
+
+/**
+ * Bulk-delete pending transactions. Cleared and reconciled IDs are skipped (never deleted).
+ * One audit_log batch row lists every deleted ref # (split across rows if needed).
+ *
+ * @param list<int>|mixed $rawIds
+ * @return array<string,mixed>
+ */
+function ledgerDeletePendingTransactions(
+    mysqli $db,
+    mixed $rawIds,
+    ?int $userId,
+    string $username,
+    string $reason
+): array {
+    $reason = trim($reason);
+    $reason = preg_replace('/\s+/u', ' ', $reason) ?? $reason;
+    if ($reason === '') {
+        return ['success' => false, 'error' => 'A reason for delete is required.'];
+    }
+    if (function_exists('mb_strlen') ? mb_strlen($reason) > 500 : strlen($reason) > 500) {
+        return ['success' => false, 'error' => 'Reason for delete must be 500 characters or fewer.'];
+    }
+
+    $ids = ledgerNormalizeTransactionIds($rawIds);
+    if ($ids === []) {
+        return ['success' => false, 'error' => 'Select at least one transaction.'];
+    }
+    if (count($ids) > LEDGER_FILTERED_SELECTION_MAX) {
+        return [
+            'success' => false,
+            'error' => 'Bulk delete is limited to ' . LEDGER_FILTERED_SELECTION_MAX
+                . ' transactions at a time. Narrow the filters.',
+            'total' => count($ids),
+        ];
+    }
+
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(300);
+    }
+
+    $deleted = 0;
+    $skippedNotPending = 0;
+    $skippedMissing = 0;
+    $failed = 0;
+    $filesRemoved = 0;
+    $refs = [];
+    $errors = [];
+
+    foreach ($ids as $txId) {
+        $result = ledgerDeletePendingTransaction($db, $txId, $userId, $username, $reason, false);
+        if (!empty($result['success'])) {
+            $deleted++;
+            $filesRemoved += (int)($result['files_removed'] ?? 0);
+            $ref = trim((string)($result['reference_number'] ?? ''));
+            $refs[] = $ref !== '' ? $ref : ('#' . $txId);
+            continue;
+        }
+        $error = (string)($result['error'] ?? 'Could not delete the transaction.');
+        if (str_contains($error, 'Only pending')) {
+            $skippedNotPending++;
+            continue;
+        }
+        if (str_contains($error, 'not found') || str_contains($error, 'Invalid transaction')) {
+            $skippedMissing++;
+            continue;
+        }
+        $failed++;
+        if (count($errors) < 8) {
+            $errors[] = '#' . $txId . ': ' . $error;
+        }
+    }
+
+    if ($deleted > 0) {
+        ledgerWriteBulkDeleteAudit(
+            $db,
+            $userId,
+            $username,
+            $reason,
+            $deleted,
+            $skippedNotPending,
+            $failed,
+            $filesRemoved,
+            $refs
+        );
+    }
+
+    if ($deleted < 1) {
+        $msg = 'None of the selected transactions were deleted.';
+        if ($skippedNotPending > 0) {
+            $msg = $skippedNotPending . ' cleared or reconciled transaction'
+                . ($skippedNotPending === 1 ? ' was' : 's were')
+                . ' skipped. Pending transactions only can be deleted.';
+        }
+        if ($failed > 0 && $errors !== []) {
+            $msg .= ' ' . $errors[0];
+        }
+        return [
+            'success' => false,
+            'error' => $msg,
+            'deleted' => 0,
+            'skipped_not_pending' => $skippedNotPending,
+            'skipped_missing' => $skippedMissing,
+            'failed' => $failed,
+            'files_removed' => 0,
+            'errors' => $errors,
+            'refs' => [],
+        ];
+    }
+
+    $message = $deleted . ' pending transaction' . ($deleted === 1 ? '' : 's') . ' deleted.';
+    if ($skippedNotPending > 0) {
+        $message .= ' ' . $skippedNotPending . ' cleared or reconciled skipped.';
+    }
+    if ($failed > 0) {
+        $message .= ' ' . $failed . ' failed.';
+    }
+
+    return [
+        'success' => true,
+        'deleted' => $deleted,
+        'skipped_not_pending' => $skippedNotPending,
+        'skipped_missing' => $skippedMissing,
+        'failed' => $failed,
+        'files_removed' => $filesRemoved,
+        'errors' => $errors,
+        'refs' => $refs,
+        'reason' => $reason,
+        'message' => $message,
+    ];
 }
 
 /**

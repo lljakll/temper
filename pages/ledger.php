@@ -835,6 +835,122 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         ];
     };
 
+    /**
+     * Full filtered ID set (not the infinite-scroll page) for Select all filtered.
+     *
+     * @return array<string,mixed>
+     */
+    $ledgerFetchFilteredSelection = static function (mysqli $db, array $src, callable $buildFilters): array {
+        $built = $buildFilters($db, $src);
+        $conditions = $built['conditions'];
+        $bind_params = $built['bind_params'];
+        $bind_types = $built['bind_types'];
+        $where_clause = $conditions ? (' WHERE ' . implode(' AND ', $conditions)) : '';
+
+        $sortKey = strtolower(trim((string)($src['sort'] ?? 'date')));
+        $sortDir = strtolower(trim((string)($src['sort_dir'] ?? 'desc'))) === 'asc' ? 'ASC' : 'DESC';
+        $debitExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0)";
+        $creditExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0)";
+        $sortMap = [
+            'date' => 'td.transaction_date',
+            'reference' => 'td.reference_number',
+            'ref' => 'td.reference_number',
+            'pay_to' => 'td.pay_to',
+            'check' => 'td.check_number',
+            'check_number' => 'td.check_number',
+            'budget' => '(SELECT b.name FROM budgets b WHERE b.id = td.budget_id)',
+            'budget_name' => '(SELECT b.name FROM budgets b WHERE b.id = td.budget_id)',
+            'description' => 'td.description',
+            'status' => 'td.status',
+            'lines' => '(SELECT COUNT(*) FROM transaction_lines WHERE transaction_detail_id=td.id)',
+            'debit' => $debitExpr,
+            'credit' => $creditExpr,
+            'amount' => $debitExpr,
+            'id' => 'td.id',
+        ];
+        if (!isset($sortMap[$sortKey])) {
+            $sortKey = 'date';
+        }
+        $orderSql = $sortMap[$sortKey] . ' ' . $sortDir . ', td.id ' . $sortDir;
+
+        $count_stmt = $db->prepare('SELECT COUNT(*) AS total FROM transaction_details td' . $where_clause);
+        if ($bind_types !== '') {
+            $count_stmt->bind_param($bind_types, ...$bind_params);
+        }
+        $count_stmt->execute();
+        $total = (int)($count_stmt->get_result()->fetch_assoc()['total'] ?? 0);
+        $count_stmt->close();
+
+        if ($total > LEDGER_FILTERED_SELECTION_MAX) {
+            return [
+                'success' => false,
+                'error' => 'Too many matching transactions (' . $total . '). Narrow the filters ('
+                    . LEDGER_FILTERED_SELECTION_MAX . ' max).',
+                'total' => $total,
+                'pending_count' => 0,
+                'skipped_count' => 0,
+                'pending_ids' => [],
+                'skipped_ids' => [],
+                'sample' => [],
+                'filters' => $built['filters'],
+            ];
+        }
+
+        $sql = "
+            SELECT td.id, td.transaction_date, td.pay_to, td.reference_number, td.status,
+                   $debitExpr AS amount
+            FROM transaction_details td
+            $where_clause
+            ORDER BY $orderSql
+        ";
+        $stmt = $db->prepare($sql);
+        if ($bind_types !== '') {
+            $stmt->bind_param($bind_types, ...$bind_params);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $pendingIds = [];
+        $skippedIds = [];
+        $sample = [];
+        while ($row = $res->fetch_assoc()) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+            $status = strtolower(trim((string)($row['status'] ?? 'pending')));
+            $item = [
+                'id' => $id,
+                'transaction_date' => (string)($row['transaction_date'] ?? ''),
+                'reference_number' => (string)($row['reference_number'] ?? ''),
+                'pay_to' => (string)($row['pay_to'] ?? ''),
+                'amount' => (float)($row['amount'] ?? 0),
+                'status' => $status !== '' ? $status : 'pending',
+            ];
+            if ($status === 'pending' || $status === '') {
+                $pendingIds[] = $id;
+                if (count($sample) < 8) {
+                    $sample[] = $item;
+                }
+            } else {
+                $skippedIds[] = $id;
+            }
+        }
+        $stmt->close();
+
+        return [
+            'success' => true,
+            'total' => $total,
+            'pending_count' => count($pendingIds),
+            'skipped_count' => count($skippedIds),
+            'pending_ids' => $pendingIds,
+            'skipped_ids' => $skippedIds,
+            'sample' => $sample,
+            'sort' => $sortKey,
+            'sort_dir' => strtolower($sortDir) === 'asc' ? 'asc' : 'desc',
+            'filters' => $built['filters'],
+        ];
+    };
+
     // JSON list endpoint for infinite scroll / Excel-style server-side filters
     if (isset($ledgerRequestSrc['list_transactions'])) {
         header('Content-Type: application/json; charset=utf-8');
@@ -850,6 +966,16 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             'filters' => $page['filters'],
             'rows' => $page['rows'],
         ]);
+        exit;
+    }
+
+    // Full ID set for the current filters (Select all filtered — not the loaded page).
+    if (isset($ledgerRequestSrc['list_selection'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(
+            $ledgerFetchFilteredSelection($db, $ledgerRequestSrc, $ledgerBuildListFilters),
+            JSON_UNESCAPED_UNICODE
+        );
         exit;
     }
 
@@ -1129,6 +1255,30 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             $result = ledgerDeletePendingTransaction(
                 $db,
                 $txId,
+                (int)$actor['id'],
+                (string)($actor['username'] ?? ''),
+                $reason
+            );
+            echo json_encode($result, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($action === 'bulk_delete') {
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            if (!$canDeleteLedger || !$actor) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Only an Administrator or Treasurer can delete transactions.',
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $reason = (string)($_POST['delete_reason'] ?? $_POST['reason'] ?? '');
+            $result = ledgerDeletePendingTransactions(
+                $db,
+                $_POST['tx_ids'] ?? [],
                 (int)$actor['id'],
                 (string)($actor['username'] ?? ''),
                 $reason
@@ -2171,7 +2321,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             <i class="bi bi-pencil"></i> Edit
         </button>
         <?php if ($canDeleteLedger): ?>
-        <button type="button" id="deleteTxBtn" class="btn btn-outline-danger" disabled title="Delete selected pending transaction">
+        <button type="button" id="deleteTxBtn" class="btn btn-outline-danger" disabled title="Delete selected pending transaction(s)">
             <i class="bi bi-trash"></i> Delete
         </button>
         <?php endif; ?>
@@ -2221,14 +2371,23 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 <strong>Transactions</strong>
                 <small class="text-muted d-none d-md-inline">(double-click uses the View/Edit toggle; checkbox / Ctrl / Shift for multi-select)</small>
                 <small class="text-muted d-md-none">Tap a transaction to open it</small>
+                <button type="button" id="selectAllFilteredBtn" class="btn btn-outline-secondary btn-sm ms-md-auto"
+                        title="Select every transaction matching the current filters, including rows not yet loaded">
+                    Select all filtered
+                </button>
             </div>
             <div class="card-body p-0 d-flex flex-column" style="flex:1 1 auto; min-height:0;">
+                <div id="ledgerSelectFilteredBar" class="d-none px-3 py-2 small border-bottom bg-body-tertiary d-flex flex-wrap align-items-center gap-2">
+                    <span id="ledgerSelectFilteredMsg"></span>
+                    <button type="button" class="btn btn-sm btn-outline-primary py-0" id="ledgerSelectFilteredBannerBtn">Select all matching filters</button>
+                    <button type="button" class="btn btn-sm btn-link py-0" id="ledgerClearSelectionBtn">Clear selection</button>
+                </div>
                 <div class="table-responsive ledger-table-scroll ledger-desktop-table" id="ledgerTableScroll" style="flex:1 1 auto; overflow:auto; min-height:0;">
                     <table class="table table-sm table-hover mb-0 align-middle ledger-tx-table" id="ledgerTxTable" style="min-width: 1240px;">
                         <thead class="table-dark ledger-sticky-head">
                             <tr class="ledger-col-titles">
                                 <th style="width:28px" class="ledger-th-check">
-                                    <input type="checkbox" id="selectAll" class="form-check-input" title="Select all loaded">
+                                    <input type="checkbox" id="selectAll" class="form-check-input" title="Select all loaded rows">
                                 </th>
 <?php
 $colDefs = [
@@ -2376,10 +2535,16 @@ foreach ($colDefs as $col):
                 </div>
                 <div id="ledgerCardList" class="ledger-card-list" aria-label="Transactions">
                     <div class="ledger-card-list-head">
-                        <label class="d-flex align-items-center gap-2 small mb-0">
-                            <input type="checkbox" id="selectAllCards" class="form-check-input" title="Select all loaded">
-                            Select all
-                        </label>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <label class="d-flex align-items-center gap-2 small mb-0">
+                                <input type="checkbox" id="selectAllCards" class="form-check-input" title="Select all loaded rows">
+                                Select all
+                            </label>
+                            <button type="button" id="selectAllFilteredCardsBtn" class="btn btn-link btn-sm py-0 px-1"
+                                    title="Select every transaction matching the current filters, including rows not yet loaded">
+                                Select all filtered
+                            </button>
+                        </div>
                         <span class="small text-muted" data-ledger-total><?= (int)$total ?> total</span>
                     </div>
                     <div id="ledgerCardListBody">
@@ -2699,17 +2864,38 @@ foreach ($colDefs as $col):
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cancel"></button>
             </div>
             <div class="modal-body">
-                <p class="mb-2">This permanently removes the transaction, all lines, related document records, and attachment files. This cannot be undone.</p>
-                <dl class="row small mb-3">
-                    <dt class="col-sm-4">Ref #</dt>
-                    <dd class="col-sm-8 font-monospace mb-1" id="txDeleteRef">—</dd>
-                    <dt class="col-sm-4">Date</dt>
-                    <dd class="col-sm-8 mb-1" id="txDeleteDate">—</dd>
-                    <dt class="col-sm-4">Amount</dt>
-                    <dd class="col-sm-8 mb-1" id="txDeleteAmount">—</dd>
-                    <dt class="col-sm-4">Payee</dt>
-                    <dd class="col-sm-8 mb-1" id="txDeletePayTo">—</dd>
-                </dl>
+                <p class="mb-2" id="txDeleteLead">This permanently removes the transaction, all lines, related document records, and attachment files. This cannot be undone.</p>
+                <div id="txDeleteSingleBlock">
+                    <dl class="row small mb-3">
+                        <dt class="col-sm-4">Ref #</dt>
+                        <dd class="col-sm-8 font-monospace mb-1" id="txDeleteRef">—</dd>
+                        <dt class="col-sm-4">Date</dt>
+                        <dd class="col-sm-8 mb-1" id="txDeleteDate">—</dd>
+                        <dt class="col-sm-4">Amount</dt>
+                        <dd class="col-sm-8 mb-1" id="txDeleteAmount">—</dd>
+                        <dt class="col-sm-4">Payee</dt>
+                        <dd class="col-sm-8 mb-1" id="txDeletePayTo">—</dd>
+                    </dl>
+                </div>
+                <div id="txDeleteBulkBlock" class="d-none">
+                    <p class="mb-2">Permanently delete <strong id="txDeleteBulkCount">0</strong> pending transaction(s), including all lines, document records, and attachment files. This cannot be undone.</p>
+                    <div id="txDeleteSkipAlert" class="alert alert-warning py-2 small d-none" role="alert">
+                        <span id="txDeleteSkipText"></span>
+                    </div>
+                    <p class="small mb-1">Sample (date, ref, amount):</p>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm table-bordered mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Ref #</th>
+                                    <th class="text-end">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody id="txDeleteSampleBody"></tbody>
+                        </table>
+                    </div>
+                </div>
                 <label for="txDeleteReason" class="form-label">Reason for delete <span class="text-danger">*</span></label>
                 <textarea class="form-control" id="txDeleteReason" rows="3" maxlength="500" required
                           placeholder="Why is this transaction being deleted?"></textarea>
@@ -2948,6 +3134,12 @@ foreach ($colDefs as $col):
     }
 
     const selectAll = document.getElementById('selectAll');
+    const selectAllFilteredBtn = document.getElementById('selectAllFilteredBtn');
+    const selectAllFilteredCardsBtn = document.getElementById('selectAllFilteredCardsBtn');
+    const ledgerSelectFilteredBar = document.getElementById('ledgerSelectFilteredBar');
+    const ledgerSelectFilteredMsg = document.getElementById('ledgerSelectFilteredMsg');
+    const ledgerSelectFilteredBannerBtn = document.getElementById('ledgerSelectFilteredBannerBtn');
+    const ledgerClearSelectionBtn = document.getElementById('ledgerClearSelectionBtn');
     const txTableBody = document.getElementById('txTableBody');
     const ledgerTableScroll = document.getElementById('ledgerTableScroll');
     const ledgerTotalLabel = document.getElementById('ledgerTotalLabel');
@@ -3144,6 +3336,13 @@ foreach ($colDefs as $col):
             listState.filters = normalizeFilters(raw.filters || {});
         } catch (e) { /* ignore */ }
     })();
+
+    /** Off-screen IDs from Select all filtered (DOM checkboxes remain source of truth for loaded rows). */
+    let extraPendingIds = new Set();
+    let extraSkippedIds = new Set();
+    let extraSample = [];
+    let selectAllFilteredActive = false;
+    let selectAllFilteredBusy = false;
 
     const accountOpts = `<?= $aopt ?>`;
     const fundOpts = `<?= $fopt ?>`;
@@ -3948,6 +4147,7 @@ foreach ($colDefs as $col):
         const cards = ledgerCardListBody();
         if (reset) {
             if (!txTableBody) return;
+            clearExtraSelection();
             if (!rows.length) {
                 txTableBody.innerHTML = emptyRowHtml();
                 if (cards) cards.innerHTML = emptyCardHtml();
@@ -3961,6 +4161,7 @@ foreach ($colDefs as $col):
             lastAnchorRow = null;
             updateButtonStates();
             syncCardSelectionFromTable();
+            updateSelectFilteredUi();
             return;
         }
         if (rows.length && txTableBody) {
@@ -3972,8 +4173,10 @@ foreach ($colDefs as $col):
                 if (emptyCard) emptyCard.remove();
                 cards.insertAdjacentHTML('beforeend', rows.map(renderTxCard).join(''));
             }
+            applyExtraSelectionToDom();
         }
         syncCardSelectionFromTable();
+        updateSelectFilteredUi();
     }
 
     function syncCardSelectionFromTable() {
@@ -4099,6 +4302,7 @@ foreach ($colDefs as $col):
         }
         updateClearAllFiltersBtn();
         updateFilterHeaderIndicators();
+        updateSelectFilteredUi();
     }
 
     function getActiveLedgerScroller() {
@@ -6463,23 +6667,191 @@ foreach ($colDefs as $col):
         };
     }
 
-    function identityFromSelectedRow() {
-        if (!txTableBody) return null;
-        const checked = txTableBody.querySelectorAll('.tx-cb:checked');
-        if (checked.length !== 1) return null;
-        const row = checked[0].closest('tr');
+    function identityFromRow(row) {
         if (!row) return null;
-        const cells = row.cells;
+        const cells = row.cells || [];
         const deb = parseFloat(row.dataset.debits || '0') || 0;
         const cred = parseFloat(row.dataset.credits || '0') || 0;
+        const cb = row.querySelector('.tx-cb');
         return {
-            id: parseInt(row.dataset.id || checked[0].value, 10) || 0,
+            id: parseInt(row.dataset.id || (cb && cb.value) || '0', 10) || 0,
             date: (cells[1] && cells[1].textContent.trim()) || '',
             ref: (cells[2] && cells[2].textContent.trim()) || '',
             payTo: (cells[3] && cells[3].textContent.trim()) || '',
             amount: Math.max(deb, cred),
             status: row.dataset.status || ''
         };
+    }
+
+    function identityFromSelectedRow() {
+        if (!txTableBody) return null;
+        const checked = txTableBody.querySelectorAll('.tx-cb:checked');
+        if (checked.length !== 1) return null;
+        return identityFromRow(checked[0].closest('tr'));
+    }
+
+    function clearExtraSelection() {
+        extraPendingIds = new Set();
+        extraSkippedIds = new Set();
+        extraSample = [];
+        selectAllFilteredActive = false;
+    }
+
+    function loadedIdSet() {
+        const ids = new Set();
+        if (!txTableBody) return ids;
+        txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+            const id = parseInt(cb.value, 10);
+            if (id) ids.add(id);
+        });
+        return ids;
+    }
+
+    function dropExtraId(id) {
+        extraPendingIds.delete(id);
+        extraSkippedIds.delete(id);
+        if (extraPendingIds.size === 0 && extraSkippedIds.size === 0) {
+            selectAllFilteredActive = false;
+        }
+    }
+
+    function applyExtraSelectionToDom() {
+        if (!txTableBody) return;
+        if (extraPendingIds.size === 0 && extraSkippedIds.size === 0) return;
+        txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+            const id = parseInt(cb.value, 10);
+            if (!id || cb.checked) return;
+            if (extraPendingIds.has(id) || extraSkippedIds.has(id)) {
+                cb.checked = true;
+            }
+        });
+    }
+
+    function extraOffscreenCount() {
+        const loaded = loadedIdSet();
+        let n = 0;
+        extraPendingIds.forEach(function(id) { if (!loaded.has(id)) n++; });
+        extraSkippedIds.forEach(function(id) { if (!loaded.has(id)) n++; });
+        return n;
+    }
+
+    function getSelectedIds() {
+        const ids = [];
+        const loaded = new Set();
+        if (txTableBody) {
+            txTableBody.querySelectorAll('.tx-cb:checked').forEach(function(cb) {
+                const id = parseInt(cb.value, 10);
+                if (!id) return;
+                loaded.add(id);
+                ids.push(id);
+            });
+            txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+                const id = parseInt(cb.value, 10);
+                if (id) loaded.add(id);
+            });
+        }
+        extraPendingIds.forEach(function(id) {
+            if (!loaded.has(id)) ids.push(id);
+        });
+        extraSkippedIds.forEach(function(id) {
+            if (!loaded.has(id)) ids.push(id);
+        });
+        return ids;
+    }
+
+    function identFromSelectionItem(item) {
+        if (!item) return null;
+        return {
+            id: parseInt(item.id, 10) || 0,
+            date: item.date || item.transaction_date || '',
+            ref: item.ref || item.reference_number || '',
+            payTo: item.payTo || item.pay_to || '',
+            amount: parseFloat(item.amount || 0) || 0,
+            status: item.status || 'pending'
+        };
+    }
+
+    function getSelectionStats() {
+        const loaded = loadedIdSet();
+        let pending = 0;
+        let skipped = 0;
+        const pendingIds = [];
+        const sample = [];
+        if (txTableBody) {
+            txTableBody.querySelectorAll('.tx-cb:checked').forEach(function(cb) {
+                const row = cb.closest('tr');
+                const ident = identityFromRow(row);
+                if (!ident || !ident.id) return;
+                if (ident.status === 'pending') {
+                    pending++;
+                    pendingIds.push(ident.id);
+                    if (sample.length < 8) sample.push(ident);
+                } else {
+                    skipped++;
+                }
+            });
+        }
+        extraPendingIds.forEach(function(id) {
+            if (loaded.has(id)) return;
+            pending++;
+            pendingIds.push(id);
+            if (sample.length < 8) {
+                const fromApi = extraSample.find(function(s) { return parseInt(s.id, 10) === id; });
+                if (fromApi) sample.push(identFromSelectionItem(fromApi));
+                else sample.push({ id: id, date: '', ref: '', payTo: '', amount: 0, status: 'pending' });
+            }
+        });
+        extraSkippedIds.forEach(function(id) {
+            if (loaded.has(id)) return;
+            skipped++;
+        });
+        return {
+            pending: pending,
+            skipped: skipped,
+            pendingIds: pendingIds,
+            sample: sample,
+            total: pending + skipped
+        };
+    }
+
+    function updateSelectFilteredUi() {
+        const total = listState.total || 0;
+        const selected = getSelectedIds().length;
+        const loadedCount = txTableBody ? txTableBody.querySelectorAll('.tx-cb').length : 0;
+        const loadedChecked = txTableBody ? txTableBody.querySelectorAll('.tx-cb:checked').length : 0;
+        const offscreen = extraOffscreenCount();
+        const allFilteredSelected = total > 0 && selected >= total && offscreen >= 0
+            && (selectAllFilteredActive || (!listState.has_more && loadedChecked === loadedCount && loadedCount > 0));
+        const label = total > 0 ? ('Select all filtered (' + total + ')') : 'Select all filtered';
+        [selectAllFilteredBtn, selectAllFilteredCardsBtn].forEach(function(btn) {
+            if (!btn) return;
+            btn.textContent = label;
+            btn.disabled = selectAllFilteredBusy || total < 1 || allFilteredSelected;
+        });
+        if (!ledgerSelectFilteredBar) return;
+        const showBanner = total > 0 && (
+            allFilteredSelected
+            || offscreen > 0
+            || (loadedCount > 0 && loadedChecked === loadedCount && (listState.has_more || total > loadedCount) && !allFilteredSelected)
+        );
+        ledgerSelectFilteredBar.classList.toggle('d-none', !showBanner);
+        if (!showBanner) return;
+        if (ledgerSelectFilteredBannerBtn) {
+            ledgerSelectFilteredBannerBtn.classList.toggle('d-none', allFilteredSelected || selectAllFilteredBusy);
+            ledgerSelectFilteredBannerBtn.disabled = selectAllFilteredBusy;
+            ledgerSelectFilteredBannerBtn.textContent = 'Select all ' + total + ' matching filters';
+        }
+        if (ledgerSelectFilteredMsg) {
+            if (allFilteredSelected) {
+                ledgerSelectFilteredMsg.textContent = total + ' matching current filters selected'
+                    + (offscreen > 0 ? ' (including rows not yet loaded).' : '.');
+            } else if (offscreen > 0) {
+                ledgerSelectFilteredMsg.textContent = selected + ' selected, including ' + offscreen
+                    + ' not yet loaded.';
+            } else {
+                ledgerSelectFilteredMsg.textContent = 'All ' + loadedChecked + ' loaded transactions selected.';
+            }
+        }
     }
 
     function syncDeleteFromEditBtn() {
@@ -6523,16 +6895,59 @@ foreach ($colDefs as $col):
         setDeleteConfirmEnabled();
     }
 
-    function openDeleteConfirm(ident) {
-        if (!canDeleteLedger || !ident || !ident.id) return;
-        if (ident.status && ident.status !== 'pending') {
-            if (typeof showToast === 'function') {
-                showToast('Only pending transactions can be deleted.', 'warning');
-            }
-            return;
+    function setDeleteModalMode(isBulk) {
+        const singleBlock = document.getElementById('txDeleteSingleBlock');
+        const bulkBlock = document.getElementById('txDeleteBulkBlock');
+        const titleEl = document.getElementById('txDeleteTitle');
+        const leadEl = document.getElementById('txDeleteLead');
+        if (singleBlock) singleBlock.classList.toggle('d-none', !!isBulk);
+        if (bulkBlock) bulkBlock.classList.toggle('d-none', !isBulk);
+        if (titleEl) titleEl.textContent = isBulk ? 'Delete transactions?' : 'Delete transaction?';
+        if (leadEl) {
+            leadEl.classList.toggle('d-none', !!isBulk);
         }
-        pendingDeleteIdentity = ident;
-        fillDeleteModal(ident);
+    }
+
+    function fillBulkDeleteModal(stats) {
+        setDeleteModalMode(true);
+        const countEl = document.getElementById('txDeleteBulkCount');
+        if (countEl) countEl.textContent = String(stats.pending);
+        const skipAlert = document.getElementById('txDeleteSkipAlert');
+        const skipText = document.getElementById('txDeleteSkipText');
+        if (skipAlert && skipText) {
+            if (stats.skipped > 0) {
+                skipText.textContent = stats.skipped + ' cleared or reconciled transaction'
+                    + (stats.skipped === 1 ? '' : 's')
+                    + ' in the selection will be skipped and will not be deleted.';
+                skipAlert.classList.remove('d-none');
+            } else {
+                skipText.textContent = '';
+                skipAlert.classList.add('d-none');
+            }
+        }
+        const body = document.getElementById('txDeleteSampleBody');
+        if (body) {
+            const rows = (stats.sample || []).filter(function(s) { return s && s.id; }).slice(0, 8);
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="3" class="text-muted">No sample available.</td></tr>';
+            } else {
+                body.innerHTML = rows.map(function(s) {
+                    return '<tr><td>' + escHtml(s.date || '—') + '</td><td class="font-monospace">'
+                        + escHtml(s.ref || '—') + '</td><td class="text-end">'
+                        + escHtml(formatTxAmount(s.amount)) + '</td></tr>';
+                }).join('');
+            }
+        }
+        if (txDeleteReasonEl) {
+            txDeleteReasonEl.value = '';
+            txDeleteReasonEl.classList.remove('is-invalid');
+        }
+        setDeleteConfirmEnabled();
+    }
+
+    let pendingDeleteBatch = null;
+
+    function showDeleteModal() {
         if (!txDeleteModalEl) return;
         if (typeof window.showFragmentModal === 'function') {
             window.showFragmentModal(txDeleteModalEl);
@@ -6542,6 +6957,29 @@ foreach ($colDefs as $col):
         setTimeout(function() {
             if (txDeleteReasonEl) txDeleteReasonEl.focus();
         }, 200);
+    }
+
+    function openDeleteConfirm(ident) {
+        if (!canDeleteLedger || !ident || !ident.id) return;
+        if (ident.status && ident.status !== 'pending') {
+            if (typeof showToast === 'function') {
+                showToast('Only pending transactions can be deleted.', 'warning');
+            }
+            return;
+        }
+        pendingDeleteIdentity = ident;
+        pendingDeleteBatch = null;
+        setDeleteModalMode(false);
+        fillDeleteModal(ident);
+        showDeleteModal();
+    }
+
+    function openBulkDeleteConfirm(stats) {
+        if (!canDeleteLedger || !stats || stats.pending < 1) return;
+        pendingDeleteIdentity = null;
+        pendingDeleteBatch = stats;
+        fillBulkDeleteModal(stats);
+        showDeleteModal();
     }
 
     function closeDeleteConfirm() {
@@ -6571,14 +7009,78 @@ foreach ($colDefs as $col):
         syncCardSelectionFromTable();
     }
 
+    function closeFormIfDeleted(deletedIds) {
+        const formOpenId = parseInt(txIdField && txIdField.value ? txIdField.value : '0', 10);
+        if (!formOpenId || deletedIds.indexOf(formOpenId) === -1) return;
+        if (typeof markTxFormClean === 'function') markTxFormClean();
+        const formModal = document.getElementById('txFormModal');
+        if (formModal && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            const inst = bootstrap.Modal.getInstance(formModal);
+            if (inst) inst.hide();
+        }
+        currentViewData = null;
+        if (txIdField) txIdField.value = '';
+    }
+
+    function submitBulkDelete(reason, ids) {
+        if (txDeleteConfirmBtn) txDeleteConfirmBtn.disabled = true;
+        const fd = new FormData();
+        fd.append('action', 'bulk_delete');
+        fd.append('tx_ids', JSON.stringify(ids));
+        fd.append('delete_reason', reason);
+        fetch('pages/ledger.php', {
+            method: 'POST',
+            body: fd,
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        })
+            .then(parseJsonResponse)
+            .then(function(res) {
+                if (window.__temperAuthRedirecting) return;
+                if (!isApiSuccess(res)) {
+                    throw new Error(res.error || 'Could not delete the transactions.');
+                }
+                closeDeleteConfirm();
+                closeFormIfDeleted(ids);
+                clearExtraSelection();
+                if (typeof reloadTransactionList === 'function') {
+                    reloadTransactionList();
+                }
+                if (typeof showToast === 'function') {
+                    const warn = (res.failed > 0) || (res.skipped_not_pending > 0);
+                    showToast(res.message || ((res.deleted || ids.length) + ' transaction(s) deleted.'),
+                        warn ? 'warning' : 'success', 5000);
+                }
+            })
+            .catch(function(err) {
+                if (typeof showToast === 'function') {
+                    showToast(err && err.message ? err.message : 'Could not delete the transactions.', 'danger');
+                }
+            })
+            .finally(function() {
+                setDeleteConfirmEnabled();
+            });
+    }
+
     function submitPendingDelete() {
-        if (!canDeleteLedger || !pendingDeleteIdentity || !pendingDeleteIdentity.id) return;
+        if (!canDeleteLedger) return;
         const reason = txDeleteReasonEl ? String(txDeleteReasonEl.value || '').trim() : '';
         if (reason === '') {
             if (txDeleteReasonEl) txDeleteReasonEl.classList.add('is-invalid');
             setDeleteConfirmEnabled();
             return;
         }
+        if (pendingDeleteBatch && pendingDeleteBatch.pendingIds && pendingDeleteBatch.pendingIds.length > 1) {
+            submitBulkDelete(reason, pendingDeleteBatch.pendingIds);
+            return;
+        }
+        if (pendingDeleteBatch && pendingDeleteBatch.pendingIds && pendingDeleteBatch.pendingIds.length === 1
+            && !(pendingDeleteIdentity && pendingDeleteIdentity.id)) {
+            pendingDeleteIdentity = pendingDeleteBatch.sample && pendingDeleteBatch.sample[0]
+                ? pendingDeleteBatch.sample[0]
+                : { id: pendingDeleteBatch.pendingIds[0] };
+        }
+        if (!pendingDeleteIdentity || !pendingDeleteIdentity.id) return;
         if (txDeleteConfirmBtn) txDeleteConfirmBtn.disabled = true;
         const fd = new FormData();
         fd.append('action', 'delete');
@@ -6598,21 +7100,13 @@ foreach ($colDefs as $col):
                 }
                 const deletedId = parseInt(res.id, 10) || pendingDeleteIdentity.id;
                 closeDeleteConfirm();
-                const formOpenId = parseInt(txIdField && txIdField.value ? txIdField.value : '0', 10);
-                if (formOpenId === deletedId) {
-                    if (typeof markTxFormClean === 'function') markTxFormClean();
-                    const formModal = document.getElementById('txFormModal');
-                    if (formModal && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-                        const inst = bootstrap.Modal.getInstance(formModal);
-                        if (inst) inst.hide();
-                    }
-                    currentViewData = null;
-                    if (txIdField) txIdField.value = '';
-                }
+                closeFormIfDeleted([deletedId]);
+                dropExtraId(deletedId);
                 removeTxRowFromList(deletedId);
                 if (typeof showToast === 'function') {
                     showToast('Transaction deleted.', 'success', 2800);
                 }
+                updateSelectFilteredUi();
             })
             .catch(function(err) {
                 if (typeof showToast === 'function') {
@@ -6626,40 +7120,33 @@ foreach ($colDefs as $col):
 
     function updateButtonStates() {
         if (!txTableBody) return;
-        const checked = txTableBody.querySelectorAll('.tx-cb:checked');
-        const count = checked.length;
+        const stats = getSelectionStats();
+        const count = stats.total;
+        const loadedChecked = txTableBody.querySelectorAll('.tx-cb:checked').length;
         const multi = count > 1;
 
         if (addTxBtn) addTxBtn.disabled = multi;
-        if (viewTxBtn) viewTxBtn.disabled = (count !== 1);
+        if (viewTxBtn) viewTxBtn.disabled = (loadedChecked !== 1);
         // Edit allowed for single selection including cleared/reconciled (budget-only there)
-        if (editTxBtn) editTxBtn.disabled = (count !== 1);
+        if (editTxBtn) editTxBtn.disabled = (loadedChecked !== 1);
         if (clearTxBtn) clearTxBtn.disabled = (count === 0);
         if (reconcileTxBtn) reconcileTxBtn.disabled = (count === 0);
         if (deleteTxBtn) {
-            let pendingOne = false;
-            if (count === 1) {
-                const row = checked[0].closest('tr');
-                pendingOne = !!(row && row.dataset.status === 'pending');
-            }
-            deleteTxBtn.disabled = !pendingOne;
+            deleteTxBtn.disabled = !canDeleteLedger || stats.pending < 1;
+            deleteTxBtn.title = stats.pending > 1
+                ? 'Delete ' + stats.pending + ' selected pending transactions'
+                : 'Delete selected pending transaction(s)';
         }
         // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
         if (bulkApplyBtn) {
-            bulkApplyBtn.disabled = !canBulkApply || count === 0;
+            bulkApplyBtn.disabled = !canBulkApply || stats.pending < 1;
         }
         syncDeleteFromEditBtn();
-    }
-
-    function getSelectedIds() {
-        return Array.from(txTableBody.querySelectorAll('.tx-cb:checked')).map(cb => parseInt(cb.value, 10));
+        updateSelectFilteredUi();
     }
 
     function anySelectedNonPending() {
-        return Array.from(txTableBody.querySelectorAll('.tx-cb:checked')).some(cb => {
-            const row = cb.closest('tr');
-            return row && row.dataset.status && row.dataset.status !== 'pending';
-        });
+        return getSelectionStats().skipped > 0;
     }
 
     function hasUnsavedInputs() {
@@ -6722,6 +7209,7 @@ foreach ($colDefs as $col):
         // clear the current selection when starting add
         if (txTableBody) txTableBody.querySelectorAll('.tx-cb:checked').forEach(cb => cb.checked = false);
         if (selectAll) selectAll.checked = false;
+        clearExtraSelection();
         updateButtonStates();
         showFormForAdd();
         markTxFormClean();
@@ -6778,13 +7266,17 @@ foreach ($colDefs as $col):
     }
 
     if (viewTxBtn) viewTxBtn.addEventListener('click', () => {
-        const ids = getSelectedIds();
+        const ids = txTableBody
+            ? Array.from(txTableBody.querySelectorAll('.tx-cb:checked')).map(cb => parseInt(cb.value, 10)).filter(Boolean)
+            : [];
         if (ids.length !== 1) return;
         openViewForId(ids[0]);
     });
 
     if (editTxBtn) editTxBtn.addEventListener('click', () => {
-        const ids = getSelectedIds();
+        const ids = txTableBody
+            ? Array.from(txTableBody.querySelectorAll('.tx-cb:checked')).map(cb => parseInt(cb.value, 10)).filter(Boolean)
+            : [];
         if (ids.length !== 1) return;
         openEditForId(ids[0]);
     });
@@ -6792,14 +7284,27 @@ foreach ($colDefs as $col):
     if (deleteTxBtn) {
         deleteTxBtn.addEventListener('click', function() {
             if (!canDeleteLedger || deleteTxBtn.disabled) return;
-            const ident = identityFromSelectedRow();
-            if (!ident || ident.status !== 'pending') {
+            const stats = getSelectionStats();
+            if (stats.pending < 1) {
                 if (typeof showToast === 'function') {
-                    showToast('Select one pending transaction to delete.', 'warning');
+                    showToast(stats.skipped > 0
+                        ? (stats.skipped + ' selected transaction(s) are cleared or reconciled and cannot be deleted.')
+                        : 'Select pending transactions to delete.', 'warning');
                 }
                 return;
             }
-            openDeleteConfirm(ident);
+            if (stats.pending === 1 && stats.skipped === 0) {
+                const ident = identityFromSelectedRow() || (stats.sample && stats.sample[0]) || null;
+                if (!ident || ident.status !== 'pending') {
+                    if (typeof showToast === 'function') {
+                        showToast('Select one pending transaction to delete.', 'warning');
+                    }
+                    return;
+                }
+                openDeleteConfirm(ident);
+                return;
+            }
+            openBulkDeleteConfirm(stats);
         });
     }
     if (deleteFromEditBtn) {
@@ -6836,23 +7341,8 @@ foreach ($colDefs as $col):
     const bulkApplySkipTextEl = document.getElementById('bulkApplySkipText');
 
     function bulkApplySelectionStats() {
-        const checked = txTableBody ? txTableBody.querySelectorAll('.tx-cb:checked') : [];
-        let pending = 0;
-        let skipped = 0;
-        const pendingIds = [];
-        checked.forEach(function(cb) {
-            const row = cb.closest('tr');
-            const status = row && row.dataset.status ? String(row.dataset.status) : 'pending';
-            const id = parseInt(cb.value, 10) || 0;
-            if (!id) return;
-            if (status === 'pending') {
-                pending++;
-                pendingIds.push(id);
-            } else {
-                skipped++;
-            }
-        });
-        return { pending: pending, skipped: skipped, pendingIds: pendingIds };
+        const stats = getSelectionStats();
+        return { pending: stats.pending, skipped: stats.skipped, pendingIds: stats.pendingIds };
     }
 
     function bulkApplyHasValues() {
@@ -7577,6 +8067,7 @@ foreach ($colDefs as $col):
     function afterSelectionChanged() {
         updateButtonStates();
         syncCardSelectionFromTable();
+        updateSelectFilteredUi();
         // Selection alone does not open the form; use View / Edit / double-click / tap.
     }
 
@@ -7593,8 +8084,91 @@ foreach ($colDefs as $col):
         openViewForId(id);
     }
 
+    function applyFilteredSelection(data) {
+        extraPendingIds = new Set((data.pending_ids || []).map(function(n) { return parseInt(n, 10); }).filter(Boolean));
+        extraSkippedIds = new Set((data.skipped_ids || []).map(function(n) { return parseInt(n, 10); }).filter(Boolean));
+        extraSample = (data.sample || []).map(identFromSelectionItem).filter(function(s) { return s && s.id; });
+        selectAllFilteredActive = true;
+        if (txTableBody) {
+            txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+                const id = parseInt(cb.value, 10);
+                cb.checked = extraPendingIds.has(id) || extraSkippedIds.has(id);
+            });
+        }
+        syncSelectAllState();
+        afterSelectionChanged();
+    }
+
+    function selectAllMatchingFilters() {
+        if (selectAllFilteredBusy) return;
+        const total = listState.total || 0;
+        if (total < 1) return;
+        if (!listState.has_more) {
+            extraPendingIds = new Set();
+            extraSkippedIds = new Set();
+            extraSample = [];
+            if (txTableBody) {
+                txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
+                    cb.checked = true;
+                    const ident = identityFromRow(cb.closest('tr'));
+                    if (ident && ident.status === 'pending' && extraSample.length < 8) {
+                        extraSample.push(ident);
+                    }
+                });
+            }
+            selectAllFilteredActive = true;
+            syncSelectAllState();
+            afterSelectionChanged();
+            return;
+        }
+        selectAllFilteredBusy = true;
+        updateSelectFilteredUi();
+        ledgerPostJson(ledgerFilterPayload({
+            list_selection: 1,
+            sort: listState.sort,
+            sort_dir: listState.sort_dir
+        }))
+            .then(function(data) {
+                if (!data || data.success === false) {
+                    throw new Error((data && data.error) || 'Could not load the filtered selection.');
+                }
+                applyFilteredSelection(data);
+                if (typeof showToast === 'function') {
+                    const pending = data.pending_count || 0;
+                    const skipped = data.skipped_count || 0;
+                    let msg = (data.total || 0) + ' matching current filters selected.';
+                    if (skipped > 0) {
+                        msg += ' ' + skipped + ' cleared or reconciled; ' + pending + ' pending.';
+                    }
+                    showToast(msg, 'info', 3500);
+                }
+            })
+            .catch(function(err) {
+                if (typeof showToast === 'function') {
+                    showToast(err && err.message ? err.message : 'Could not select all filtered transactions.', 'danger');
+                }
+            })
+            .finally(function() {
+                selectAllFilteredBusy = false;
+                updateSelectFilteredUi();
+            });
+    }
+
+    function clearLoadedAndExtraSelection() {
+        clearExtraSelection();
+        if (txTableBody) {
+            txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) { cb.checked = false; });
+        }
+        if (selectAll) selectAll.checked = false;
+        syncSelectAllState();
+        afterSelectionChanged();
+    }
+
     if (selectAll) {
         selectAll.addEventListener('change', () => {
+            if (!selectAll.checked) {
+                clearExtraSelection();
+            }
             txTableBody.querySelectorAll('.tx-cb').forEach(cb => cb.checked = selectAll.checked);
             syncSelectAllState();
             afterSelectionChanged();
@@ -7604,6 +8178,11 @@ foreach ($colDefs as $col):
     if (txTableBody) {
         txTableBody.addEventListener('change', function(e) {
             if (e.target.classList.contains('tx-cb')) {
+                const id = parseInt(e.target.value, 10);
+                if (id && !e.target.checked) {
+                    dropExtraId(id);
+                    selectAllFilteredActive = false;
+                }
                 syncSelectAllState();
                 afterSelectionChanged();
             }
@@ -7628,6 +8207,7 @@ foreach ($colDefs as $col):
             const rowIdx = allRows.indexOf(row);
 
             if (e.shiftKey && lastAnchorRow) {
+                clearExtraSelection();
                 const anchorIdx = allRows.indexOf(lastAnchorRow);
                 if (anchorIdx !== -1) {
                     const start = Math.min(anchorIdx, rowIdx);
@@ -7639,7 +8219,13 @@ foreach ($colDefs as $col):
                 }
             } else if (e.ctrlKey || e.metaKey) {
                 cb.checked = !cb.checked;
+                const id = parseInt(cb.value, 10);
+                if (id && !cb.checked) {
+                    dropExtraId(id);
+                    selectAllFilteredActive = false;
+                }
             } else {
+                clearExtraSelection();
                 allRows.forEach(r => {
                     const c = r.querySelector('.tx-cb');
                     if (c) c.checked = (r === row);
@@ -7666,6 +8252,7 @@ foreach ($colDefs as $col):
             const id = parseInt(row.dataset.id, 10);
             if (!id) return;
             // Select this row only
+            clearExtraSelection();
             txTableBody.querySelectorAll('.tx-cb').forEach(cb => {
                 cb.checked = (parseInt(cb.value, 10) === id);
             });
@@ -7673,6 +8260,20 @@ foreach ($colDefs as $col):
             syncSelectAllState();
             afterSelectionChanged();
             openRowDefaultAction(id);
+        });
+    }
+
+    [selectAllFilteredBtn, selectAllFilteredCardsBtn, ledgerSelectFilteredBannerBtn].forEach(function(btn) {
+        if (!btn) return;
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            selectAllMatchingFilters();
+        });
+    });
+    if (ledgerClearSelectionBtn) {
+        ledgerClearSelectionBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            clearLoadedAndExtraSelection();
         });
     }
 
@@ -7684,6 +8285,7 @@ foreach ($colDefs as $col):
                 selectAll.checked = selectAllCards.checked;
                 selectAll.dispatchEvent(new Event('change'));
             } else if (txTableBody) {
+                if (!selectAllCards.checked) clearExtraSelection();
                 txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
                     cb.checked = selectAllCards.checked;
                 });
@@ -7695,7 +8297,12 @@ foreach ($colDefs as $col):
         cardListBody.addEventListener('change', function(e) {
             const cb = e.target.closest('.ledger-card-cb');
             if (!cb) return;
-            setTableRowChecked(parseInt(cb.value, 10), cb.checked);
+            const id = parseInt(cb.value, 10);
+            setTableRowChecked(id, cb.checked);
+            if (id && !cb.checked) {
+                dropExtraId(id);
+                selectAllFilteredActive = false;
+            }
             syncSelectAllState();
             afterSelectionChanged();
         });
@@ -7713,6 +8320,7 @@ foreach ($colDefs as $col):
             if (!card) return;
             const id = parseInt(card.dataset.id, 10);
             if (!id) return;
+            clearExtraSelection();
             if (txTableBody) {
                 txTableBody.querySelectorAll('.tx-cb').forEach(function(cb) {
                     cb.checked = (parseInt(cb.value, 10) === id);

@@ -45,3 +45,35 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#36 - 2026-09-15 - Ledger - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Add bulk delete of pending transactions so a date-filtered historical import can be removed in one pass.
+
+Requirements:
+1. Bulk delete uses existing Ledger multi-select.
+2. Provide a reliable way to select every transaction that matches the **current filters** (e.g. Select all filtered), not only the rows loaded on screen. This is required so a full year (e.g. all of 2023) can be deleted after a date filter without clicking each row.
+3. Same rules as single delete:
+   - Only pending / not cleared / not reconciled
+   - Admin and Treasurer only
+   - Confirmation shows how many will be deleted and a sample of identifying fields (date, ref, amount)
+   - Required Reason for delete (one reason for the batch)
+   - Remove header, lines, documents, and attachment files
+   - audit_log: user, active role, timestamp, reason, and either one row per txn or one batch row that lists every ref #
+4. Cleared or reconciled rows in the selection/filter must be skipped or must abort the batch with a clear count. Never delete them.
+5. Do not add a special “delete fiscal year including cleared” command. Date filter + select filtered + bulk delete is the mechanism.
+6. Do not regress single delete, filters, or infinite scroll.
+
+First explore pending-delete, multi-select, filter apply, and how “select all” currently works (loaded page vs full filter set), then implement bulk delete as specified.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

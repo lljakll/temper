@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.958](#v0958)
 - [v0.957](#v0957)
 - [v0.956](#v0956)
 - [v0.955](#v0955)
@@ -164,6 +165,32 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.958
+
+**Ledger: bulk delete of pending transactions + Select all filtered** — 2026-09-15
+
+> No schema update required for this release (ledger selection/delete behavior only).  
+> **Patch file (history row):** `updates/20260915_0958_ledger_bulk_pending_delete.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.958
+
+- **Select all filtered** selects every transaction matching the current column filters, including rows not yet loaded by infinite scroll. The header checkbox still selects only loaded rows. A banner appears when the loaded page is fully checked and more matching rows exist.
+- **Bulk delete** uses the existing Ledger multi-select (loaded checkboxes plus the filtered extra set). Admin and Treasurer only, same as single delete.
+- Confirmation shows how many pending transactions will be deleted, a sample of date / ref / amount, and requires one **Reason for delete** for the batch. Cleared and reconciled rows in the selection are skipped (never deleted) and the skip count is shown.
+- A successful bulk delete removes each pending header, lines, document records, and attachment files. One `audit_log` row (`ledger.transactions_deleted`) records user (with active role), timestamp, reason, counts, and every deleted ref #.
+- Date filter + Select all filtered + bulk delete is the mechanism for removing a historical import (e.g. all of 2023). There is no “delete fiscal year including cleared” command.
+- Single pending delete, Excel-style filters, and infinite scroll are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.958**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.957 | `updates/20260915_0958_ledger_bulk_pending_delete.sql` (records 0.958; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.957, then this process-only patch after `php setup_db.php` |
 
 ---
 
