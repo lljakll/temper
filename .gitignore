@@ -14,9 +14,11 @@ storage/attachments/**
 
 # Ignore everything else in storage except committed defaults
 storage/*
+storage/logs/*
 !storage/.gitkeep
 !storage/config/
 !storage/config/**
+
 
 # SQL dumps sitting anywhere
 *.sql
