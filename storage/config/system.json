@@ -1,6 +1,6 @@
 {
     "version": 1,
-    "updated_at": "2026-08-25T10:35:04+00:00",
+    "updated_at": "2026-09-16T00:46:29+00:00",
     "settings": {
         "developer_mode": true,
         "auto_archive_disabled": false,
@@ -10,6 +10,8 @@
         "auto_backup_enabled": false,
         "auto_backup_frequency": "daily",
         "auto_backup_format": "sql",
+        "church_name": "Hope Baptist Church",
+        "church_icon": "brand/icon_20260916_004626_0bef3b09.png",
         "login_timeout_disabled": true,
         "login_timeout_seconds": 600
     }

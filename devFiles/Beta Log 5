@@ -77,3 +77,29 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#38 - 2026-09-15 - Dashboard - Enhancement - Low
+
+You are working in the **Beta Thread**.
+
+Task: Add a proper header to the Dashboard that uses the configured church name and icon.
+
+Requirements:
+1. Give the Dashboard a clear page header consistent with other main screens (Ledger, Budget, Funds).
+2. Use the System Configuration church display name and icon/graphic when they are set.
+3. Header should identify the app/home at a glance (church name plus a short subtitle such as Dashboard or current budget year if that is already available and simple).
+4. Work on desktop and mobile. Do not crowd the mobile top bar; keep it readable.
+5. Do not rebuild dashboard cards or add new metrics in this change.
+6. Do not change System Configuration except to read the existing name/icon settings.
+
+First explore the Dashboard page shell and how church name/icon are stored and shown in the sidebar/tab, then add the Dashboard header.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

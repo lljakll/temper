@@ -1,8 +1,8 @@
 <?php
 /**
  * System — Configuration.
- * Administrator-only settings: Developer Mode (also controls application idle timeout),
- * auto-archive timer, and future preferences.
+ * Administrator-only settings: church name/icon, Developer Mode (also controls
+ * application idle timeout), auto-archive timer, and related preferences.
  * Settings persist under storage/config/system.json.
  * Login idle timeout: 10 min when Developer Mode is off; fully disabled when on
  * (host/system session cleaner ≈24 minutes still applies).
@@ -55,6 +55,10 @@ function configPayload(): array {
         'auto_backup_last_run' => $autoState['last_run'],
         'auto_backup_last_status' => $autoState['last_status'],
         'allow_hard_delete' => allowHardDeleteUsers(),
+        'church_name' => getChurchDisplayName(),
+        'church_icon' => getChurchIconRelativePath(),
+        'brand' => getBrandClientPayload(),
+        'storage_images' => listStorageImagesForBrandPicker(),
         'app_env' => (string)APP_ENV,
         'is_development_env' => isDevelopmentEnvironment(),
         'config_path' => getSystemConfigFilePath(),
@@ -73,6 +77,27 @@ function configPayload(): array {
     ];
 }
 
+// ── Image preview (Administrator session; not a public file server) ──────────
+if (isset($_GET['preview_image'])) {
+    $rel = (string)($_GET['path'] ?? '');
+    $abs = temperResolveReadableStorageImage($rel);
+    if ($abs === null) {
+        http_response_code(404);
+        echo 'Image not found.';
+        $db->close();
+        exit;
+    }
+    $mime = temperBrandIconMimeForPath($abs);
+    header('Content-Type: ' . $mime);
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: private, max-age=120');
+    header('Content-Length: ' . (string)filesize($abs));
+    header('Content-Disposition: inline; filename="' . basename($abs) . '"');
+    readfile($abs);
+    $db->close();
+    exit;
+}
+
 // ── JSON API ────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = (string)$_POST['action'];
@@ -81,6 +106,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
     if ($action === 'get_config') {
         configSendJson(array_merge(['success' => true], configPayload()), $db);
+    }
+
+    if ($action === 'list_storage_images') {
+        configSendJson([
+            'success' => true,
+            'storage_images' => listStorageImagesForBrandPicker(),
+        ], $db);
+    }
+
+    if ($action === 'upload_church_icon') {
+        if (!isset($_FILES['church_icon_file']) || !is_array($_FILES['church_icon_file'])) {
+            configSendJson(['success' => false, 'error' => 'No image file was uploaded.'], $db);
+        }
+        $file = $_FILES['church_icon_file'];
+        $err = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($err !== UPLOAD_ERR_OK) {
+            $uploadErrors = [
+                UPLOAD_ERR_INI_SIZE => 'Uploaded image exceeds the server size limit.',
+                UPLOAD_ERR_FORM_SIZE => 'Uploaded image exceeds the form size limit.',
+                UPLOAD_ERR_PARTIAL => 'Image upload was incomplete.',
+                UPLOAD_ERR_NO_FILE => 'No image file was uploaded.',
+            ];
+            configSendJson([
+                'success' => false,
+                'error' => $uploadErrors[$err] ?? 'Image upload failed.',
+            ], $db);
+        }
+        $tmp = (string)($file['tmp_name'] ?? '');
+        $orig = (string)($file['name'] ?? 'icon');
+        if ($tmp === '' || !is_uploaded_file($tmp)) {
+            configSendJson(['success' => false, 'error' => 'Upload temporary file is missing.'], $db);
+        }
+        $stored = temperStoreChurchIconFromPath($tmp, $orig);
+        if (empty($stored['success'])) {
+            configSendJson(['success' => false, 'error' => $stored['error'] ?? 'Failed to store icon.'], $db);
+        }
+        $rel = (string)($stored['relative'] ?? '');
+        logAuditAction(
+            $db,
+            $actorId,
+            $actorUsername,
+            'system_config_update',
+            'Uploaded church icon: ' . $rel
+        );
+        configSendJson([
+            'success' => true,
+            'message' => 'Icon uploaded. Save configuration to apply it.',
+            'relative' => $rel,
+            'preview_url' => temperBrandPickerPreviewUrl($rel),
+            'storage_images' => listStorageImagesForBrandPicker(),
+        ], $db);
     }
 
     if ($action === 'save_config') {
@@ -178,6 +254,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updates['auto_backup_format'] = $fmt;
         }
 
+        if (array_key_exists('church_name', $_POST)) {
+            $name = trim((string)$_POST['church_name']);
+            if (mb_strlen($name) > 80) {
+                configSendJson([
+                    'success' => false,
+                    'error' => 'Church / organization name cannot exceed 80 characters.',
+                ], $db);
+            }
+            $updates['church_name'] = $name;
+        }
+
+        if (array_key_exists('church_icon', $_POST)) {
+            $norm = temperNormalizeChurchIconSetting((string)$_POST['church_icon']);
+            if (empty($norm['success'])) {
+                configSendJson([
+                    'success' => false,
+                    'error' => $norm['error'] ?? 'Could not use the selected icon.',
+                ], $db);
+            }
+            $updates['church_icon'] = (string)($norm['relative'] ?? '');
+        }
+
         // Accept any other catalog keys posted in the future
         foreach (temperSystemConfigCatalog() as $key => $meta) {
             if (isset($updates[$key])) {
@@ -252,6 +350,10 @@ $storageWritable = !empty($storageStatus['writable']);
 $storageReason = (string)($storageStatus['reason'] ?? '');
 $storageUnusedParent = $storageStatus['unused_parent_storage'] ?? null;
 $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['subdirs'] : [];
+$churchName = (string)($payload['church_name'] ?? getChurchDisplayName());
+$churchIcon = (string)($payload['church_icon'] ?? '');
+$storageImages = is_array($payload['storage_images'] ?? null) ? $payload['storage_images'] : [];
+$churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIcon) : '';
 ?>
 
 <div class="row mb-3">
@@ -278,6 +380,87 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
             </div>
             <div class="card-body">
                 <form id="systemConfigForm" autocomplete="off" data-dirty-track>
+                    <!-- Organization / branding group -->
+                    <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: 0.75rem;">
+                        Organization
+                    </h3>
+
+                    <div class="p-3 rounded border mb-4">
+                        <label class="form-label fw-semibold mb-1" for="cfgChurchName">
+                            Church / organization name
+                        </label>
+                        <p class="small text-muted mb-2">
+                            Shown in the browser tab and next to the icon in the sidebar and mobile header.
+                            Leave as the default to keep the current title
+                            (<strong><?= htmlspecialchars(getDefaultChurchDisplayName(), ENT_QUOTES, 'UTF-8') ?></strong>).
+                        </p>
+                        <input type="text" class="form-control form-control-sm" id="cfgChurchName"
+                               name="church_name" maxlength="80"
+                               value="<?= htmlspecialchars($churchName, ENT_QUOTES, 'UTF-8') ?>"
+                               placeholder="<?= htmlspecialchars(getDefaultChurchDisplayName(), ENT_QUOTES, 'UTF-8') ?>">
+
+                        <div class="border-top pt-3 mt-3">
+                            <label class="form-label fw-semibold mb-1" for="cfgChurchIconFile">
+                                Icon or graphic
+                            </label>
+                            <p class="small text-muted mb-2">
+                                Optional. Used as the browser tab icon and beside the name in the header.
+                                Upload a new image (PNG, JPG, GIF, WEBP, ICO, or SVG, up to 2&nbsp;MB)
+                                or select an image already in storage. Clear to restore the default bank icon.
+                            </p>
+                            <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+                                <div class="border rounded d-flex align-items-center justify-content-center bg-surface"
+                                     style="width: 3.25rem; height: 3.25rem;">
+                                    <img id="cfgChurchIconPreview" alt="Current organization icon"
+                                         <?= $churchIconPreview !== '' ? 'src="' . htmlspecialchars($churchIconPreview, ENT_QUOTES, 'UTF-8') . '"' : '' ?>
+                                         class="sidebar-brand-icon<?= $churchIconPreview !== '' ? '' : ' d-none' ?>"
+                                         style="width: 2.25rem; height: 2.25rem; object-fit: contain;">
+                                    <i id="cfgChurchIconFallback" class="bi bi-bank fs-4<?= $churchIconPreview !== '' ? ' d-none' : '' ?>"
+                                       aria-hidden="true"></i>
+                                </div>
+                                <div class="small text-muted" id="cfgChurchIconPathLabel">
+                                    <?php if ($churchIcon !== ''): ?>
+                                        <?= htmlspecialchars($churchIcon, ENT_QUOTES, 'UTF-8') ?>
+                                    <?php else: ?>
+                                        Using default icon
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <input type="hidden" id="cfgChurchIcon" name="church_icon"
+                                   value="<?= htmlspecialchars($churchIcon, ENT_QUOTES, 'UTF-8') ?>">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-6">
+                                    <label class="form-label small mb-1" for="cfgChurchIconFile">Upload image</label>
+                                    <input type="file" class="form-control form-control-sm" id="cfgChurchIconFile"
+                                           accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon,.png,.jpg,.jpeg,.gif,.webp,.svg,.ico">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small mb-1" for="cfgChurchIconSelect">Select from storage</label>
+                                    <select class="form-select form-select-sm" id="cfgChurchIconSelect">
+                                        <option value="">— Choose an image in storage —</option>
+                                        <?php foreach ($storageImages as $img): ?>
+                                            <?php
+                                            $rel = (string)($img['relative'] ?? '');
+                                            if ($rel === '') {
+                                                continue;
+                                            }
+                                            ?>
+                                            <option value="<?= htmlspecialchars($rel, ENT_QUOTES, 'UTF-8') ?>"
+                                                <?= $rel === $churchIcon ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($rel, ENT_QUOTES, 'UTF-8') ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="cfgChurchIconClear">
+                                    Clear icon
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Development group -->
                     <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: 0.75rem;">
                         Development
@@ -559,6 +742,10 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
                             <span class="badge text-bg-secondary">Off</span>
                         <?php endif; ?>
                     </dd>
+                    <dt class="col-6 text-muted">Organization</dt>
+                    <dd class="col-6 text-truncate" id="cfgStatusChurchName" title="<?= htmlspecialchars($churchName, ENT_QUOTES, 'UTF-8') ?>">
+                        <?= htmlspecialchars($churchName, ENT_QUOTES, 'UTF-8') ?>
+                    </dd>
                 </dl>
                 <hr>
                 <p class="text-uppercase text-muted mb-2" style="letter-spacing: 0.04em; font-size: 0.7rem;">Storage</p>
@@ -615,7 +802,16 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
     const autoBackupToggleLabel = document.getElementById('cfgAutoBackupEnabledLabel');
     const autoBackupFrequency = document.getElementById('cfgAutoBackupFrequency');
     const autoBackupFormat = document.getElementById('cfgAutoBackupFormat');
+    const churchNameInput = document.getElementById('cfgChurchName');
+    const churchIconInput = document.getElementById('cfgChurchIcon');
+    const churchIconFile = document.getElementById('cfgChurchIconFile');
+    const churchIconSelect = document.getElementById('cfgChurchIconSelect');
+    const churchIconPreview = document.getElementById('cfgChurchIconPreview');
+    const churchIconFallback = document.getElementById('cfgChurchIconFallback');
+    const churchIconPathLabel = document.getElementById('cfgChurchIconPathLabel');
+    const churchIconClear = document.getElementById('cfgChurchIconClear');
     const statusEl = document.getElementById('cfgSaveStatus');
+    const statusChurchName = document.getElementById('cfgStatusChurchName');
     const statusDev = document.getElementById('cfgStatusDevMode');
     const statusHard = document.getElementById('cfgStatusHardDelete');
     const statusAuto = document.getElementById('cfgStatusAutoArchive');
@@ -664,6 +860,63 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
         setOnOffLabel(autoBackupToggleLabel, on);
         if (autoBackupFrequency) autoBackupFrequency.disabled = !on;
         if (autoBackupFormat) autoBackupFormat.disabled = !on;
+    }
+
+    function previewUrlForRelative(rel) {
+        if (!rel) return '';
+        return 'pages/admin-config.php?preview_image=1&path=' + encodeURIComponent(rel);
+    }
+
+    function setChurchIconPreview(rel) {
+        const path = (rel || '').trim();
+        if (churchIconInput) churchIconInput.value = path;
+        if (churchIconPathLabel) {
+            churchIconPathLabel.textContent = path ? path : 'Using default icon';
+        }
+        if (path) {
+            const url = previewUrlForRelative(path);
+            if (churchIconPreview) {
+                churchIconPreview.setAttribute('src', url);
+                churchIconPreview.classList.remove('d-none');
+            }
+            if (churchIconFallback) churchIconFallback.classList.add('d-none');
+        } else {
+            if (churchIconPreview) {
+                churchIconPreview.removeAttribute('src');
+                churchIconPreview.classList.add('d-none');
+            }
+            if (churchIconFallback) churchIconFallback.classList.remove('d-none');
+        }
+        if (churchIconSelect) {
+            const wanted = path;
+            let matched = false;
+            Array.prototype.forEach.call(churchIconSelect.options, function(opt) {
+                if (opt.value && opt.value === wanted) {
+                    opt.selected = true;
+                    matched = true;
+                }
+            });
+            if (!matched) churchIconSelect.value = '';
+        }
+    }
+
+    function fillStorageImageSelect(images, selectedRel) {
+        if (!churchIconSelect) return;
+        const current = selectedRel != null ? selectedRel : (churchIconInput ? churchIconInput.value : '');
+        churchIconSelect.innerHTML = '';
+        const blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = '— Choose an image in storage —';
+        churchIconSelect.appendChild(blank);
+        (images || []).forEach(function(img) {
+            const rel = img && img.relative ? String(img.relative) : '';
+            if (!rel) return;
+            const opt = document.createElement('option');
+            opt.value = rel;
+            opt.textContent = rel;
+            if (rel === current) opt.selected = true;
+            churchIconSelect.appendChild(opt);
+        });
     }
 
     /** Status badge for login timeout (Developer Mode off → 10 min; on → disabled). */
@@ -722,6 +975,25 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
         }
         if (res.auto_backup_format && autoBackupFormat) {
             autoBackupFormat.value = String(res.auto_backup_format);
+        }
+        if (res.church_name != null && churchNameInput) {
+            churchNameInput.value = String(res.church_name);
+        }
+        if (Array.isArray(res.storage_images)) {
+            fillStorageImageSelect(res.storage_images, res.church_icon != null ? String(res.church_icon) : undefined);
+        }
+        if (res.church_icon !== undefined && res.church_icon !== null) {
+            setChurchIconPreview(String(res.church_icon));
+        }
+        if (res.brand && typeof window.__temperApplyBrand === 'function') {
+            window.__temperApplyBrand(res.brand);
+        }
+        if (statusChurchName) {
+            const nm = res.church_name != null
+                ? String(res.church_name)
+                : (res.brand && res.brand.name ? String(res.brand.name) : '');
+            statusChurchName.textContent = nm;
+            statusChurchName.setAttribute('title', nm);
         }
         syncAutoArchiveUi();
         syncAutoBackupUi();
@@ -853,6 +1125,52 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
     if (autoBackupToggle) {
         autoBackupToggle.addEventListener('change', syncAutoBackupUi);
     }
+    if (churchIconSelect) {
+        churchIconSelect.addEventListener('change', function() {
+            setChurchIconPreview(churchIconSelect.value || '');
+        });
+    }
+    if (churchIconClear) {
+        churchIconClear.addEventListener('click', function() {
+            if (churchIconFile) churchIconFile.value = '';
+            setChurchIconPreview('');
+        });
+    }
+    if (churchIconFile) {
+        churchIconFile.addEventListener('change', function() {
+            if (!churchIconFile.files || !churchIconFile.files[0]) {
+                return;
+            }
+            const fd = new FormData();
+            fd.append('action', 'upload_church_icon');
+            fd.append('church_icon_file', churchIconFile.files[0]);
+            if (statusEl) statusEl.textContent = 'Uploading icon…';
+            fetch(endpoint, { method: 'POST', body: fd, headers: { 'Accept': 'application/json' } })
+                .then(function(r) {
+                    return r.json().catch(function() {
+                        return { success: false, error: 'Invalid server response' };
+                    });
+                })
+                .then(function(res) {
+                    if (statusEl) statusEl.textContent = '';
+                    if (!res.success) {
+                        toast(res.error || 'Icon upload failed', 'danger');
+                        churchIconFile.value = '';
+                        return;
+                    }
+                    if (Array.isArray(res.storage_images)) {
+                        fillStorageImageSelect(res.storage_images, res.relative);
+                    }
+                    setChurchIconPreview(res.relative || '');
+                    toast(res.message || 'Icon uploaded', 'success');
+                })
+                .catch(function() {
+                    if (statusEl) statusEl.textContent = '';
+                    toast('Icon upload failed', 'danger');
+                    churchIconFile.value = '';
+                });
+        });
+    }
     syncAutoArchiveUi();
     syncAutoBackupUi();
 
@@ -895,6 +1213,8 @@ $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['
             fd.append('auto_backup_enabled', autoBackupToggle && autoBackupToggle.checked ? '1' : '0');
             fd.append('auto_backup_frequency', autoBackupFrequency ? autoBackupFrequency.value : 'daily');
             fd.append('auto_backup_format', autoBackupFormat ? autoBackupFormat.value : 'sql');
+            fd.append('church_name', churchNameInput ? churchNameInput.value : '');
+            fd.append('church_icon', churchIconInput ? churchIconInput.value : '');
             if (statusEl) statusEl.textContent = 'Saving…';
             fetch(endpoint, { method: 'POST', body: fd, headers: { 'Accept': 'application/json' } })
                 .then(function(r) {

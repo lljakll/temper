@@ -474,6 +474,15 @@ if ($periodSource === 'budget' && $budgetName !== '') {
     $periodHint = 'Calendar year · ' . $periodLabel;
 }
 
+$dashChurchName = function_exists('getChurchDisplayName')
+    ? getChurchDisplayName()
+    : (defined('APP_NAME') ? APP_NAME : 'Hope Baptist Treasurer');
+$dashChurchIconUrl = function_exists('getChurchIconPublicUrl')
+    ? getChurchIconPublicUrl()
+    : null;
+$dashChurchHasIcon = is_string($dashChurchIconUrl) && $dashChurchIconUrl !== '';
+$dashSubtitle = 'Dashboard · ' . $periodHint;
+
 $cashMeta = dashboardCashMetaText(count($cashAccountIds), count($allAssetIds));
 $h = static function (mixed $s): string {
     return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
@@ -573,6 +582,36 @@ $h = static function (mixed $s): string {
         min-width: 2.25rem;
         min-height: 2.25rem;
     }
+    .dash-page .dash-page-header {
+        min-width: 0;
+    }
+    .dash-page .dash-brand-icon {
+        flex-shrink: 0;
+        border-radius: 0.25rem;
+        margin-top: 0.15rem;
+    }
+    .dash-page img.dash-brand-icon {
+        width: 2.15rem;
+        height: 2.15rem;
+        object-fit: contain;
+    }
+    .dash-page i.dash-brand-icon {
+        font-size: 1.85rem;
+        line-height: 1;
+        width: 2.15rem;
+        text-align: center;
+        color: var(--bs-secondary-color);
+    }
+    @media (min-width: 768px) {
+        .dash-page img.dash-brand-icon {
+            width: 2.5rem;
+            height: 2.5rem;
+        }
+        .dash-page i.dash-brand-icon {
+            font-size: 2.15rem;
+            width: 2.5rem;
+        }
+    }
     .dash-page .dash-gear:hover,
     .dash-page .dash-gear:focus-visible {
         color: var(--bs-body-color);
@@ -622,10 +661,15 @@ $h = static function (mixed $s): string {
 </style>
 
 <div class="dash-page" id="dashPage">
-    <div class="row mb-3 mb-md-4 page-title-row">
-        <div class="col-12">
-            <h2 class="mb-1 h3 h-md-2">Home</h2>
-            <p class="text-muted small mb-0"><?= $h($periodHint) ?></p>
+    <div class="d-flex align-items-start gap-2 mb-3 page-title-row dash-page-header">
+        <img<?php if ($dashChurchHasIcon): ?> src="<?= $h($dashChurchIconUrl) ?>"<?php endif; ?>
+             alt="" class="dash-brand-icon<?= $dashChurchHasIcon ? '' : ' d-none' ?>"
+             data-temper-brand-icon="img" width="40" height="40">
+        <i class="bi bi-bank dash-brand-icon<?= $dashChurchHasIcon ? ' d-none' : '' ?>"
+           aria-hidden="true" data-temper-brand-icon="fallback"></i>
+        <div class="min-w-0 flex-grow-1">
+            <h2 class="mb-1 text-truncate" data-temper-brand-name><?= $h($dashChurchName) ?></h2>
+            <p class="text-muted small mb-0"><?= $h($dashSubtitle) ?></p>
         </div>
     </div>
 

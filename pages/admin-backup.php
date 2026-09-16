@@ -441,8 +441,8 @@ $autoState = loadAutoBackupState();
             <div class="card-body">
                 <p class="text-muted small">
                     Export row data from <strong><?= $tableCount ?></strong> operational tables without CREATE/DROP statements,
-                    plus on-disk user data: transaction attachments, legacy documents, and
-                    <code>storage/config</code> (system settings).
+                    plus on-disk user data: transaction attachments, church brand icon,
+                    legacy documents, and <code>storage/config</code> (system settings).
                     <code>app_version</code> and <code>audit_log</code> are omitted so a restore keeps the current version history and audit trail.
                     Logs, exports, and existing backup files are not included.
                     Choose the dump format inside the zip package: SQL (INSERT dump), CSV (per-table CSVs), or both.

@@ -1,7 +1,7 @@
 <?php
 /**
  * Backup packages — zip archives that combine a database dump with
- * selected storage files (attachments, system config, legacy documents).
+ * selected storage files (attachments, brand icon, system config, legacy documents).
  *
  * Loaded from backup_utils.php. Do not include directly.
  *
@@ -31,7 +31,7 @@ const TEMPER_BACKUP_PACKAGE_VERSION = 1;
  * @return list<string>
  */
 function backupIncludedStorageSubdirs(): array {
-    return ['attachments', 'config', 'transaction_documents'];
+    return ['attachments', 'brand', 'config', 'transaction_documents'];
 }
 
 function isBackupIncludedStorageSubdir(string $name): bool {
@@ -435,7 +435,7 @@ function peekBackupPackage(string $path): array {
             $out['has_storage'] = true;
             $out['storage_files']++;
             $dirs[$safe['subdir']] = true;
-        } elseif (preg_match('#^storage/(attachments|config|transaction_documents)/?$#', $norm) === 1) {
+        } elseif (preg_match('#^storage/(attachments|brand|config|transaction_documents)/?$#', $norm) === 1) {
             $dir = basename(rtrim($norm, '/'));
             if (isBackupIncludedStorageSubdir($dir)) {
                 $dirs[$dir] = true;

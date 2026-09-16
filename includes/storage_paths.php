@@ -407,6 +407,7 @@ function getStorageDiagnostics(): array {
         'subdirs' => [
             'attachments' => $base . '/attachments',
             'backups' => $base . '/backups',
+            'brand' => $base . '/brand',
             'config' => $base . '/config',
             'exports' => $base . '/exports',
             'logs' => $base . '/logs',

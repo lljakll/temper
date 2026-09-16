@@ -26,7 +26,21 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= APP_NAME ?? "Hope Baptist Treasurer" ?></title>
+    <?php
+    $temperBrandName = function_exists('getChurchDisplayName')
+        ? getChurchDisplayName()
+        : (defined('APP_NAME') ? APP_NAME : 'Hope Baptist Treasurer');
+    $temperBrandTitle = function_exists('getBrowserTabTitle')
+        ? getBrowserTabTitle()
+        : $temperBrandName;
+    $temperBrandIconUrl = function_exists('getChurchIconPublicUrl')
+        ? getChurchIconPublicUrl()
+        : null;
+    ?>
+    <title><?= htmlspecialchars($temperBrandTitle, ENT_QUOTES, 'UTF-8') ?></title>
+    <?php if (is_string($temperBrandIconUrl) && $temperBrandIconUrl !== ''): ?>
+    <link rel="icon" id="temperFavicon" href="<?= htmlspecialchars($temperBrandIconUrl, ENT_QUOTES, 'UTF-8') ?>">
+    <?php endif; ?>
     <!-- Apply Bootstrap color mode before CSS paints to avoid flash / wrong text color -->
     <script>
     (function () {
@@ -175,6 +189,20 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         .sidebar-panel .sidebar-meta {
             color: var(--bs-body-color);
             border-bottom-color: var(--bs-border-color) !important;
+        }
+        img.sidebar-brand-icon {
+            width: 1.35rem;
+            height: 1.35rem;
+            object-fit: contain;
+            flex-shrink: 0;
+            border-radius: 0.2rem;
+        }
+        .mobile-topbar img.sidebar-brand-icon {
+            width: 1.25rem;
+            height: 1.25rem;
+        }
+        i.sidebar-brand-icon {
+            flex-shrink: 0;
         }
         .sidebar-panel .sidebar-footnote,
         .sidebar-panel .sidebar-welcome,
@@ -382,7 +410,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 margin-bottom: 0.75rem !important;
                 padding-bottom: 0.5rem !important;
             }
-            body.sidebar-collapsed #appSidebar .sidebar-brand > i.bi-bank {
+            body.sidebar-collapsed #appSidebar .sidebar-brand > .sidebar-brand-icon {
                 margin-right: 0 !important;
             }
             body.sidebar-collapsed #appSidebar .sidebar-action-btn {
@@ -452,7 +480,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 flex-direction: row;
                 gap: 0;
             }
-            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand > i.bi-bank {
+            body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-brand > .sidebar-brand-icon {
                 margin-right: 0.5rem !important;
             }
             body.sidebar-collapsed.sidebar-hover-expand #appSidebar .sidebar-action-btn {
@@ -1891,6 +1919,65 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
         window.__temperSidebarHover = {
             expandSeconds: <?= json_encode((float)$temperSidebarHoverExpandSec) ?>,
             collapseSeconds: <?= json_encode((float)$temperSidebarHoverCollapseSec) ?>
+        };
+
+        // Church name + icon (System Configuration). Header, tab title, and favicon share this.
+        window.__temperBrand = <?= json_encode(
+            function_exists('getBrandClientPayload')
+                ? getBrandClientPayload()
+                : [
+                    'name' => $temperBrandName,
+                    'title' => $temperBrandTitle,
+                    'icon' => '',
+                    'iconUrl' => $temperBrandIconUrl,
+                ],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        ) ?>;
+
+        window.__temperApplyBrand = function (brand) {
+            if (!brand || typeof brand !== 'object') {
+                return;
+            }
+            window.__temperBrand = brand;
+            if (typeof brand.title === 'string' && brand.title !== '') {
+                document.title = brand.title;
+            }
+            var fav = document.getElementById('temperFavicon');
+            var iconUrl = (typeof brand.iconUrl === 'string' && brand.iconUrl !== '') ? brand.iconUrl : '';
+            if (iconUrl) {
+                if (!fav) {
+                    fav = document.createElement('link');
+                    fav.id = 'temperFavicon';
+                    fav.rel = 'icon';
+                    document.head.appendChild(fav);
+                }
+                fav.setAttribute('href', iconUrl);
+            } else if (fav) {
+                fav.remove();
+            }
+            var name = (typeof brand.name === 'string') ? brand.name : '';
+            document.querySelectorAll('[data-temper-brand-name]').forEach(function (el) {
+                if (el.getAttribute('data-temper-brand-locked') === '1') {
+                    return;
+                }
+                el.textContent = name;
+            });
+            document.querySelectorAll('[data-temper-brand-icon="img"]').forEach(function (el) {
+                if (iconUrl) {
+                    el.setAttribute('src', iconUrl);
+                    el.classList.remove('d-none');
+                } else {
+                    el.removeAttribute('src');
+                    el.classList.add('d-none');
+                }
+            });
+            document.querySelectorAll('[data-temper-brand-icon="fallback"]').forEach(function (el) {
+                if (iconUrl) {
+                    el.classList.add('d-none');
+                } else {
+                    el.classList.remove('d-none');
+                }
+            });
         };
 
         window.__temperAuthRedirecting = false;

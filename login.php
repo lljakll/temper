@@ -40,7 +40,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Hope Baptist Treasurer</title>
+    <?php
+    $temperLoginTitle = function_exists('getBrowserTabTitle')
+        ? getBrowserTabTitle()
+        : 'Hope Baptist Treasurer';
+    $temperLoginIconUrl = function_exists('getChurchIconPublicUrl')
+        ? getChurchIconPublicUrl()
+        : null;
+    ?>
+    <title>Login - <?= htmlspecialchars($temperLoginTitle, ENT_QUOTES, 'UTF-8') ?></title>
+    <?php if (is_string($temperLoginIconUrl) && $temperLoginIconUrl !== ''): ?>
+    <link rel="icon" id="temperFavicon" href="<?= htmlspecialchars($temperLoginIconUrl, ENT_QUOTES, 'UTF-8') ?>">
+    <?php endif; ?>
     <script>
     (function () {
         try {

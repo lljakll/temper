@@ -29,7 +29,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     if ($canConfig) {
         $activeCards[] = [
             'title' => 'Configuration',
-            'description' => 'Developer Mode and other application settings.',
+            'description' => 'Church name and icon, Developer Mode, and other application settings.',
             'icon' => 'bi-sliders',
             'page' => 'admin-config',
         ];

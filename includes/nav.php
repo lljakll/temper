@@ -37,6 +37,14 @@ $canUsers = navCan($navPerms, 'users.manage');
 $canConfig = $user && userIsAdministrator($navDb, (int)$user['id']);
 $showAdminSection = $canAdmin || $canBackup || $canDatabase || $canLookups || $canUsers || $canConfig;
 
+$temperNavBrandName = function_exists('getChurchDisplayName')
+    ? getChurchDisplayName()
+    : (defined('APP_NAME') ? APP_NAME : 'Hope Baptist Treasurer');
+$temperNavBrandIconUrl = function_exists('getChurchIconPublicUrl')
+    ? getChurchIconPublicUrl()
+    : null;
+$temperNavBrandHasIcon = is_string($temperNavBrandIconUrl) && $temperNavBrandIconUrl !== '';
+
 // Default SPA landing page by highest-priority available permission
 $temperHomePage = 'profile';
 if ($canDashboard) {
@@ -337,8 +345,17 @@ function temper_render_nav_links(
     </button>
     <?php endif; ?>
     <div class="d-flex align-items-center flex-grow-1 min-w-0 text-body">
-        <i class="bi bi-bank me-2"></i>
-        <strong class="text-truncate"><?= $mustChangePassword ? 'Set your password' : 'Hope Baptist Treasurer' ?></strong>
+        <?php if ($mustChangePassword): ?>
+        <i class="bi bi-bank me-2" aria-hidden="true"></i>
+        <strong class="text-truncate" data-temper-brand-name data-temper-brand-locked="1">Set your password</strong>
+        <?php else: ?>
+        <img <?= $temperNavBrandHasIcon ? 'src="' . htmlspecialchars($temperNavBrandIconUrl, ENT_QUOTES, 'UTF-8') . '"' : '' ?>
+             alt="" class="sidebar-brand-icon me-2<?= $temperNavBrandHasIcon ? '' : ' d-none' ?>"
+             data-temper-brand-icon="img" width="20" height="20">
+        <i class="bi bi-bank sidebar-brand-icon me-2<?= $temperNavBrandHasIcon ? ' d-none' : '' ?>"
+           aria-hidden="true" data-temper-brand-icon="fallback"></i>
+        <strong class="text-truncate" data-temper-brand-name><?= htmlspecialchars($temperNavBrandName, ENT_QUOTES, 'UTF-8') ?></strong>
+        <?php endif; ?>
     </div>
     <div class="mobile-topbar-end d-flex align-items-center gap-1" id="mobileTopbarEnd"></div>
 </div>
@@ -359,8 +376,12 @@ function temper_render_nav_links(
             <div class="offcanvas-body d-flex flex-column p-3 rounded-3">
                 <!-- Brand (desktop) + collapse toggle -->
                 <div class="sidebar-brand d-none d-md-flex align-items-center pb-2 mb-3 border-bottom position-relative">
-                    <i class="bi bi-bank me-2 fs-5" aria-hidden="true"></i>
-                    <strong class="text-body sidebar-brand-text text-truncate">Hope Baptist Treasurer</strong>
+                    <img <?= $temperNavBrandHasIcon ? 'src="' . htmlspecialchars($temperNavBrandIconUrl, ENT_QUOTES, 'UTF-8') . '"' : '' ?>
+                         alt="" class="sidebar-brand-icon me-2<?= $temperNavBrandHasIcon ? '' : ' d-none' ?>"
+                         data-temper-brand-icon="img" width="22" height="22">
+                    <i class="bi bi-bank sidebar-brand-icon me-2 fs-5<?= $temperNavBrandHasIcon ? ' d-none' : '' ?>"
+                       aria-hidden="true" data-temper-brand-icon="fallback"></i>
+                    <strong class="text-body sidebar-brand-text text-truncate" data-temper-brand-name><?= htmlspecialchars($temperNavBrandName, ENT_QUOTES, 'UTF-8') ?></strong>
                     <button type="button" class="btn sidebar-toggle ms-auto" id="sidebarToggle"
                             title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true"
                             aria-controls="appSidebar">

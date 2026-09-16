@@ -19,6 +19,8 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.960](#v0960)
+- [v0.959](#v0959)
 - [v0.958](#v0958)
 - [v0.957](#v0957)
 - [v0.956](#v0956)
@@ -165,6 +167,56 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.960
+
+**Dashboard header uses church name and icon** — 2026-09-15
+
+> No schema update required for this release (dashboard page header only).  
+> **Patch file (history row):** `updates/20260915_0960_dashboard_church_header.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.960
+
+- Dashboard has a page header consistent with Budget and Funds: church / organization display name as the title, with the configured icon (or the default bank icon) beside it.
+- Subtitle is **Dashboard** plus the existing period hint (current budget name and date range, or calendar year).
+- Name and icon are read from the existing System Configuration settings (same helpers as the sidebar and browser tab). Configuration UI is unchanged.
+- Mobile top bar is unchanged; the new header lives in the page content and wraps/truncates so it stays readable.
+- Dashboard cards and metrics are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.960**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.959 | `updates/20260915_0960_dashboard_church_header.sql` (records 0.960; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.959, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.959
+
+**System Configuration: church name and icon for tab and sidebar** — 2026-09-15
+
+> No schema update required for this release (system.json settings only).  
+> **Patch file (history row):** `updates/20260915_0959_church_brand_settings.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.959
+
+- System Configuration has **Organization** settings for church / organization display name and an optional icon (upload a new image or select one already in storage).
+- Name and icon persist in `storage/config/system.json` with the rest of system config. Existing installs keep **Hope Baptist Treasurer** (and the default bank icon / no custom favicon) until an administrator changes them.
+- Browser tab title, favicon, sidebar brand, and mobile header all read the same settings. Tab text uses the church name, and appends “ — Temper” when the name does not already mention Temper or Treasurer.
+- Uploaded and selected icons are stored under `storage/brand/` and included in backup packages. Only Administrator (the same role that can edit System Configuration) can change these settings.
+- Accounting, ledger, and other modules are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.959**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.958 | `updates/20260915_0959_church_brand_settings.sql` (records 0.959; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.958, then this process-only patch after `php setup_db.php` |
 
 ---
 

@@ -106,6 +106,23 @@ function temperSystemConfigCatalog(): array {
             'group' => 'backup',
             'options' => ['sql', 'csv', 'both'],
         ],
+        'church_name' => [
+            'default' => 'Hope Baptist Treasurer',
+            'type' => 'string',
+            'label' => 'Church / organization name',
+            'description' => 'Display name used in the browser tab and the sidebar / mobile header. '
+                . 'Default matches the current title (Hope Baptist Treasurer) until changed.',
+            'group' => 'organization',
+            'max_length' => 80,
+        ],
+        'church_icon' => [
+            'default' => '',
+            'type' => 'string',
+            'label' => 'Church / organization icon',
+            'description' => 'Optional graphic for the browser tab favicon and the sidebar / mobile header. '
+                . 'Upload a new image or select one already in storage. Leave empty to keep the default icon.',
+            'group' => 'organization',
+        ],
     ];
 }
 
@@ -140,6 +157,17 @@ function temperCoerceSystemConfigValue(string $key, mixed $value): mixed {
         'float' => (float)$value,
         default => is_string($value) ? $value : (string)$value,
     };
+
+    if ($type === 'string' && is_array($meta)) {
+        $coerced = trim((string)$coerced);
+        $maxLen = $meta['max_length'] ?? null;
+        if ($maxLen !== null && (int)$maxLen > 0 && mb_strlen($coerced) > (int)$maxLen) {
+            $coerced = mb_substr($coerced, 0, (int)$maxLen);
+        }
+        if ($key === 'church_name' && $coerced === '') {
+            $coerced = (string)($meta['default'] ?? getDefaultChurchDisplayName());
+        }
+    }
 
     if (($type === 'int' || $type === 'float') && is_array($meta)) {
         $min = $meta['min'] ?? null;
@@ -359,6 +387,326 @@ function getAutoBackupConfigFormat(): string {
         return 'sql';
     }
     return $format;
+}
+
+/**
+ * Fallback church / organization name when system config has no override.
+ */
+function getDefaultChurchDisplayName(): string {
+    if (defined('APP_NAME') && is_string(APP_NAME) && trim(APP_NAME) !== '') {
+        return APP_NAME;
+    }
+    return 'Hope Baptist Treasurer';
+}
+
+/**
+ * Configured church / organization display name (sidebar, header, tab).
+ */
+function getChurchDisplayName(): string {
+    $name = trim((string)getSystemConfig('church_name', ''));
+    if ($name === '') {
+        return getDefaultChurchDisplayName();
+    }
+    return $name;
+}
+
+/**
+ * Browser tab title from the same church name setting.
+ * Appends a short app label unless the name already mentions Temper or Treasurer.
+ */
+function getBrowserTabTitle(): string {
+    $name = getChurchDisplayName();
+    if ($name === '') {
+        return getDefaultChurchDisplayName();
+    }
+    if (preg_match('/\b(temper|treasurer)\b/i', $name) === 1) {
+        return $name;
+    }
+    return $name . ' — Temper';
+}
+
+/**
+ * Allowed brand-icon extensions mapped to MIME types.
+ *
+ * @return array<string, string>
+ */
+function temperBrandIconAllowedTypes(): array {
+    return [
+        'png' => 'image/png',
+        'jpg' => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'gif' => 'image/gif',
+        'webp' => 'image/webp',
+        'ico' => 'image/x-icon',
+        'svg' => 'image/svg+xml',
+    ];
+}
+
+function temperBrandIconMaxBytes(): int {
+    return 2 * 1024 * 1024;
+}
+
+/**
+ * Storage-relative path of the configured church icon, or empty when unset.
+ */
+function getChurchIconRelativePath(): string {
+    $rel = trim(str_replace('\\', '/', (string)getSystemConfig('church_icon', '')));
+    $rel = ltrim($rel, '/');
+    if ($rel === '' || str_contains($rel, '..')) {
+        return '';
+    }
+    return $rel;
+}
+
+/**
+ * Absolute filesystem path of the configured church icon, or null.
+ */
+function getChurchIconAbsolutePath(): ?string {
+    $rel = getChurchIconRelativePath();
+    if ($rel === '') {
+        return null;
+    }
+    return temperResolveReadableStorageImage($rel);
+}
+
+/**
+ * Public URL for the configured church icon (favicon / header), or null when unset.
+ */
+function getChurchIconPublicUrl(): ?string {
+    $path = getChurchIconAbsolutePath();
+    if ($path === null) {
+        return null;
+    }
+    $v = @filemtime($path) ?: time();
+    return 'brand_icon.php?v=' . (int)$v;
+}
+
+/**
+ * Client payload so header, tab, and favicon stay on one setting after a live save.
+ *
+ * @return array{name:string,title:string,icon:string,iconUrl:?string}
+ */
+function getBrandClientPayload(): array {
+    $url = getChurchIconPublicUrl();
+    return [
+        'name' => getChurchDisplayName(),
+        'title' => getBrowserTabTitle(),
+        'icon' => getChurchIconRelativePath(),
+        'iconUrl' => $url,
+    ];
+}
+
+/**
+ * Resolve a storage-relative path to a readable image file inside the storage root.
+ */
+function temperResolveReadableStorageImage(string $relative): ?string {
+    $relative = str_replace('\\', '/', $relative);
+    $relative = ltrim($relative, '/');
+    if ($relative === '' || str_contains($relative, '..')) {
+        return null;
+    }
+    $ext = strtolower((string)pathinfo($relative, PATHINFO_EXTENSION));
+    $allowed = temperBrandIconAllowedTypes();
+    if ($ext === '' || !isset($allowed[$ext])) {
+        return null;
+    }
+
+    $root = realpath(getStoragePath());
+    if ($root === false) {
+        return null;
+    }
+    $rootNorm = rtrim(str_replace('\\', '/', $root), '/');
+    $candidate = $rootNorm . '/' . $relative;
+    $real = realpath($candidate);
+    if ($real === false || !is_file($real) || !is_readable($real)) {
+        return null;
+    }
+    $realNorm = str_replace('\\', '/', $real);
+    if ($realNorm !== $rootNorm && !str_starts_with($realNorm, $rootNorm . '/')) {
+        return null;
+    }
+    return $real;
+}
+
+function temperBrandIconMimeForPath(string $path): string {
+    $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+    $allowed = temperBrandIconAllowedTypes();
+    return $allowed[$ext] ?? 'application/octet-stream';
+}
+
+/**
+ * Reject SVG that embeds script or event handlers (served as favicon / img).
+ */
+function temperBrandSvgLooksSafe(string $contents): bool {
+    if ($contents === '') {
+        return false;
+    }
+    if (preg_match('/<script\b/i', $contents) === 1) {
+        return false;
+    }
+    if (preg_match('/\bon[a-z]+\s*=/i', $contents) === 1) {
+        return false;
+    }
+    if (preg_match('/javascript\s*:/i', $contents) === 1) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Image files already in storage that an administrator may pick as the church icon.
+ * Skips backups, logs, and exports.
+ *
+ * @return list<array{relative:string,name:string,size:int}>
+ */
+function listStorageImagesForBrandPicker(): array {
+    $root = realpath(getStoragePath());
+    if ($root === false || !is_dir($root)) {
+        return [];
+    }
+    $rootNorm = rtrim(str_replace('\\', '/', $root), '/');
+    $skipTop = ['backups' => true, 'logs' => true, 'exports' => true];
+    $allowed = temperBrandIconAllowedTypes();
+    $out = [];
+
+    try {
+        $dirIter = new RecursiveDirectoryIterator(
+            $root,
+            FilesystemIterator::SKIP_DOTS
+        );
+        $iter = new RecursiveIteratorIterator($dirIter, RecursiveIteratorIterator::LEAVES_ONLY);
+        $iter->setMaxDepth(8);
+        foreach ($iter as $file) {
+            if (!$file instanceof SplFileInfo || !$file->isFile()) {
+                continue;
+            }
+            $full = str_replace('\\', '/', $file->getPathname());
+            if (!str_starts_with($full, $rootNorm . '/')) {
+                continue;
+            }
+            $rel = ltrim(substr($full, strlen($rootNorm)), '/');
+            $top = explode('/', $rel)[0] ?? '';
+            if ($top !== '' && isset($skipTop[$top])) {
+                continue;
+            }
+            $ext = strtolower($file->getExtension());
+            if (!isset($allowed[$ext])) {
+                continue;
+            }
+            $out[] = [
+                'relative' => $rel,
+                'name' => $file->getFilename(),
+                'size' => (int)$file->getSize(),
+            ];
+        }
+    } catch (Throwable $e) {
+        error_log('[temper-brand] Failed to list storage images: ' . $e->getMessage());
+        return [];
+    }
+
+    usort($out, static function (array $a, array $b): int {
+        return strcasecmp($a['relative'], $b['relative']);
+    });
+    return $out;
+}
+
+/**
+ * Copy an image into storage/brand/ and return the new relative path.
+ *
+ * @return array{success:bool,error:?string,relative?:string,absolute?:string}
+ */
+function temperStoreChurchIconFromPath(string $sourceAbs, string $originalName): array {
+    $dirInfo = ensureStorageSubdir('brand');
+    if (!empty($dirInfo['error'])) {
+        return ['success' => false, 'error' => 'Brand storage is not writable: ' . $dirInfo['error']];
+    }
+
+    $ext = strtolower((string)pathinfo($originalName, PATHINFO_EXTENSION));
+    $allowed = temperBrandIconAllowedTypes();
+    if ($ext === '' || !isset($allowed[$ext])) {
+        $ext = strtolower((string)pathinfo($sourceAbs, PATHINFO_EXTENSION));
+    }
+    if ($ext === '' || !isset($allowed[$ext])) {
+        return ['success' => false, 'error' => 'Icon must be PNG, JPG, GIF, WEBP, ICO, or SVG.'];
+    }
+
+    if (!is_file($sourceAbs) || !is_readable($sourceAbs)) {
+        return ['success' => false, 'error' => 'Selected image is missing or unreadable.'];
+    }
+    $size = (int)filesize($sourceAbs);
+    if ($size <= 0) {
+        return ['success' => false, 'error' => 'Selected image is empty.'];
+    }
+    if ($size > temperBrandIconMaxBytes()) {
+        return ['success' => false, 'error' => 'Icon must be 2 MB or smaller.'];
+    }
+    if ($ext === 'svg') {
+        $raw = (string)@file_get_contents($sourceAbs);
+        if (!temperBrandSvgLooksSafe($raw)) {
+            return ['success' => false, 'error' => 'SVG icon contains disallowed script content.'];
+        }
+    }
+
+    $safeExt = preg_replace('/[^a-z0-9]/', '', $ext) ?: 'png';
+    $stored = 'icon_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $safeExt;
+    $dest = rtrim((string)$dirInfo['path'], '/\\') . '/' . $stored;
+
+    $copied = false;
+    if (is_uploaded_file($sourceAbs)) {
+        $copied = @move_uploaded_file($sourceAbs, $dest);
+    } else {
+        $copied = @copy($sourceAbs, $dest);
+    }
+    if (!$copied || !is_file($dest)) {
+        return ['success' => false, 'error' => 'Failed to save church icon.'];
+    }
+
+    return [
+        'success' => true,
+        'error' => null,
+        'relative' => 'brand/' . $stored,
+        'absolute' => $dest,
+    ];
+}
+
+/**
+ * Persist a church icon: copy into storage/brand/ unless it is already there.
+ *
+ * @return array{success:bool,error:?string,relative?:string}
+ */
+function temperNormalizeChurchIconSetting(string $relativeOrEmpty): array {
+    $relativeOrEmpty = trim(str_replace('\\', '/', $relativeOrEmpty));
+    $relativeOrEmpty = ltrim($relativeOrEmpty, '/');
+    if ($relativeOrEmpty === '') {
+        return ['success' => true, 'error' => null, 'relative' => ''];
+    }
+
+    $abs = temperResolveReadableStorageImage($relativeOrEmpty);
+    if ($abs === null) {
+        return ['success' => false, 'error' => 'Selected image was not found in storage.'];
+    }
+
+    $relNorm = str_replace('\\', '/', $relativeOrEmpty);
+    if (str_starts_with($relNorm, 'brand/')) {
+        return ['success' => true, 'error' => null, 'relative' => $relNorm];
+    }
+
+    $stored = temperStoreChurchIconFromPath($abs, basename($relNorm));
+    if (empty($stored['success'])) {
+        return ['success' => false, 'error' => $stored['error'] ?? 'Failed to copy image into brand storage.'];
+    }
+    return [
+        'success' => true,
+        'error' => null,
+        'relative' => (string)($stored['relative'] ?? ''),
+    ];
+}
+
+/**
+ * Admin preview URL for a storage-relative image (session-gated).
+ */
+function temperBrandPickerPreviewUrl(string $relative): string {
+    return 'pages/admin-config.php?preview_image=1&path=' . rawurlencode($relative);
 }
 
 /**
