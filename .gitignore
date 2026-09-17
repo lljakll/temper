@@ -18,7 +18,7 @@ storage/logs/*
 !storage/.gitkeep
 !storage/config/
 !storage/config/**
-
+storage/config/system.json
 
 # SQL dumps sitting anywhere
 *.sql
