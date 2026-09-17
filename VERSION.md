@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.961](#v0961)
 - [v0.960](#v0960)
 - [v0.959](#v0959)
 - [v0.958](#v0958)
@@ -167,6 +168,31 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.961
+
+**Budget export to CSV and PDF** — 2026-09-16
+
+> No schema update required for this release (Reports + Budget download only).  
+> **Patch file (history row):** `updates/20260916_0961_budget_csv_pdf_export.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.961
+
+- Reports has a **Budget Export** card: choose a budget and format (CSV or PDF) and download. Run Report previews the same line list.
+- The Budget page has **Export** on the desktop action bar and in the mobile actions flyout. It exports the budget currently being viewed, in the same formats.
+- CSV includes church name (when configured), budget name, period, status, and total in header rows, then one row per line: CoA, account name, budgeted amount, Remaining.
+- PDF is a simple meeting document: church name, budget name, fiscal period, status, total, then the line list. Not a designed annual report.
+- Export is limited to roles that can already view budgets (`page.budget`). Budget edit/activate behavior is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.961**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.960 | `updates/20260916_0961_budget_csv_pdf_export.sql` (records 0.961; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.960, then this process-only patch after `php setup_db.php` |
 
 ---
 

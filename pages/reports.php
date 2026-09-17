@@ -3,7 +3,9 @@
 
 require_once __DIR__ . '/../includes/page_bootstrap.php';
 require_once __DIR__ . '/../includes/budget_utils.php';
+require_once __DIR__ . '/../includes/budget_export.php';
 require_once __DIR__ . '/../includes/fund_utils.php';
+require_once __DIR__ . '/../includes/permissions.php';
 
     budgetEnsureSimplifiedSchema($db);
 
@@ -421,6 +423,30 @@ require_once __DIR__ . '/../includes/fund_utils.php';
                     'period_start' => $periodStart,
                     'rows'         => $rows,
                 ];
+
+            } elseif ($report === 'budget-export') {
+                if (!currentUserHasPermission($db, 'page.budget')) {
+                    echo json_encode(['error' => 'You do not have permission to view this budget.']);
+                    exit;
+                }
+                $budgetId = (int)($_GET['budget_id'] ?? 0);
+                $payload = budgetExportBuildPayload($db, $budgetId);
+                if (!$payload) {
+                    echo json_encode(['error' => $budgetId > 0 ? 'Budget not found.' : 'Select a budget to export.']);
+                    exit;
+                }
+                $response = [
+                    'generated' => date('Y-m-d H:i:s'),
+                    'id' => $payload['id'],
+                    'name' => $payload['name'],
+                    'fiscal_year' => $payload['fiscal_year'],
+                    'period_label' => $payload['period_label'],
+                    'status' => $payload['status'],
+                    'church_name' => $payload['church_name'],
+                    'total_budgeted' => $payload['total_budgeted'],
+                    'total_remaining' => $payload['total_remaining'],
+                    'lines' => $payload['lines'],
+                ];
             }
         } catch (Exception $e) {
             $response = ['error' => $e->getMessage()];
@@ -456,6 +482,9 @@ require_once __DIR__ . '/../includes/fund_utils.php';
         budgetFetchActiveList($db)
     );
 
+    $reportsActor = getCurrentUser();
+    $canViewBudget = $reportsActor && userHasPermission($db, (int)$reportsActor['id'], 'page.budget');
+
     $filterData = json_encode([
         'today'      => $today,
         'yearStart'  => $yearStart,
@@ -467,6 +496,7 @@ require_once __DIR__ . '/../includes/fund_utils.php';
         'currentFiscalYear' => $currentFiscalYear,
         'activeBudgets' => $activeBudgetMeta,
         'budgetsByYear' => budgetListGroupedByYear($db),
+        'canViewBudget' => (bool)$canViewBudget,
     ]);
 ?>
 
@@ -482,7 +512,7 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             <input type="search" id="reportSearch" class="form-control" placeholder="Search reports..." oninput="filterReports()">
         </div>
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearReportSearch()">Clear</button>
-        <span class="small text-muted ms-md-auto" id="reportCount">4 reports available</span>
+        <span class="small text-muted ms-md-auto" id="reportCount"></span>
     </div>
 
     <div class="row g-2 g-md-3" id="reportsGrid">
@@ -575,6 +605,30 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             </div>
         </div>
 
+        <?php if ($canViewBudget): ?>
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-start">
+                        <i class="bi bi-file-earmark-arrow-down fs-3 text-primary me-3 mt-1"></i>
+                        <div class="flex-grow-1">
+                            <h6 class="card-title mb-1">Budget Export</h6>
+                            <p class="card-text small text-muted mb-0">Download a budget as CSV or PDF for meetings and spreadsheets. One row per budget line, with remaining when available.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-transparent border-0 pt-0 pb-3 px-3">
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-primary btn-sm flex-grow-1" onclick="viewReport('budget-export')">View</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportReport('budget-export')" title="Export">
+                            <i class="bi bi-download"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
     </div>
 
     <div id="reportViewer" class="mt-4 d-none">
@@ -608,14 +662,16 @@ require_once __DIR__ . '/../includes/fund_utils.php';
         'fund-balances': 'Fund Balances Report',
         'transaction-listing': 'Transaction Listing Report',
         'budget-vs-actual': 'Budget vs Actual Report',
-        'restricted-funds': 'Restricted Funds Status Report'
+        'restricted-funds': 'Restricted Funds Status Report',
+        'budget-export': 'Budget Export'
     };
 
     const reportIcons = {
         'fund-balances': '<i class="bi bi-wallet2 text-primary me-2"></i>',
         'transaction-listing': '<i class="bi bi-journal-text text-primary me-2"></i>',
         'budget-vs-actual': '<i class="bi bi-graph-up text-primary me-2"></i>',
-        'restricted-funds': '<i class="bi bi-lock text-success me-2"></i>'
+        'restricted-funds': '<i class="bi bi-lock text-success me-2"></i>',
+        'budget-export': '<i class="bi bi-file-earmark-arrow-down text-primary me-2"></i>'
     };
 
     function fmtMoney(n) {
@@ -767,6 +823,43 @@ require_once __DIR__ . '/../includes/fund_utils.php';
                     </div>
                 </div>`;
         }
+        if (key === 'budget-export') {
+            const years = Object.keys(FD.budgetsByYear || {}).sort((a, b) => Number(b) - Number(a));
+            const currentActive = (FD.activeBudgets || []).find(b => Number(b.fiscal_year) === Number(FD.currentFiscalYear));
+            let defaultId = currentActive
+                ? String(currentActive.id)
+                : ((FD.activeBudgets || []).length ? String(FD.activeBudgets[0].id) : '');
+            if (!defaultId && years.length) {
+                const firstList = FD.budgetsByYear[years[0]] || [];
+                if (firstList.length) defaultId = String(firstList[0].id);
+            }
+            let opts = '';
+            years.forEach(y => {
+                const list = FD.budgetsByYear[y] || [];
+                opts += '<optgroup label="FY ' + y + '">';
+                list.forEach(b => {
+                    const tag = b.status === 'active' ? ' (active)' : ' (' + b.status + ')';
+                    const sel = String(b.id) === defaultId ? ' selected' : '';
+                    opts += '<option value="' + b.id + '"' + sel + '>' + b.name + tag + '</option>';
+                });
+                opts += '</optgroup>';
+            });
+            if (!opts) opts = '<option value="">No budgets</option>';
+            return `
+                <div class="row g-2 align-items-end">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small mb-1" for="be-budget">Budget</label>
+                        <select id="be-budget" class="form-select form-select-sm">${opts}</select>
+                    </div>
+                    <div class="col-12 col-md-3">
+                        <label class="form-label small mb-1" for="be-format">Format</label>
+                        <select id="be-format" class="form-select form-select-sm">
+                            <option value="csv">CSV</option>
+                            <option value="pdf">PDF</option>
+                        </select>
+                    </div>
+                </div>`;
+        }
         if (key === 'restricted-funds') {
             return `
                 <div class="row g-2 align-items-end">
@@ -821,6 +914,9 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             p.period_start = document.getElementById('rf-period-start')?.value || FD.yearStart;
             p.fund_id = document.getElementById('rf-fund')?.value || '';
             p.active_only = document.getElementById('rf-active-only')?.checked ? '1' : '0';
+        } else if (key === 'budget-export') {
+            p.budget_id = document.getElementById('be-budget')?.value || '';
+            p.format = document.getElementById('be-format')?.value || 'csv';
         }
         return p;
     }
@@ -913,6 +1009,36 @@ require_once __DIR__ . '/../includes/fund_utils.php';
                 <div class="small mt-2"><strong>Net variance:</strong> <span class="${netCls}">${netSign}${fmtMoney(data.totals.variance)}</span></div>`;
         }
 
+        if (key === 'budget-export') {
+            let rows = '';
+            (data.lines || []).forEach(r => {
+                const rem = r.remaining === null || r.remaining === undefined || r.remaining === ''
+                    ? '—'
+                    : fmtMoney(r.remaining);
+                rows += '<tr><td class="font-monospace">' + (r.coa_number || '—') + '</td><td>' + (r.account_name || '—')
+                    + '</td><td class="text-end">' + fmtMoney(r.budgeted_amount)
+                    + '</td><td class="text-end">' + rem + '</td></tr>';
+            });
+            if (!(data.lines || []).length) {
+                rows = '<tr><td colspan="4" class="text-center text-muted py-3">No budget lines.</td></tr>';
+            }
+            const totRem = data.total_remaining === null || data.total_remaining === undefined
+                ? '—'
+                : fmtMoney(data.total_remaining);
+            const church = data.church_name ? data.church_name + ' &bull; ' : '';
+            return `
+                <div class="small text-muted mb-2">${church}${data.name} &bull; ${data.period_label} &bull; ${data.status || '—'} &bull; Total ${fmtMoney(data.total_budgeted)}</div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle mb-0 temper-stack-on-mobile">
+                        <thead class="table-dark"><tr><th>CoA</th><th>Account Name</th><th class="text-end">Budgeted</th><th class="text-end">Remaining</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                        <tfoot class="table-light">
+                            <tr class="fw-semibold"><td></td><td>Total</td><td class="text-end">${fmtMoney(data.total_budgeted)}</td><td class="text-end">${totRem}</td></tr>
+                        </tfoot>
+                    </table>
+                </div>`;
+        }
+
         if (key === 'restricted-funds') {
             let rows = '';
             data.rows.forEach(r => {
@@ -942,9 +1068,17 @@ require_once __DIR__ . '/../includes/fund_utils.php';
 
         header.innerHTML = (reportIcons[key] || '') + (reportTitles[key] || key);
         filters.innerHTML = getFiltersHTML(key);
-        results.innerHTML = '<div class="text-muted small fst-italic">Configure filters above and click "Run Report".</div>';
+        results.innerHTML = key === 'budget-export'
+            ? '<div class="text-muted small fst-italic">Choose a budget and format, then click Download. Run Report previews the lines.</div>'
+            : '<div class="text-muted small fst-italic">Configure filters above and click "Run Report".</div>';
         viewer.classList.remove('d-none');
         viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const exportBtn = viewer.querySelector('button[onclick="exportCurrentReport()"]');
+        if (exportBtn) {
+            exportBtn.innerHTML = key === 'budget-export'
+                ? '<i class="bi bi-download"></i> Download'
+                : '<i class="bi bi-download"></i> Export';
+        }
 
         const baPeriod = document.getElementById('ba-period');
         if (baPeriod) {
@@ -1015,13 +1149,58 @@ require_once __DIR__ . '/../includes/fund_utils.php';
             });
     }
 
+    function downloadBudgetExportFile(budgetId, format) {
+        const qs = new URLSearchParams({ budget_id: String(budgetId), format: format === 'pdf' ? 'pdf' : 'csv' });
+        return fetch('pages/budget_export.php?' + qs.toString())
+            .then(async r => {
+                const ct = (r.headers.get('Content-Type') || '').toLowerCase();
+                if (!r.ok || ct.includes('application/json') || ct.includes('text/html') || ct.includes('text/plain')) {
+                    let msg = 'Export failed.';
+                    if (ct.includes('application/json')) {
+                        const data = await r.json();
+                        msg = data.error || msg;
+                    } else {
+                        const t = await r.text();
+                        const tmp = document.createElement('div');
+                        tmp.innerHTML = t;
+                        msg = (tmp.textContent || msg).trim() || msg;
+                    }
+                    throw new Error(msg);
+                }
+                const disp = r.headers.get('Content-Disposition') || '';
+                let filename = 'budget.' + (format === 'pdf' ? 'pdf' : 'csv');
+                const star = /filename\*=UTF-8''([^;]+)/i.exec(disp);
+                const plain = /filename="?([^";]+)"?/i.exec(disp);
+                if (star) filename = decodeURIComponent(star[1]);
+                else if (plain) filename = plain[1];
+                const blob = await r.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            });
+    }
+
     function exportCurrentReport() {
         if (!currentReportKey) { showToast('Please open a report first.', 'warning'); return; }
+        if (currentReportKey === 'budget-export') {
+            const budgetId = document.getElementById('be-budget')?.value || '';
+            const format = document.getElementById('be-format')?.value || 'csv';
+            if (!budgetId) { showToast('Select a budget to export.', 'warning'); return; }
+            downloadBudgetExportFile(budgetId, format)
+                .catch(err => showToast(err.message || 'Export failed.', 'danger'));
+            return;
+        }
         runCurrentReport();
     }
 
     function exportReport(key) {
         viewReport(key);
+        if (key === 'budget-export') return;
         setTimeout(runCurrentReport, 300);
     }
 

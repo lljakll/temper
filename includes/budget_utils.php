@@ -478,6 +478,82 @@ function budgetSortLinesByCoa(array $lines): array
     return $lines;
 }
 
+/**
+ * Budget header plus CoA-sorted lines with remaining attached.
+ *
+ * @return array<string, mixed>|null
+ */
+function budgetFetchDetailWithLines(mysqli $db, int $id): ?array
+{
+    budgetEnsureSimplifiedSchema($db);
+    if ($id <= 0) {
+        return null;
+    }
+    $stmt = $db->prepare(
+        'SELECT id, fiscal_year, name, start_date, end_date, approved_date, reference_number, status, description, total_budgeted
+         FROM budgets WHERE id = ?'
+    );
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $budget = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$budget) {
+        return null;
+    }
+
+    $lst = $db->prepare(
+        "SELECT bl.id, bl.account_id, bl.budgeted_amount, bl.notes,
+                a.coa_number, a.natural_category_id, a.functional_category_id,
+                COALESCE(nc.name, '') AS natural_name,
+                COALESCE(fc.name, '') AS functional_name,
+                COALESCE(a.name, '') AS account_name
+         FROM budget_lines bl
+         LEFT JOIN accounts a ON a.id = bl.account_id
+         LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
+         LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
+         WHERE bl.budget_id = ?
+         ORDER BY (a.coa_number IS NULL OR TRIM(a.coa_number) = '') ASC,
+                  a.coa_number ASC,
+                  a.name ASC,
+                  bl.id ASC"
+    );
+    if (!$lst) {
+        $budget['lines'] = [];
+        return $budget;
+    }
+    $lst->bind_param('i', $id);
+    $lst->execute();
+    $lines = [];
+    $res = $lst->get_result();
+    while ($l = $res->fetch_assoc()) {
+        $coa = trim((string)($l['coa_number'] ?? ''));
+        $lines[] = [
+            'id' => (int)$l['id'],
+            'account_id' => $l['account_id'] ? (int)$l['account_id'] : '',
+            'account_name' => $l['account_name'] ?? '',
+            'coa_number' => $coa,
+            'natural_category_id' => $l['natural_category_id'] ? (int)$l['natural_category_id'] : '',
+            'functional_category_id' => $l['functional_category_id'] ? (int)$l['functional_category_id'] : '',
+            'natural_name' => $l['natural_name'] !== '' ? $l['natural_name'] : '—',
+            'functional_name' => $l['functional_name'] !== '' ? $l['functional_name'] : '—',
+            'budgeted_amount' => $l['budgeted_amount'],
+            'notes' => $l['notes'] ?? '',
+        ];
+    }
+    $lst->close();
+    $lines = budgetSortLinesByCoa($lines);
+    $budget['lines'] = budgetAttachLineRemainings(
+        $db,
+        $lines,
+        (string)($budget['start_date'] ?? ''),
+        (string)($budget['end_date'] ?? '')
+    );
+    return $budget;
+}
+
 function budgetValidIsoDate(string $date): bool {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         return false;
