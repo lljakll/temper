@@ -103,3 +103,29 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#39 - 2026-09-16 - Budget / Reports - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Export a budget to CSV and PDF.
+
+Requirements:
+1. Add Budget export to the Reports screen: choose budget, choose format (CSV or PDF), download.
+2. Also add Export on the Budget page (desktop control and mobile flyout) that exports the budget currently being viewed, same formats.
+3. CSV includes at least CoA, account name, budgeted amount, and Remaining if that value is already calculated. One row per budget line. Include budget name and period in a header row or obvious first rows.
+4. PDF is a simple readable document: church name if configured, budget name, fiscal period, status, total, then the line list. Meeting-usable, not a designed annual report.
+5. Restrict to roles that can already view that budget.
+6. Do not build a multi-report board packet or change budget edit/activate logic.
+
+First explore Reports, Budget view, and any existing export/PDF helpers, then add CSV and PDF budget export in both places.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

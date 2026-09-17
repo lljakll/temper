@@ -14,56 +14,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         $id = (int)$_GET['get_budget'];
         header('Content-Type: application/json');
         if ($id <= 0) { echo json_encode(['error' => 'Invalid ID']); exit; }
-        $stmt = $db->prepare("SELECT id, fiscal_year, name, start_date, end_date, approved_date, reference_number, status, description FROM budgets WHERE id = ?");
-        $stmt->bind_param('i', $id);
-        $stmt->execute();
-        $budget = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $budget = budgetFetchDetailWithLines($db, $id);
         if (!$budget) { echo json_encode(['error' => 'Budget not found']); exit; }
-        // Categories and CoA come from the linked account lookup, not budget_lines columns
-        $lst = $db->prepare(
-            "SELECT bl.id, bl.account_id, bl.budgeted_amount, bl.notes,
-                    a.coa_number, a.natural_category_id, a.functional_category_id,
-                    COALESCE(nc.name, '') AS natural_name,
-                    COALESCE(fc.name, '') AS functional_name,
-                    COALESCE(a.name, '') AS account_name
-             FROM budget_lines bl
-             LEFT JOIN accounts a ON a.id = bl.account_id
-             LEFT JOIN natural_categories nc ON nc.id = a.natural_category_id
-             LEFT JOIN functional_categories fc ON fc.id = a.functional_category_id
-             WHERE bl.budget_id = ?
-             ORDER BY (a.coa_number IS NULL OR TRIM(a.coa_number) = '') ASC,
-                      a.coa_number ASC,
-                      a.name ASC,
-                      bl.id ASC"
-        );
-        $lst->bind_param('i', $id);
-        $lst->execute();
-        $lines = [];
-        $res = $lst->get_result();
-        while ($l = $res->fetch_assoc()) {
-            $coa = trim((string)($l['coa_number'] ?? ''));
-            $lines[] = [
-                'id' => (int)$l['id'],
-                'account_id' => $l['account_id'] ? (int)$l['account_id'] : '',
-                'account_name' => $l['account_name'] ?? '',
-                'coa_number' => $coa,
-                'natural_category_id' => $l['natural_category_id'] ? (int)$l['natural_category_id'] : '',
-                'functional_category_id' => $l['functional_category_id'] ? (int)$l['functional_category_id'] : '',
-                'natural_name' => $l['natural_name'] !== '' ? $l['natural_name'] : '—',
-                'functional_name' => $l['functional_name'] !== '' ? $l['functional_name'] : '—',
-                'budgeted_amount' => $l['budgeted_amount'],
-                'notes' => $l['notes'] ?? ''
-            ];
-        }
-        $lst->close();
-        $lines = budgetSortLinesByCoa($lines);
-        $budget['lines'] = budgetAttachLineRemainings(
-            $db,
-            $lines,
-            (string)($budget['start_date'] ?? ''),
-            (string)($budget['end_date'] ?? '')
-        );
         echo json_encode($budget);
         exit;
     }
@@ -669,6 +621,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         <button type="button" id="addBtn" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Budget</button>
         <button type="button" id="duplicateBtn" class="btn btn-outline-secondary" disabled><i class="bi bi-copy"></i> Duplicate</button>
         <?php endif; ?>
+        <button type="button" id="exportBtn" class="btn btn-outline-secondary" disabled><i class="bi bi-download"></i> Export</button>
         <button type="button" id="deleteBtn" class="btn btn-danger" disabled><i class="bi bi-trash"></i> Delete</button>
     </div>
 
@@ -901,6 +854,37 @@ require_once __DIR__ . '/../includes/permissions.php';
 </div>
 <?php endif; ?>
 
+<!-- Export Budget Modal -->
+<div class="modal fade" id="budgetExportModal" tabindex="-1" aria-labelledby="budgetExportModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="budgetExportModalLabel">Export Budget</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-muted mb-2">Download the budget currently being viewed.</p>
+                <div id="budgetExportSourceLabel" class="fw-semibold mb-3"></div>
+                <fieldset>
+                    <legend class="form-label fs-6">Format</legend>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="budgetExportFormat" id="budgetExportCsv" value="csv" checked>
+                        <label class="form-check-label" for="budgetExportCsv">CSV (spreadsheet)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="budgetExportFormat" id="budgetExportPdf" value="pdf">
+                        <label class="form-check-label" for="budgetExportPdf">PDF (printable)</label>
+                    </div>
+                </fieldset>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="budgetExportConfirm"><i class="bi bi-download"></i> Download</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Budget Line editor (mobile sheet; also used to view a line) -->
 <div class="modal fade" id="budgetLineModal" tabindex="-1" aria-labelledby="budgetLineModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
@@ -1022,6 +1006,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     const linesTotal = document.getElementById('linesTotal');
     const addBtn = document.getElementById('addBtn');
     const duplicateBtn = document.getElementById('duplicateBtn');
+    const exportBtn = document.getElementById('exportBtn');
     const deleteBtn = document.getElementById('deleteBtn');
     const addLineBtn = document.getElementById('addLineBtn');
     const saveBtn = document.getElementById('saveBtn');
@@ -1044,6 +1029,13 @@ require_once __DIR__ . '/../includes/permissions.php';
     }
     const duplicateModal = duplicateModalEl
         ? bootstrap.Modal.getOrCreateInstance(duplicateModalEl)
+        : null;
+    let exportModalEl = document.getElementById('budgetExportModal');
+    if (exportModalEl && typeof window.mountModalOnBody === 'function') {
+        exportModalEl = window.mountModalOnBody(exportModalEl);
+    }
+    const exportModal = exportModalEl
+        ? bootstrap.Modal.getOrCreateInstance(exportModalEl)
         : null;
     let lineModalEl = document.getElementById('budgetLineModal');
     if (lineModalEl && typeof window.mountModalOnBody === 'function') {
@@ -1637,9 +1629,51 @@ require_once __DIR__ . '/../includes/permissions.php';
             else el.disabled = mode !== 'draft';
         });
     }
+    function viewedBudgetId() {
+        const fromRow = selectedRow && selectedRow.dataset.id ? String(selectedRow.dataset.id) : '';
+        const fromForm = (document.getElementById('budgetId')?.value || '').trim();
+        const id = fromRow || fromForm;
+        return /^\d+$/.test(id) && Number(id) > 0 ? id : '';
+    }
+    function downloadBudgetFile(budgetId, format) {
+        const qs = new URLSearchParams({ budget_id: String(budgetId), format: format === 'pdf' ? 'pdf' : 'csv' });
+        return fetch('pages/budget_export.php?' + qs.toString())
+            .then(async r => {
+                const ct = (r.headers.get('Content-Type') || '').toLowerCase();
+                if (!r.ok || ct.includes('application/json') || ct.includes('text/html') || ct.includes('text/plain')) {
+                    let msg = 'Export failed.';
+                    if (ct.includes('application/json')) {
+                        const data = await r.json();
+                        msg = data.error || msg;
+                    } else {
+                        const t = await r.text();
+                        const tmp = document.createElement('div');
+                        tmp.innerHTML = t;
+                        msg = (tmp.textContent || msg).trim() || msg;
+                    }
+                    throw new Error(msg);
+                }
+                const disp = r.headers.get('Content-Disposition') || '';
+                let filename = 'budget.' + (format === 'pdf' ? 'pdf' : 'csv');
+                const star = /filename\*=UTF-8''([^;]+)/i.exec(disp);
+                const plain = /filename="?([^";]+)"?/i.exec(disp);
+                if (star) filename = decodeURIComponent(star[1]);
+                else if (plain) filename = plain[1];
+                const blob = await r.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            });
+    }
     function updateActionButtons() {
         deleteBtn.disabled = !selectedRow || selectedRow.dataset.status !== 'draft';
         if (duplicateBtn) duplicateBtn.disabled = !selectedRow;
+        if (exportBtn) exportBtn.disabled = !viewedBudgetId();
     }
     function showForm(title) {
         document.getElementById('formTitle').textContent = title;
@@ -1836,6 +1870,50 @@ require_once __DIR__ . '/../includes/permissions.php';
         if (!selectedRow) return;
         if (!confirmDiscard()) return;
         openDuplicateModal();
+    });
+    function openExportModal() {
+        const id = viewedBudgetId();
+        if (!id || !exportModal || !exportModalEl) {
+            showToast('Select a budget to export.', 'warning');
+            return;
+        }
+        const name = selectedRow?.dataset.name || document.getElementById('budgetName')?.value || 'Budget';
+        const fy = selectedRow?.dataset.fiscalYear || document.getElementById('fiscalYear')?.value || '';
+        const period = [selectedRow?.dataset.startDate, selectedRow?.dataset.endDate].filter(Boolean).join(' – ')
+            || [document.getElementById('startDate')?.value, document.getElementById('endDate')?.value].filter(Boolean).join(' – ');
+        const status = selectedRow?.dataset.status || '';
+        const bits = [name];
+        if (fy) bits.push('FY ' + fy);
+        if (status) bits.push(status);
+        if (period) bits.push(period);
+        const label = document.getElementById('budgetExportSourceLabel');
+        if (label) label.textContent = bits.join(' · ');
+        const csv = document.getElementById('budgetExportCsv');
+        if (csv) csv.checked = true;
+        if (typeof window.mountModalOnBody === 'function') {
+            exportModalEl = window.mountModalOnBody(exportModalEl);
+        }
+        exportModal.show();
+    }
+    if (exportBtn) exportBtn.addEventListener('click', () => {
+        if (!viewedBudgetId()) return;
+        openExportModal();
+    });
+    const exportConfirm = document.getElementById('budgetExportConfirm');
+    if (exportConfirm) exportConfirm.addEventListener('click', () => {
+        const id = viewedBudgetId();
+        if (!id) {
+            showToast('Select a budget to export.', 'warning');
+            return;
+        }
+        const format = document.querySelector('input[name="budgetExportFormat"]:checked')?.value || 'csv';
+        exportConfirm.disabled = true;
+        downloadBudgetFile(id, format)
+            .then(() => {
+                if (exportModal) exportModal.hide();
+            })
+            .catch(err => showToast(err.message || 'Export failed.', 'danger'))
+            .finally(() => { exportConfirm.disabled = false; });
     });
     const duplicateForm = document.getElementById('duplicateForm');
     if (duplicateForm) duplicateForm.addEventListener('submit', (e) => {
