@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.963](#v0963)
 - [v0.962](#v0962)
 - [v0.961](#v0961)
 - [v0.960](#v0960)
@@ -169,6 +170,29 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.963
+
+**Ledger blank Fund filter and Account/Fund sort** — 2026-09-27
+
+> No schema update required for this release (ledger list filter and sort only).  
+> **Patch file (history row):** `updates/20260927_0963_ledger_fund_blank_sort.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.963
+
+- The Fund column filter includes **(Blanks)** for transactions with no fund on any line. Blank alone, or blank combined with named funds, works like the other multi-select filters. Account still has no blank option.
+- Account and Fund column headers sort on click, and a second click reverses direction. The sort key is the first account or fund name shown on the row. When that column is filtered, the key is the first name on the transaction that matches the filter. Transactions with no fund sort last.
+- Apply, search-to-select, post-save filter state, Select all filtered, and infinite scroll are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.963**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.962 | `updates/20260927_0963_ledger_fund_blank_sort.sql` (records 0.963; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.962, then this process-only patch after `php setup_db.php` |
 
 ---
 

@@ -281,7 +281,8 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     };
 
     /**
-     * Normalize multi-value integer id lists (account_id / fund_id).
+     * Normalize multi-value integer id lists (account_id).
+     * Zeros and blank sentinels are dropped. Fund blanks are handled separately.
      *
      * @return list<int>
      */
@@ -399,7 +400,28 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         $check_numbers = $skip('check') ? [] : $ledgerParseMultiStrings($src, 'check', 'check_numbers');
 
         $account_ids = $skip('account') ? [] : $ledgerParseMultiIds($src, 'account_id', 'account_ids');
-        $fund_ids = $skip('fund') ? [] : $ledgerParseMultiIds($src, 'fund_id', 'fund_ids');
+
+        // Fund ids, plus a blank/unassigned value ('' / __BLANK__) for transactions
+        // whose lines have no fund. __NONE__ alone matches nothing.
+        $fund_raw = $skip('fund') ? [] : $ledgerParseMultiStrings($src, 'fund_id', 'fund_ids');
+        $fund_ids = [];
+        $fund_has_blank = false;
+        $fund_none = false;
+        foreach ($fund_raw as $v) {
+            if ($v === '__NONE__') {
+                $fund_none = true;
+                continue;
+            }
+            if ($v === '' || $v === '__BLANK__') {
+                $fund_has_blank = true;
+                continue;
+            }
+            $i = (int)$v;
+            if ($i > 0) {
+                $fund_ids[] = $i;
+            }
+        }
+        $fund_ids = array_values(array_unique($fund_ids));
 
         $budget_raw = $skip('budget') ? [] : $ledgerParseMultiStrings($src, 'budget_id', 'budget_ids');
         $budget_ids = [];
@@ -519,18 +541,26 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 }
             }
         }
-        if ($fund_ids !== []) {
-            if (count($fund_ids) === 1) {
-                $conditions[] = 'EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id = ?)';
-                $bind_params[] = $fund_ids[0];
-                $bind_types .= 'i';
-            } else {
+        if ($fund_none && $fund_ids === [] && !$fund_has_blank) {
+            $conditions[] = '1=0';
+        } elseif ($fund_ids !== [] || $fund_has_blank) {
+            $fundParts = [];
+            if ($fund_ids !== []) {
                 $ph = implode(',', array_fill(0, count($fund_ids), '?'));
-                $conditions[] = "EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id IN ($ph))";
+                $fundParts[] = "EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id IN ($ph))";
                 foreach ($fund_ids as $fid) {
                     $bind_params[] = $fid;
                     $bind_types .= 'i';
                 }
+            }
+            if ($fund_has_blank) {
+                // Same rows whose Fund cell is empty: no line carries a fund.
+                $fundParts[] = 'NOT EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id IS NOT NULL AND tl.fund_id <> 0)';
+            }
+            if ($fundParts === []) {
+                $conditions[] = '1=0';
+            } else {
+                $conditions[] = '(' . implode(' OR ', $fundParts) . ')';
             }
         }
 
@@ -607,7 +637,17 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
 
         // Single-account view mode only when exactly one account is filtered
         $filter_account_id = count($account_ids) === 1 ? $account_ids[0] : 0;
-        $filter_fund_id = count($fund_ids) === 1 ? $fund_ids[0] : 0;
+        $filter_fund_id = (count($fund_ids) === 1 && !$fund_has_blank) ? $fund_ids[0] : 0;
+
+        $fund_ids_out = [];
+        if ($fund_none && $fund_ids === [] && !$fund_has_blank) {
+            $fund_ids_out = ['__NONE__'];
+        } else {
+            $fund_ids_out = array_map('strval', $fund_ids);
+            if ($fund_has_blank) {
+                $fund_ids_out[] = '';
+            }
+        }
 
         $budget_ids_out = [];
         if ($budget_none && $budget_ids === [] && !$budget_has_blank) {
@@ -647,7 +687,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 'statuses' => $statuses,
                 'amounts' => $amounts,
                 'account_ids' => $account_ids,
-                'fund_ids' => $fund_ids,
+                'fund_ids' => $fund_ids_out,
                 'check_numbers' => $check_numbers,
                 'budget_ids' => $budget_ids_out,
                 'check_number' => $check_number,
@@ -662,11 +702,85 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     };
 
     /**
+     * Resolve list ORDER BY for the ledger page and Select all filtered.
+     *
+     * Account and Fund use one name per transaction: the alphabetically first
+     * name shown on the row (GROUP_CONCAT … ORDER BY name). When that column's
+     * filter is active, only names in the filter count, so an unrelated earlier
+     * line is not the sort key. Transactions with no fund sort last.
+     *
+     * @param array<string, string> $sortMap
+     * @return array{sort: string, sort_dir: string, order_sql: string}
+     */
+    $ledgerResolveListSort = static function (array $sortMap, string $sortKey, string $sortDir, array $built): array {
+        $sortKey = strtolower(trim($sortKey));
+        $dir = strtolower(trim($sortDir)) === 'asc' ? 'ASC' : 'DESC';
+        if (!isset($sortMap[$sortKey])) {
+            $sortKey = 'date';
+        }
+        $expr = $sortMap[$sortKey];
+
+        $accountIds = [];
+        foreach (($built['filters']['account_ids'] ?? []) as $id) {
+            $i = (int)$id;
+            if ($i > 0) {
+                $accountIds[] = $i;
+            }
+        }
+        $fundOut = $built['filters']['fund_ids'] ?? [];
+        if (!is_array($fundOut)) {
+            $fundOut = [];
+        }
+        $fundFilterActive = $fundOut !== [] && !(count($fundOut) === 1 && (string)$fundOut[0] === '__NONE__');
+        $fundIds = [];
+        foreach ($fundOut as $id) {
+            $i = (int)$id;
+            if ($i > 0) {
+                $fundIds[] = $i;
+            }
+        }
+
+        if ($sortKey === 'account' || $sortKey === 'fund') {
+            if ($sortKey === 'account') {
+                $sql = 'SELECT MIN(a.name) FROM transaction_lines tl INNER JOIN accounts a ON a.id = tl.account_id WHERE tl.transaction_detail_id = td.id';
+                if ($accountIds !== []) {
+                    $in = implode(',', array_map('intval', $accountIds));
+                    $expr = '(' . $sql . ' AND tl.account_id IN (' . $in . '))';
+                } else {
+                    $expr = '(' . $sql . ')';
+                }
+            } else {
+                $sql = 'SELECT MIN(f.name) FROM transaction_lines tl INNER JOIN funds f ON f.id = tl.fund_id WHERE tl.transaction_detail_id = td.id AND tl.fund_id IS NOT NULL AND tl.fund_id <> 0';
+                if ($fundFilterActive) {
+                    if ($fundIds === []) {
+                        $expr = 'NULL';
+                    } else {
+                        $in = implode(',', array_map('intval', $fundIds));
+                        $expr = '(' . $sql . ' AND tl.fund_id IN (' . $in . '))';
+                    }
+                } else {
+                    $expr = '(' . $sql . ')';
+                }
+            }
+            // Blanks stay together at the end in either direction.
+            $orderSql = '(' . $expr . ' IS NULL OR ' . $expr . " = '') ASC, " . $expr . ' ' . $dir . ', td.id ' . $dir;
+        } else {
+            $orderSql = $expr . ' ' . $dir . ', td.id ' . $dir;
+        }
+
+        return [
+            'sort' => $sortKey,
+            'sort_dir' => $dir === 'ASC' ? 'asc' : 'desc',
+            'order_sql' => $orderSql,
+        ];
+    };
+
+    /**
      * Fetch a page of ledger transactions with server-side filters + sort.
      *
      * @return array{rows: array, total: int, offset: int, limit: int, has_more: bool, sort: string, sort_dir: string, filter_account_id: int, filters: array}
      */
-    $ledgerFetchTransactionPage = static function (mysqli $db, array $src, callable $buildFilters) use ($ledgerBuildListFilters): array {
+    $ledgerFetchTransactionPage = static function (mysqli $db, array $src, callable $buildFilters) use ($ledgerBuildListFilters, $ledgerResolveListSort): array {
         $built = $buildFilters($db, $src);
         $conditions = $built['conditions'];
         $bind_params = $built['bind_params'];
@@ -687,8 +801,6 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             $offset = ((int)$src['page'] - 1) * $limit;
         }
 
-        $sortKey = strtolower(trim((string)($src['sort'] ?? 'date')));
-        $sortDir = strtolower(trim((string)($src['sort_dir'] ?? 'desc'))) === 'asc' ? 'ASC' : 'DESC';
         $sortMap = [
             'date' => 'td.transaction_date',
             'reference' => 'td.reference_number',
@@ -704,14 +816,19 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             'debit' => 'total_debits',
             'credit' => 'total_credits',
             'amount' => 'total_debits',
+            'account' => 'td.id',
+            'fund' => 'td.id',
             'id' => 'td.id',
         ];
-        if (!isset($sortMap[$sortKey])) {
-            $sortKey = 'date';
-        }
-        $orderCol = $sortMap[$sortKey];
-        // Secondary sort always newest id for stable paging
-        $orderSql = $orderCol . ' ' . $sortDir . ', td.id ' . $sortDir;
+        $sortResolved = $ledgerResolveListSort(
+            $sortMap,
+            (string)($src['sort'] ?? 'date'),
+            (string)($src['sort_dir'] ?? 'desc'),
+            $built
+        );
+        $sortKey = $sortResolved['sort'];
+        $sortDir = $sortResolved['sort_dir'];
+        $orderSql = $sortResolved['order_sql'];
 
         $count_stmt = $db->prepare('SELECT COUNT(*) AS total FROM transaction_details td' . $where_clause);
         if ($bind_types !== '') {
@@ -836,7 +953,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             'limit' => $limit,
             'has_more' => ($offset + count($out_rows)) < $total,
             'sort' => $sortKey,
-            'sort_dir' => strtolower($sortDir) === 'asc' ? 'asc' : 'desc',
+            'sort_dir' => $sortDir,
             'filter_account_id' => $filter_account_id,
             'filters' => $built['filters'],
         ];
@@ -847,15 +964,13 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
      *
      * @return array<string,mixed>
      */
-    $ledgerFetchFilteredSelection = static function (mysqli $db, array $src, callable $buildFilters): array {
+    $ledgerFetchFilteredSelection = static function (mysqli $db, array $src, callable $buildFilters) use ($ledgerResolveListSort): array {
         $built = $buildFilters($db, $src);
         $conditions = $built['conditions'];
         $bind_params = $built['bind_params'];
         $bind_types = $built['bind_types'];
         $where_clause = $conditions ? (' WHERE ' . implode(' AND ', $conditions)) : '';
 
-        $sortKey = strtolower(trim((string)($src['sort'] ?? 'date')));
-        $sortDir = strtolower(trim((string)($src['sort_dir'] ?? 'desc'))) === 'asc' ? 'ASC' : 'DESC';
         $debitExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0)";
         $creditExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0)";
         $sortMap = [
@@ -873,12 +988,19 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             'debit' => $debitExpr,
             'credit' => $creditExpr,
             'amount' => $debitExpr,
+            'account' => 'td.id',
+            'fund' => 'td.id',
             'id' => 'td.id',
         ];
-        if (!isset($sortMap[$sortKey])) {
-            $sortKey = 'date';
-        }
-        $orderSql = $sortMap[$sortKey] . ' ' . $sortDir . ', td.id ' . $sortDir;
+        $sortResolved = $ledgerResolveListSort(
+            $sortMap,
+            (string)($src['sort'] ?? 'date'),
+            (string)($src['sort_dir'] ?? 'desc'),
+            $built
+        );
+        $sortKey = $sortResolved['sort'];
+        $sortDir = $sortResolved['sort_dir'];
+        $orderSql = $sortResolved['order_sql'];
 
         $count_stmt = $db->prepare('SELECT COUNT(*) AS total FROM transaction_details td' . $where_clause);
         if ($bind_types !== '') {
@@ -953,7 +1075,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             'skipped_ids' => $skippedIds,
             'sample' => $sample,
             'sort' => $sortKey,
-            'sort_dir' => strtolower($sortDir) === 'asc' ? 'asc' : 'desc',
+            'sort_dir' => $sortDir,
             'filters' => $built['filters'],
         ];
     };
@@ -1149,6 +1271,23 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 ];
             }
             $stmt->close();
+            $blankSql = 'SELECT COUNT(*) AS cnt FROM transaction_details td'
+                . ($where_clause !== '' ? $where_clause . ' AND ' : ' WHERE ')
+                . 'NOT EXISTS (SELECT 1 FROM transaction_lines tl WHERE tl.transaction_detail_id = td.id AND tl.fund_id IS NOT NULL AND tl.fund_id <> 0)';
+            $blankStmt = $db->prepare($blankSql);
+            if ($bind_types !== '') {
+                $blankStmt->bind_param($bind_types, ...$bind_params);
+            }
+            $blankStmt->execute();
+            $blankCnt = (int)($blankStmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+            $blankStmt->close();
+            if ($blankCnt > 0) {
+                $values[] = [
+                    'value' => '',
+                    'label' => '(Blanks)',
+                    'count' => $blankCnt,
+                ];
+            }
         } elseif ($column === 'amount') {
             $debitExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='debit'), 0)";
             $creditExpr = "COALESCE((SELECT SUM(amount) FROM transaction_lines WHERE transaction_detail_id=td.id AND type='credit'), 0)";
@@ -3600,16 +3739,7 @@ foreach ($colDefs as $col):
             return [String(v)];
         };
         const asIdArr = (v) => asArr(v).map(x => parseInt(x, 10)).filter(n => n > 0).map(String);
-        base.dates = asArr(raw.dates || raw.date);
-        base.references = asArr(raw.references != null ? raw.references : raw.reference);
-        base.descriptions = asArr(raw.descriptions != null ? raw.descriptions : raw.description);
-        base.pay_tos = asArr(raw.pay_tos != null ? raw.pay_tos : raw.pay_to);
-        base.statuses = asArr(raw.statuses != null ? raw.statuses : raw.status);
-        base.amounts = asArr(raw.amounts != null ? raw.amounts : raw.amount);
-        base.account_ids = asIdArr(raw.account_ids != null ? raw.account_ids : raw.account_id);
-        base.fund_ids = asIdArr(raw.fund_ids != null ? raw.fund_ids : raw.fund_id);
-        base.check_numbers = asArr(raw.check_numbers != null ? raw.check_numbers : raw.check);
-        const asBudgetArr = (v) => asArr(v).filter(x => {
+        const asBlankableIdArr = (v) => asArr(v).filter(x => {
             if (x === '' || x === '__BLANK__' || x === '__NONE__') return true;
             const n = parseInt(x, 10);
             return !isNaN(n) && n > 0;
@@ -3618,16 +3748,32 @@ foreach ($colDefs as $col):
             if (x === '' || x === '__NONE__') return x;
             return String(parseInt(x, 10));
         });
-        base.budget_ids = asBudgetArr(raw.budget_ids != null ? raw.budget_ids : raw.budget_id);
+        base.dates = asArr(raw.dates || raw.date);
+        base.references = asArr(raw.references != null ? raw.references : raw.reference);
+        base.descriptions = asArr(raw.descriptions != null ? raw.descriptions : raw.description);
+        base.pay_tos = asArr(raw.pay_tos != null ? raw.pay_tos : raw.pay_to);
+        base.statuses = asArr(raw.statuses != null ? raw.statuses : raw.status);
+        base.amounts = asArr(raw.amounts != null ? raw.amounts : raw.amount);
+        base.account_ids = asIdArr(raw.account_ids != null ? raw.account_ids : raw.account_id);
+        base.fund_ids = asBlankableIdArr(raw.fund_ids != null ? raw.fund_ids : raw.fund_id);
+        base.check_numbers = asArr(raw.check_numbers != null ? raw.check_numbers : raw.check);
+        base.budget_ids = asBlankableIdArr(raw.budget_ids != null ? raw.budget_ids : raw.budget_id);
         base.date_from = raw.date_from ? String(raw.date_from) : '';
         base.date_to = raw.date_to ? String(raw.date_to) : '';
         base.check_number = raw.check_number ? String(raw.check_number) : '';
         base.search = raw.search ? String(raw.search) : '';
         base.amount_min = raw.amount_min != null && raw.amount_min !== '' ? String(raw.amount_min) : '';
         base.amount_max = raw.amount_max != null && raw.amount_max !== '' ? String(raw.amount_max) : '';
-        base.account_id = base.account_ids.length === 1 ? parseInt(base.account_ids[0], 10) : 0;
-        base.fund_id = base.fund_ids.length === 1 ? parseInt(base.fund_ids[0], 10) : 0;
+        base.account_id = lonePositiveFilterId(base.account_ids);
+        base.fund_id = lonePositiveFilterId(base.fund_ids);
         return base;
+    }
+
+    /** Single selected numeric id, or 0 when blank/none/multiple. */
+    function lonePositiveFilterId(ids) {
+        if (!ids || ids.length !== 1) return 0;
+        const n = parseInt(ids[0], 10);
+        return n > 0 ? n : 0;
     }
 
     function getActiveFilters() {
@@ -3718,9 +3864,9 @@ foreach ($colDefs as $col):
         const f = getActiveFilters();
         const key = FILTER_KEY_MAP[col];
         if (!key) return;
-        if (col === 'account' || col === 'fund') {
+        if (col === 'account') {
             f[key] = (values || []).map(v => String(parseInt(v, 10))).filter(v => v !== '0' && v !== 'NaN');
-        } else if (col === 'budget') {
+        } else if (col === 'budget' || col === 'fund') {
             f[key] = (values || []).map(v => String(v)).filter(v => {
                 if (v === '' || v === '__BLANK__' || v === '__NONE__') return true;
                 const n = parseInt(v, 10);
@@ -3742,8 +3888,8 @@ foreach ($colDefs as $col):
             f.amount_min = '';
             f.amount_max = '';
         }
-        f.account_id = f.account_ids.length === 1 ? parseInt(f.account_ids[0], 10) : 0;
-        f.fund_id = f.fund_ids.length === 1 ? parseInt(f.fund_ids[0], 10) : 0;
+        f.account_id = lonePositiveFilterId(f.account_ids);
+        f.fund_id = lonePositiveFilterId(f.fund_ids);
         listState.filters = f;
     }
 
