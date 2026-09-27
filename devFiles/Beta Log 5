@@ -153,3 +153,63 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#41 - 2026-09-27 - Ledger / Column filters - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Allow blank Fund in the Ledger filter, and add Account and Fund column sorting.
+
+Requirements:
+
+1. Fund filter — blank
+   - The Fund column filter must include a blank/unassigned option (label such as “(Blank)” or “(None)”) so the user can filter to transactions with no fund.
+   - Selecting only blank must show those transactions. Combining blank with named funds must work like other multi-select values.
+   - Account filter does not need a blank option.
+
+2. Account and Fund sort
+   - Account and Fund column headers must be sortable (click / second click reverses).
+   - Sort key is a single value per transaction:
+     - Unfiltered: the first account or first fund as shown on the ledger row.
+     - When Account or Fund filters are active: the first account/fund on that transaction that matches the current filter (not an unrelated first line).
+   - Transactions with no fund sort together at one end when sorting by Fund (blank last is fine).
+
+3. Do not add a new app-wide filter/sort framework. Do not change other columns unless needed for the same header-sort pattern already used on the ledger.
+4. Do not regress filter apply, search-to-select, post-save filter state, Select all filtered, or infinite scroll.
+
+First explore Fund unique values, how the row displays account/fund, and existing header sort, then implement blank Fund filter plus Account/Fund sort.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#42 - 2026-09-27 - Ledger / Attachments - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Allow adding attachments to cleared and reconciled transactions without unlocking the entry.
+
+Requirements:
+1. Cleared and reconciled transactions remain immutable for all financial fields (date, ref, payee, description, amounts, accounts, funds, lines, status).
+2. Exception: the user may **add** new attachments on those transactions (View or a dedicated add control). Do not require un-clear / un-reconcile.
+3. Do not allow delete, replace, rename-on-disk, or path changes for attachments that already exist on a cleared or reconciled transaction.
+4. Adding a file must write a transaction_events (and/or audit) entry: user, active role, timestamp, transaction id/ref, filename.
+5. Same upload size/type rules as pending transactions. Paperclip on the ledger list must update after a successful add without requiring a full manual mystery refresh if the list already knows how to refresh after other saves.
+6. Restrict add-on-cleared to roles that can already attach files on pending transactions (do not widen access).
+7. Do not change pending-transaction attachment add/remove behavior.
+
+First explore how attachment add/delete is gated on transaction status, then allow append-only adds after clear/reconcile and keep deletes locked.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

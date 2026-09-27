@@ -554,8 +554,8 @@ function ledgerRemoveEmptyAttachmentDir(string $dir): void {
 }
 
 /**
- * Whether attachment files (and file-related audit events) may change.
- * Cleared / reconciled transactions are immutable, including their files and audit trail.
+ * Whether existing attachment files may be deleted, replaced, or moved.
+ * Cleared / reconciled transactions stay immutable except that a new file may be added.
  */
 function ledgerTransactionAllowsAttachmentFileChanges(mysqli $db, int $transactionId): bool {
     if ($transactionId <= 0) {
@@ -856,9 +856,10 @@ function ledgerLogEvent(
 ): void {
     ledgerRequireTables($db);
 
-    // File-related audit events are only allowed while the transaction is still editable.
-    static $fileEventTypes = ['document_uploaded', 'document_deleted', 'document_relocated'];
-    if (in_array($eventType, $fileEventTypes, true)
+    // Deletes and path changes stay locked after clear/reconcile.
+    // document_uploaded is allowed: adding a file does not alter existing ones.
+    static $lockedFileEventTypes = ['document_deleted', 'document_relocated'];
+    if (in_array($eventType, $lockedFileEventTypes, true)
         && !ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)
     ) {
         error_log(
@@ -1752,14 +1753,11 @@ function ledgerStoreDocument(
             'error' => 'Set a Reference # (YY####) on the transaction before uploading attachments.',
         ];
     }
-    if (!ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)) {
-        return [
-            'success' => false,
-            'error' => 'This transaction is read-only (cleared or reconciled); documents cannot be uploaded.',
-        ];
+    // Pending uploads may gather leftover copies into the reference folder.
+    // Cleared/reconciled adds must not rename, replace, or move files already stored.
+    if (ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)) {
+        ledgerRelocateTransactionAttachments($db, $transactionId, (string)$transactionId, $reference);
     }
-    // Migrate any leftover id/legacy-folder files into the reference folder on upload
-    ledgerRelocateTransactionAttachments($db, $transactionId, (string)$transactionId, $reference);
 
     $folderKey = ledgerAttachmentFolderKey($reference, $transactionId);
     $dir = ledgerAttachmentDir($folderKey);
@@ -1770,6 +1768,9 @@ function ledgerStoreDocument(
     $safeExt = preg_replace('/[^a-zA-Z0-9]/', '', $ext);
     $stored = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . ($safeExt ? '.' . $safeExt : '');
     $dest = $dir . '/' . $stored;
+    if (is_file($dest)) {
+        return ['success' => false, 'error' => 'Could not store the attachment without replacing an existing file.'];
+    }
 
     if (is_uploaded_file($tmpPath)) {
         if (!@move_uploaded_file($tmpPath, $dest)) {

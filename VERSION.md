@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.964](#v0964)
 - [v0.963](#v0963)
 - [v0.962](#v0962)
 - [v0.961](#v0961)
@@ -170,6 +171,30 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.964
+
+**Add attachments on cleared and reconciled transactions** — 2026-09-27
+
+> No schema update required for this release (attachment upload rules only).  
+> **Patch file (history row):** `updates/20260927_0964_ledger_locked_attachment_add.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.964
+
+- Cleared and reconciled transactions stay locked for date, reference, payee, description, amounts, accounts, funds, lines, and status.
+- A user who can already attach files on a pending transaction can add new files from View (and from the budget-only screen) without un-clearing or un-reconciling. Existing attachments cannot be deleted, replaced, or moved.
+- The add writes a transaction event and an audit row with the user, active role, timestamp, transaction id, reference number, and filename. The ledger paperclip count updates after the upload.
+- Upload type and size rules are the same as for pending transactions. Pending add and remove behavior is unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.964**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.963 | `updates/20260927_0964_ledger_locked_attachment_add.sql` (records 0.964; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.963, then this process-only patch after `php setup_db.php` |
 
 ---
 

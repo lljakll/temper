@@ -1487,10 +1487,6 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 echo json_encode(['success' => false, 'error' => 'Transaction not found.']);
                 exit;
             }
-            if (empty($tx['is_editable'])) {
-                echo json_encode(['success' => false, 'error' => 'This transaction is read-only; documents cannot be uploaded.']);
-                exit;
-            }
             if (!$actor) {
                 echo json_encode(['success' => false, 'error' => 'You must be signed in to upload documents.']);
                 exit;
@@ -1504,6 +1500,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             );
             if (!empty($result['success'])) {
                 $origName = basename((string)($uploadFile['name'] ?? 'file'));
+                $refForLog = trim((string)($tx['reference_number'] ?? ''));
+                $roleForLog = '';
+                if (session_status() === PHP_SESSION_ACTIVE) {
+                    $roleForLog = trim((string)($_SESSION['active_role_name'] ?? ''));
+                }
                 try {
                     ledgerLogEvent(
                         $db,
@@ -1512,7 +1513,13 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                         $userId,
                         $actor['username'] ?? 'system',
                         'Attachment "' . $origName . '" added.',
-                        ['doc_id' => $result['id'], 'original_filename' => $origName]
+                        [
+                            'doc_id' => $result['id'],
+                            'original_filename' => $origName,
+                            'transaction_id' => $txId,
+                            'reference_number' => $refForLog,
+                            'active_role' => $roleForLog,
+                        ]
                     );
                 } catch (Throwable $e) {
                     // File is stored; do not fail the client response for audit logging issues.
@@ -5330,7 +5337,7 @@ foreach ($colDefs as $col):
             const rem = row.querySelector('.remove-line');
             if (rem) rem.style.display = 'none';
         });
-        setDocUploadVisible(false);
+        setDocUploadVisible(!!canWriteLedger && isTxClearedOrReconciled(data || currentViewData));
         renderDocumentsList((data && data.documents) || (currentViewData && currentViewData.documents) || [], false);
         updateBudgetPeriodWarning();
         syncBudgetSelectTooltip();
@@ -5378,7 +5385,11 @@ foreach ($colDefs as $col):
         const hint = document.getElementById('txDocUploadHint');
         if (badges) badges.classList.toggle('d-none', !!addMode);
         if (audit) audit.classList.toggle('d-none', !!addMode);
-        if (hint) hint.classList.toggle('d-none', !addMode);
+        if (hint && typeof syncAttachmentUploadHint === 'function') {
+            syncAttachmentUploadHint();
+        } else if (hint) {
+            hint.classList.toggle('d-none', !addMode);
+        }
     }
 
     function renderMetaSection(data, opts) {
@@ -5540,9 +5551,20 @@ foreach ($colDefs as $col):
         return !!(txIdField && String(txIdField.value || '') === '' && saveBtn && saveBtn.style.display !== 'none');
     }
 
+    /**
+     * Cleared/reconciled rows stay financially locked, but a user who can already
+     * attach files on a pending transaction may add new files from View.
+     */
+    function canAppendDocumentsOnLockedTx() {
+        if (!canWriteLedger) return false;
+        if (!currentViewData || !currentViewData.id) return false;
+        return isTxClearedOrReconciled(currentViewData);
+    }
+
     function canAttachDocuments() {
-        if (budgetOnlyEditMode) return false;
         if (isTxAddMode()) return true;
+        if (canAppendDocumentsOnLockedTx()) return true;
+        if (budgetOnlyEditMode) return false;
         if (!isTxEditMode()) return false;
         // Full edit (not budget-only / read-only header)
         return !document.getElementById('transaction_date')?.readOnly;
@@ -5786,6 +5808,8 @@ foreach ($colDefs as $col):
                     renderAuditTrail(data.events || []);
                 }
                 if (keepEditUi && data.is_editable) {
+                    setDocUploadVisible(true);
+                } else if (canAppendDocumentsOnLockedTx()) {
                     setDocUploadVisible(true);
                 }
                 return data;
@@ -6577,6 +6601,22 @@ foreach ($colDefs as $col):
         syncDocUploadBtn();
     }
 
+    function syncAttachmentUploadHint() {
+        const hint = document.getElementById('txDocUploadHint');
+        if (!hint) return;
+        if (isTxAddMode()) {
+            hint.textContent = 'Choose files now — they attach when you save. Click Upload to queue additional files.';
+            hint.classList.remove('d-none');
+            return;
+        }
+        if (canAppendDocumentsOnLockedTx()) {
+            hint.textContent = 'You can add files. Existing attachments cannot be removed or replaced.';
+            hint.classList.remove('d-none');
+            return;
+        }
+        hint.classList.add('d-none');
+    }
+
     function setDocUploadVisible(show) {
         const docForm = document.getElementById('txDocUploadForm');
         if (!docForm) return;
@@ -6584,6 +6624,7 @@ foreach ($colDefs as $col):
         else docForm.classList.add('d-none');
         // Always reset selection when showing/hiding so a prior pick does not linger across txs
         clearDocFileSelection();
+        syncAttachmentUploadHint();
     }
 
     function showBlankForm() {
@@ -6653,7 +6694,10 @@ foreach ($colDefs as $col):
         if (saveBtn) saveBtn.style.display = 'none';
         if (cancelBtn2) cancelBtn2.style.display = '';
         renderMetaSection(data);
-        setDocUploadVisible(false);
+        if (isTxClearedOrReconciled(data)) {
+            clearPendingDocDeletes(true);
+        }
+        setDocUploadVisible(!!canWriteLedger && isTxClearedOrReconciled(data));
         // Re-render docs without delete buttons in view mode
         renderDocumentsList((data && data.documents) || [], false);
         markTxFormClean();
@@ -6729,8 +6773,9 @@ foreach ($colDefs as $col):
         if (!id) return;
         restorePendingDocDeletes(id);
 
-        // Cleared/reconciled: unlock budget only
+        // Cleared/reconciled: unlock budget only. Do not restore a delete queue.
         if (isTxClearedOrReconciled(currentViewData)) {
+            clearPendingDocDeletes(true);
             applyBudgetOnlyEditMode(currentViewData || { id: id });
             markTxFormClean();
             openTxFormModal();
@@ -8629,6 +8674,9 @@ foreach ($colDefs as $col):
                     showToast(acc.ok.length > 1 ? (acc.ok.length + ' files uploaded.') : 'Upload Successful', 'success');
                 }
                 clearDocFileSelection();
+                if (canAppendDocumentsOnLockedTx() && !budgetOnlyEditMode) {
+                    markTxFormClean();
+                }
                 return refreshDocumentsFromServer(id, true)
                     .catch(() => showToast('Uploaded, but failed to refresh document list.', 'warning'))
                     .finally(() => syncDocUploadBtn());
@@ -8645,7 +8693,8 @@ foreach ($colDefs as $col):
         txFormModalEl.addEventListener('change', function(e) {
             if (e.target && e.target.id === 'txDocFile') {
                 syncDocUploadBtn();
-                if (getSelectedDocFiles().length && form) {
+                // Append-only adds on a locked transaction are not a financial edit.
+                if (getSelectedDocFiles().length && form && !canAppendDocumentsOnLockedTx()) {
                     form.setAttribute('data-dirty', '1');
                 }
             }
