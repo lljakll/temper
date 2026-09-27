@@ -129,3 +129,27 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#40 - 2026-09-27 - Ledger / Column filters - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Fix Ledger filters that change after saving an edited transaction.
+
+Requirements:
+1. After Add/Edit/View save (or cancel), the Ledger must keep the same active filter scheme the user had before opening the modal.
+2. Saving a transaction must not add extra filter options/columns/chips (the current bug: 4–5 new filter options appear after save).
+3. Unique-value lists may refresh so new/changed values exist, but the set of filterable columns and the applied filter criteria must stay as they were.
+4. If the saved transaction no longer matches the current filters, it is correct for it to disappear from the list. Do not clear or rewrite the user’s filters to make it stay visible.
+5. Do not regress Apply / search-to-select / Select all filtered / Clear / infinite scroll.
+
+First explore how the ledger reloads after a transaction save and how filter state and filter-option lists are rebuilt, then stop the post-save filter mutation.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

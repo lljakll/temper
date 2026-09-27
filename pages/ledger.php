@@ -28,6 +28,13 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
      * max_input_vars (1000) start failing around 400–600 GET params — the list
      * then applies incompletely or unique-value dropdowns fail to load.
      * JSON POST is not subject to either ceiling.
+     *
+     * Save / clear / reconcile post the whole form. Transaction fields share
+     * names with filter params (pay_to, description, reference_number,
+     * check_number, budget_id). Merging that body into the filter source made
+     * a save add those columns as active filters. When `ledger_filters` is
+     * present it is the entire scheme: omitted keys are not filtered, and the
+     * rest of $_POST is not a filter source.
      */
     $ledgerRequestSrc = $_GET;
     $ledgerJsonPost = false;
@@ -47,11 +54,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         }
         $ledgerRequestSrc = array_merge($ledgerRequestSrc, $ledgerDecoded);
     } elseif ($ledgerReqMethod === 'POST') {
-        $ledgerRequestSrc = array_merge($ledgerRequestSrc, $_POST);
-        if (isset($_POST['ledger_filters']) && is_string($_POST['ledger_filters']) && $_POST['ledger_filters'] !== '') {
-            $ledgerDecodedFilters = json_decode($_POST['ledger_filters'], true);
+        $ledgerFiltersJson = $_POST['ledger_filters'] ?? null;
+        if (is_string($ledgerFiltersJson) && $ledgerFiltersJson !== '') {
+            $ledgerDecodedFilters = json_decode($ledgerFiltersJson, true);
             if (is_array($ledgerDecodedFilters)) {
-                $ledgerRequestSrc = array_merge($ledgerRequestSrc, $ledgerDecodedFilters);
+                $ledgerRequestSrc = $ledgerDecodedFilters;
             }
         }
     }
