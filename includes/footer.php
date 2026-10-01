@@ -127,7 +127,7 @@ $footerDb->close();
             window.ensureAppToastContainer();
         }
 
-        window.showToast = function(message, type = 'info', delay = 4500) {
+        window.showToast = function(message, type = 'info', delay = 4500, action) {
             // Never surface toasts while redirecting to login after session expiry
             if (window.__temperAuthRedirecting) return null;
             if (typeof window.isAuthExpiredPayload === 'function' && window.isAuthExpiredPayload(message)) {
@@ -154,9 +154,30 @@ $footerDb->close();
             const el = document.createElement('div');
             el.className = 'toast align-items-center text-bg-' + variant + ' border-0';
             el.setAttribute('role', 'alert');
-            el.innerHTML = '<div class="d-flex"><div class="toast-body">' + escapeHtml(message) + '</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
+            const actionLabel = action && action.label ? String(action.label) : '';
+            const closeBtnClass = actionLabel && (variant === 'warning' || variant === 'info')
+                ? 'btn-close me-2 m-auto'
+                : 'btn-close btn-close-white me-2 m-auto';
+            const actionHtml = actionLabel
+                ? '<button type="button" class="btn btn-sm btn-dark align-self-center me-2 text-nowrap js-toast-action">'
+                    + escapeHtml(actionLabel) + '</button>'
+                : '';
+            el.innerHTML = '<div class="d-flex"><div class="toast-body">' + escapeHtml(message) + '</div>'
+                + actionHtml
+                + '<button type="button" class="' + closeBtnClass + '" data-bs-dismiss="toast" aria-label="Close"></button></div>';
             container.appendChild(el);
-            const toast = new bootstrap.Toast(el, { autohide: true, delay: delay });
+            const sticky = !!(action && action.sticky);
+            const toast = new bootstrap.Toast(el, { autohide: !sticky, delay: delay });
+            if (actionLabel && typeof action.onClick === 'function') {
+                const actionBtn = el.querySelector('.js-toast-action');
+                if (actionBtn) {
+                    actionBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        action.onClick(el, toast);
+                    });
+                }
+            }
             el.addEventListener('hidden.bs.toast', function() { el.remove(); }, { once: true });
             toast.show();
             return toast;

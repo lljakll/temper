@@ -213,3 +213,154 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#44 - 2026-09-30 - Attachments - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Optimize every new attachment on upload, then add a mobile document-scan step that produces a PDF and uses that same upload.
+
+Requirements:
+
+1. Optimize-on-upload first
+   - After a file is accepted and before it is the stored attachment, optimize locally.
+   - PDF: Ghostscript ebook/screen profile if `gs` exists. If Ghostscript is missing or fails, keep the original and do not fail the upload.
+   - Images (JPEG/PNG): resize (max edge about 1600–2000px) and compress so the page is still readable.
+   - Skip if the file is already small (under ~200 KB) or if optimize would make it larger.
+   - Replace the stored file with the optimized bytes and update the stored size. Do not keep a second original.
+   - Do not send files to any external compression service.
+
+2. Scan step on the attachment control
+   - On the transaction attachment UI (especially mobile), add Scan in addition to the existing file pick.
+   - User can take a photo or pick an image.
+   - Detect the page when possible (browser library such as jscanify or Scanic is fine). Always allow manual corner adjust / crop.
+   - Optional simple cleanup (grayscale or contrast). Drive-quality shadow removal is not required.
+   - User can add more pages, then finish as one PDF.
+   - That PDF goes through the same upload and optimize path as any other file. No separate storage path.
+
+3. Cleared / reconciled
+   - If append-only add is already allowed, new scans/uploads may be added and must be optimized.
+   - Do not recompress, replace, or delete attachments already stored on a cleared or reconciled transaction.
+
+4. Pending transactions keep current add/remove behavior, plus optimize on the way in.
+5. Do not change viewers, paperclip rules, or posting.
+6. This scan step should be reusable later for workflow receipts; do not hard-wire it only to ledger internals more than necessary.
+
+First explore the current attachment upload path, then implement optimize-on-upload, then the scan-to-PDF step that calls it.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#45 - 2026-09-30 - Attachments - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Add a document scan step on the attachment control that produces a PDF and uses the existing upload, including optimize-on-upload.
+
+Requirements:
+1. On the transaction attachment UI, especially mobile, add Scan in addition to the existing file pick.
+2. User can take a photo or pick an image.
+3. Detect the page when possible (browser library such as jscanify or Scanic is fine). Always allow manual corner adjust / crop.
+4. Optional simple cleanup (grayscale or contrast). Drive-quality shadow removal is not required.
+5. User can add more pages, then finish as one PDF. Do not convert ordinary non-scan image uploads to PDF.
+6. That PDF goes through the same upload path as any other file, including the ebook/screen optimize and the original-vs-saved size confirmation. No separate storage path.
+7. Cleared/reconciled: a new scan may be added only if append-only add already exists. Do not replace or delete existing locked attachments.
+8. Keep this step reusable later for workflow receipts. Do not hard-wire it only to ledger internals more than necessary.
+9. Do not change the optimize rules from the previous change.
+
+First confirm the current upload/optimize path, then add the scan-to-PDF step that calls it.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#46 - 2026-09-30 - Attachments - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: On PDF upload, run Ghostscript ebook and screen, store the smaller result, and show original vs saved size. No user choice.
+
+Requirements:
+1. For each new PDF, if gs exists, write two temp outputs: PDFSETTINGS=/ebook and PDFSETTINGS=/screen. Downsample color/gray to about 150 dpi for ebook and 100 dpi for screen. Do not overwrite the upload until the stored file is chosen by the size rule.
+2. Compare original, ebook, and screen byte sizes. Discard any output that is larger than the original.
+3. Store the smaller of the successful outputs that beat the original. If neither beats the original, store the original. Do not ask the user to pick.
+4. After save, show a confirmation with original file size, saved file size, and percent change versus original. Informational only.
+5. If Ghostscript is missing or a profile fails, store the original and say Ghostscript is not installed or that profile failed. Do not fail the upload. Still show original and saved size (they will match).
+6. Images stay on the existing resize/compress path. Do not convert images to PDF. Do not send files off the server. Show original vs saved size for images too.
+7. Do not recompress attachments already stored on cleared or reconciled transactions. New append-only adds follow this rule.
+8. Do not add the scan UI in this change.
+
+First explore the current upload optimize path, then run both PDF profiles, store the smaller, and show the size metrics on save.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#47 - 2026-10-01 - Ledger / Add-Edit - Bug - Med
+
+You are working in the **Beta Thread**.
+
+Task: Stop the Ref # suggestion tip from applying in View mode.
+
+Requirements:
+1. Double-click (or any accept gesture) on the Ref # tip must work only in Add and Edit.
+2. In View / read-only, the tip must not become the field value. The field stays display-only.
+3. Do not change the tip value (last saved Ref # + 1) or the Add/Edit accept behavior.
+4. Do not regress other read-only locks on cleared or reconciled transactions.
+
+First explore how the Ref # tip is accepted, then ignore that gesture when the modal is not editable.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#49 - 2026-10-01 - Attachments / Scan - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Refine the document scan flow into Adjust, Enhance, page browser, then named PDF upload.
+
+Requirements:
+1. Capture stays photo or picked image. This flow is the only one that builds a PDF. A normal file-picker upload is not converted to PDF.
+2. Adjust screen: crop with corner adjust, flip, and free rotate (not 90-degree steps only). Apply shows the result and stays on Adjust. Crop again returns to the handles. Next accepts the page and opens Enhance.
+3. Enhance screen, between Adjust and the page browser: grayscale and contrast are adjustable controls, not on/off toggles. Back returns to Adjust. Next accepts the page into the document.
+4. Page browser after a page is accepted: view a page, delete a page, reorder pages, Add page (starts another capture), and Finish. Finish is the only control that builds the PDF. Do not label the adjust/enhance advance control "Add page".
+5. On Finish, the user names the document. That PDF uses the existing upload and optimize path, including original-vs-saved size. No separate storage path.
+6. Cleared/reconciled: new scan may be added only if append-only add already exists. Do not replace or delete locked attachments.
+7. Keep the step reusable later for workflow receipts.
+8. Do not change optimize rules.
+
+First explore the current scan UI, then replace it with the flow above.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.

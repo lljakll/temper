@@ -1519,6 +1519,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                             'transaction_id' => $txId,
                             'reference_number' => $refForLog,
                             'active_role' => $roleForLog,
+                            'stored_bytes' => (int)($result['file_size'] ?? ($result['optimize']['stored_bytes'] ?? 0)),
+                            'original_bytes' => (int)($result['optimize']['original_bytes'] ?? 0),
+                            'optimize_kept' => (string)($result['optimize']['kept'] ?? ''),
+                            'optimize_reason' => (string)($result['optimize']['reason'] ?? ''),
+                            'optimize_profile' => (string)($result['optimize']['chosen_profile'] ?? ''),
                         ]
                     );
                 } catch (Throwable $e) {
@@ -1536,6 +1541,18 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 }
             }
             echo json_encode($result, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($action === 'retry_document_optimize') {
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            echo json_encode([
+                'success' => false,
+                'error' => 'Optimize runs when the file is uploaded. The stored file was left unchanged.',
+            ], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -2886,10 +2903,15 @@ foreach ($colDefs as $col):
                             <input type="file" id="txDocFile" class="form-control form-control-sm"
                                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                                    multiple data-dirty-ignore>
-                            <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm text-nowrap" disabled data-dirty-ignore>Upload</button>
+                            <div class="d-flex gap-2">
+                                <button type="button" id="txDocScanBtn" class="btn btn-outline-primary btn-sm text-nowrap flex-fill" data-dirty-ignore>
+                                    <i class="bi bi-camera" aria-hidden="true"></i> Scan
+                                </button>
+                                <button type="button" id="txDocUploadBtn" class="btn btn-outline-secondary btn-sm text-nowrap flex-fill" disabled data-dirty-ignore>Upload</button>
+                            </div>
                         </div>
                         <div id="txDocUploadHint" class="form-text small text-muted d-none mb-3">
-                            Choose files now — they attach when you save. Click Upload to queue additional files.
+                            Choose files or scan pages now — they attach when you save. Click Upload to queue additional files.
                         </div>
                         <div class="accordion accordion-flush border rounded" id="txAuditAccordion">
                             <div class="accordion-item">
@@ -3176,7 +3198,7 @@ foreach ($colDefs as $col):
                     Manual <code>YY####</code> Reference # values already on the ledger (highest first).
                     <strong>YY0001–YY0099</strong> are reserved for contributions;
                     <strong>YY0100+</strong> for payments, reimbursements, transfers, and other entries.
-                    Double-click the Ref # field to fill the suggested next number (last saved Ref # + 1).
+                    In Add or Edit, double-click the Ref # field to fill the suggested next number (last saved Ref # + 1).
                 </p>
                 <div class="table-responsive" style="max-height: 60vh;">
                     <table class="table table-sm table-hover mb-0 align-middle">
@@ -5312,6 +5334,7 @@ foreach ($colDefs as $col):
         if (!readonly || !budgetEnabled) {
             setBudgetStatusWarning(false);
         }
+        updateReferenceHintVisibility();
     }
 
     /** Enter budget-only edit UI for a cleared/reconciled transaction (lines stay locked). */
@@ -5722,7 +5745,7 @@ foreach ($colDefs as $col):
         const docsEl = document.getElementById('txDocumentsList');
         if (!docsEl) return;
         if (!pendingCreateDocs.length) {
-            docsEl.innerHTML = '<li class="text-muted">No documents attached yet. Choose a file below to include it when you save.</li>';
+            docsEl.innerHTML = '<li class="text-muted">No documents attached yet. Choose a file or scan pages below to include them when you save.</li>';
             return;
         }
         docsEl.innerHTML = pendingCreateDocs.map(p => {
@@ -6574,6 +6597,7 @@ foreach ($colDefs as $col):
             cancelBtn2.textContent = (mode === 'view') ? 'Close' : 'Cancel';
         }
         syncDeleteFromEditBtn();
+        updateReferenceHintVisibility();
     }
 
     /** Import from Text is only available when adding a new transaction. */
@@ -6605,12 +6629,12 @@ foreach ($colDefs as $col):
         const hint = document.getElementById('txDocUploadHint');
         if (!hint) return;
         if (isTxAddMode()) {
-            hint.textContent = 'Choose files now — they attach when you save. Click Upload to queue additional files.';
+            hint.textContent = 'Choose files or scan pages now — they attach when you save. Click Upload to queue additional files.';
             hint.classList.remove('d-none');
             return;
         }
         if (canAppendDocumentsOnLockedTx()) {
-            hint.textContent = 'You can add files. Existing attachments cannot be removed or replaced.';
+            hint.textContent = 'You can add files or a scan. Existing attachments cannot be removed or replaced.';
             hint.classList.remove('d-none');
             return;
         }
@@ -7801,14 +7825,43 @@ foreach ($colDefs as $col):
     // Suggestion is last-saved Ref # + 1 (placeholder only). kind is for reuse-check advisory.
     const REF_KIND = 'other';
 
-    /** Show tip only when Ref # is empty (ghost placeholder is visible). */
+    /**
+     * The suggested number may be written only while Ref # itself is editable
+     * (Add, or full Edit). View and cleared/reconciled budget-only edit keep
+     * the field display-only.
+     */
+    function referenceSuggestionAcceptable() {
+        if (!refInput || refInput.readOnly || refInput.disabled) return false;
+        if (budgetOnlyEditMode) return false;
+        return getTxFormMode() !== 'view';
+    }
+
+    /** Show the double-click tip only when Ref # is empty and the gesture will apply. */
     function updateReferenceHintVisibility() {
-        if (!refSuggestHint) return;
+        if (!refSuggestHint && !refInput) return;
         const hasValue = !!(refInput && (refInput.value || '').trim() !== '');
-        refSuggestHint.classList.toggle('d-none', hasValue);
-        if (!hasValue) {
-            refSuggestHint.textContent = 'Double-click for next suggested number';
+        const canAccept = referenceSuggestionAcceptable();
+        if (refSuggestHint) {
+            refSuggestHint.classList.toggle('d-none', hasValue || !canAccept);
+            if (!hasValue && canAccept) {
+                refSuggestHint.textContent = 'Double-click for next suggested number';
+            }
         }
+        if (refInput) {
+            refInput.title = canAccept ? 'Double-click for next suggested number' : '';
+        }
+    }
+
+    function applyReferenceSuggestion(suggested) {
+        const value = String(suggested || '').trim();
+        if (!referenceSuggestionAcceptable()) return false;
+        if (!/^\d{6}$/.test(value)) return false;
+        refInput.value = value;
+        clearReferenceReuseState();
+        checkReferenceReuseLive();
+        updateReferenceHintVisibility();
+        showToast('Filled suggested Reference # ' + value + '.', 'info', 2500);
+        return true;
     }
 
     function refreshReferenceSuggestion() {
@@ -7955,24 +8008,15 @@ foreach ($colDefs as $col):
 
     if (refInput) {
         refInput.addEventListener('dblclick', function() {
+            if (!referenceSuggestionAcceptable()) return;
             const suggested = (refInput.dataset.suggested || refInput.placeholder || '').trim();
             if (/^\d{6}$/.test(suggested)) {
-                refInput.value = suggested;
-                clearReferenceReuseState();
-                checkReferenceReuseLive();
-                updateReferenceHintVisibility();
-                showToast('Filled suggested Reference # ' + suggested + '.', 'info', 2500);
-            } else {
-                refreshReferenceSuggestion().then(s => {
-                    if (s && /^\d{6}$/.test(s)) {
-                        refInput.value = s;
-                        clearReferenceReuseState();
-                        checkReferenceReuseLive();
-                        updateReferenceHintVisibility();
-                        showToast('Filled suggested Reference # ' + s + '.', 'info', 2500);
-                    }
-                });
+                applyReferenceSuggestion(suggested);
+                return;
             }
+            refreshReferenceSuggestion().then(s => {
+                applyReferenceSuggestion(s);
+            });
         });
         refInput.addEventListener('input', function() {
             if (refReuseConfirmedFor && refReuseConfirmedFor !== (refInput.value || '').trim()) {
@@ -8180,11 +8224,12 @@ foreach ($colDefs as $col):
 
                         const uploadPromise = (filesToUpload.length && savedId)
                             ? uploadFilesSequentially(savedId, filesToUpload)
-                            : Promise.resolve({ ok: [], fail: [] });
+                            : Promise.resolve({ ok: [], fail: [], notices: [] });
 
                         return uploadPromise.then(function(upRes) {
                             clearPendingCreateDocs();
                             clearDocFileSelection();
+                            showAttachmentOptimizeNotices(upRes && upRes.notices);
 
                             const extras = [];
                             if (filesToUpload.length && !savedId) {
@@ -8596,13 +8641,24 @@ foreach ($colDefs as $col):
             });
     }
 
+    function showAttachmentOptimizeNotices(notices) {
+        (notices || []).forEach(function(n) {
+            if (!n || !n.notice || !n.message) return;
+            if (typeof showToast !== 'function') return;
+            showToast(n.message, n.warning ? 'warning' : 'info', n.warning ? 12000 : 8000);
+        });
+    }
+
     function uploadFilesSequentially(txId, files) {
-        let chain = Promise.resolve({ ok: [], fail: [] });
+        let chain = Promise.resolve({ ok: [], fail: [], notices: [] });
         (files || []).forEach(function(file) {
             chain = chain.then(function(acc) {
                 return uploadFileToTransaction(txId, file)
-                    .then(function() {
+                    .then(function(res) {
                         acc.ok.push(file.name);
+                        if (res && res.optimize && res.optimize.notice) {
+                            acc.notices.push(res.optimize);
+                        }
                         return acc;
                     })
                     .catch(function(err) {
@@ -8630,27 +8686,55 @@ foreach ($colDefs as $col):
         return m ? (parseInt(m[1], 10) || 0) : 0;
     }
 
-    function runDocUpload() {
+    function loadTemperDocScan() {
+        if (window.TemperDocScan && typeof window.TemperDocScan.open === 'function') {
+            return Promise.resolve(window.TemperDocScan);
+        }
+        if (window.__temperDocScanLoading) return window.__temperDocScanLoading;
+        window.__temperDocScanLoading = new Promise(function(resolve, reject) {
+            const script = document.createElement('script');
+            script.src = 'assets/js/temper-doc-scan.js?v=0.969';
+            script.async = true;
+            script.onload = function() {
+                if (window.TemperDocScan && typeof window.TemperDocScan.open === 'function') {
+                    resolve(window.TemperDocScan);
+                    return;
+                }
+                reject(new Error('Scan did not load.'));
+            };
+            script.onerror = function() {
+                reject(new Error('Scan did not load.'));
+            };
+            document.head.appendChild(script);
+        });
+        return window.__temperDocScanLoading;
+    }
+
+    /**
+     * Queue files on a new transaction, or upload them on one that already exists.
+     * Scans and ordinary picks share this path, including optimize-on-upload.
+     */
+    function deliverAttachmentFiles(files) {
         const id = txIdField && txIdField.value ? String(txIdField.value).trim() : '';
         const docUploadBtn = getTxDocUploadBtn();
         if (!canAttachDocuments()) {
             showToast('Enter edit mode to upload documents.', 'warning');
-            return;
+            return Promise.resolve();
         }
-        const files = getSelectedDocFiles();
-        if (!files.length) {
+        const list = Array.isArray(files) ? files.filter(function(file) { return file && file.name; }) : [];
+        if (!list.length) {
             showToast('Please select a file to upload.', 'warning');
             syncDocUploadBtn();
-            return;
+            return Promise.resolve();
         }
         // Add (no id yet): queue locally — files go up with Save
         if (!id) {
-            const added = queuePendingCreateDocs(files);
+            const added = queuePendingCreateDocs(list);
             clearDocFileSelection();
             if (added > 0) {
                 showToast(
                     added === 1
-                        ? ('“' + files[0].name + '” will upload when you save.')
+                        ? ('“' + list[0].name + '” will upload when you save.')
                         : (added + ' files will upload when you save.'),
                     'success',
                     3500
@@ -8658,21 +8742,23 @@ foreach ($colDefs as $col):
             } else {
                 showToast('That file is already in the save-upload queue.', 'info', 2500);
             }
-            return;
+            return Promise.resolve();
         }
         if (docUploadBtn) docUploadBtn.disabled = true;
-        uploadFilesSequentially(id, files)
+        return uploadFilesSequentially(id, list)
             .then(function(acc) {
                 if (acc.fail.length && !acc.ok.length) {
                     showToast(acc.fail[0] || 'Upload failed.', 'danger');
+                    showAttachmentOptimizeNotices(acc.notices);
                     syncDocUploadBtn();
-                    return;
+                    return acc;
                 }
                 if (acc.fail.length) {
                     showToast('Some uploads failed: ' + acc.fail.join('; '), 'warning', 6000);
                 } else {
                     showToast(acc.ok.length > 1 ? (acc.ok.length + ' files uploaded.') : 'Upload Successful', 'success');
                 }
+                showAttachmentOptimizeNotices(acc.notices);
                 clearDocFileSelection();
                 if (canAppendDocumentsOnLockedTx() && !budgetOnlyEditMode) {
                     markTxFormClean();
@@ -8688,6 +8774,38 @@ foreach ($colDefs as $col):
             });
     }
 
+    function runDocUpload() {
+        if (!canAttachDocuments()) {
+            showToast('Enter edit mode to upload documents.', 'warning');
+            return;
+        }
+        const files = getSelectedDocFiles();
+        if (!files.length) {
+            showToast('Please select a file to upload.', 'warning');
+            syncDocUploadBtn();
+            return;
+        }
+        deliverAttachmentFiles(files);
+    }
+
+    function startAttachmentScan() {
+        if (!canAttachDocuments()) {
+            showToast('Enter edit mode to upload documents.', 'warning');
+            return;
+        }
+        loadTemperDocScan()
+            .then(function(scan) {
+                scan.open({
+                    onComplete: function(file) {
+                        return deliverAttachmentFiles([file]);
+                    }
+                });
+            })
+            .catch(function() {
+                showToast('Scan did not load.', 'danger');
+            });
+    }
+
     // Live binding on the modal (survives reparent to body; no stale element refs)
     if (txFormModalEl) {
         txFormModalEl.addEventListener('change', function(e) {
@@ -8700,6 +8818,13 @@ foreach ($colDefs as $col):
             }
         });
         txFormModalEl.addEventListener('click', function(e) {
+            const scanBtn = e.target && e.target.closest ? e.target.closest('#txDocScanBtn') : null;
+            if (scanBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                startAttachmentScan();
+                return;
+            }
             const btn = e.target && e.target.closest ? e.target.closest('#txDocUploadBtn') : null;
             if (!btn) return;
             e.preventDefault();
@@ -8710,7 +8835,12 @@ foreach ($colDefs as $col):
         // Fallback if modal node missing at init
         const docFileInput = getTxDocFileInput();
         const docUploadBtn = getTxDocUploadBtn();
+        const docScanBtn = document.getElementById('txDocScanBtn');
         if (docFileInput) docFileInput.addEventListener('change', syncDocUploadBtn);
+        if (docScanBtn) docScanBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            startAttachmentScan();
+        });
         if (docUploadBtn) docUploadBtn.addEventListener('click', function(e) {
             e.preventDefault();
             runDocUpload();

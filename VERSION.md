@@ -19,6 +19,11 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.969](#v0969)
+- [v0.968](#v0968)
+- [v0.967](#v0967)
+- [v0.966](#v0966)
+- [v0.965](#v0965)
 - [v0.964](#v0964)
 - [v0.963](#v0963)
 - [v0.962](#v0962)
@@ -171,6 +176,133 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.969
+
+**Scan flow is Adjust, Enhance, then a named PDF** — 2026-10-01
+
+> No schema update required for this release (scan steps only).  
+> **Patch file (history row):** `updates/20261001_0969_scan_adjust_enhance_pages.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.969
+
+- Capture is still a photo or a picked image. Only this scan builds a PDF. A file chosen with the regular picker is unchanged.
+- Adjust crops with corner handles, flips, and rotates to any angle. Apply shows that result and stays on Adjust. Crop again returns to the handles. Next opens Enhance.
+- Enhance sets grayscale and contrast with sliders. Back returns to Adjust. Next adds the page to the document.
+- The page browser can view, delete, and reorder pages, add another page, and Finish. Finish asks for a document name, then builds one PDF and sends it through the existing upload and optimize path.
+- On a cleared or reconciled transaction, Scan is available only where adding a file is already allowed. Existing attachments stay in place.
+- The scan step remains `TemperDocScan.open` in `assets/js/temper-doc-scan.js`. Optimize rules are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.969**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.968 | `updates/20261001_0969_scan_adjust_enhance_pages.sql` (records 0.969; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.968, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.968
+
+**Ref # suggestion applies only in Add and Edit** — 2026-10-01
+
+> No schema update required for this release (view-mode gesture only).  
+> **Patch file (history row):** `updates/20261001_0968_ref_suggestion_view_mode.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.968
+
+- Double-click on the Ref # field fills the suggested number only in Add and full Edit.
+- In View, that gesture leaves the field as displayed. Cleared and reconciled transactions still keep Ref # read-only, including budget-only edit.
+- The suggested number is unchanged: last saved Ref # + 1. Add and Edit still fill it the same way.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.968**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.967 | `updates/20261001_0968_ref_suggestion_view_mode.sql` (records 0.968; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.967, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.967
+
+**Scan a document into one PDF attachment** — 2026-09-30
+
+> No schema update required for this release (scan step only).  
+> **Patch file (history row):** `updates/20260930_0967_attachment_scan_to_pdf.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.967
+
+- The transaction attachment row has Scan next to the existing file pick. Scan can take a photo or choose an image. It tries to find the page, and the corners can always be dragged. Grayscale and higher contrast are optional.
+- More than one page can be added. Finish builds one PDF. A normal image or PDF chosen with the file picker is unchanged and is not turned into a scan PDF.
+- That PDF uses the same upload as any other file, including the ebook and screen optimize and the original-versus-saved size confirmation.
+- On a cleared or reconciled transaction, Scan is available only where adding a file is already allowed. Existing attachments stay in place.
+- The scan step lives in `assets/js/temper-doc-scan.js` (`TemperDocScan.open`) so a later receipt workflow can call it and upload the PDF itself. Page detection is the local Scanic library under `assets/vendor/scanic/` (MIT).
+- Optimize rules are unchanged. Viewers, the paperclip, and posting are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.967**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.966 | `updates/20260930_0967_attachment_scan_to_pdf.sql` (records 0.967; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.966, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.966
+
+**PDF uploads run both Ghostscript profiles** — 2026-09-30
+
+> No schema update required for this release (upload optimize only).  
+> **Patch file (history row):** `updates/20260930_0966_pdf_both_profiles_on_upload.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.966
+
+- Each new PDF is optimized on this server with Ghostscript before it is stored. Temper writes an ebook output (color and gray downsampled to about 150 dpi) and a screen output (color and gray downsampled to about 100 dpi), then stores the smaller file that is smaller than the upload. If neither output is smaller, or Ghostscript is missing, or a profile fails and the other does not beat the original, the original is stored and the upload still succeeds.
+- A profile that fails is reported. A successful profile that is smaller than the original can still be the stored file. The confirmation names Ghostscript when it is not installed, and names the ebook or screen profile when that profile fails.
+- After a PDF, JPEG, or PNG is saved, the confirmation shows the original size, the saved size, and the percent change versus the original. That note is informational. There is no choice of profile and no retry.
+- JPEG and PNG stay on the existing resize and compress path (long edge at most 2000px). Images stay images. Word documents are unchanged. Files are not sent to an external compression service.
+- Pending transactions keep add and remove. Cleared and reconciled transactions can still receive new files, and those new files follow these rules. Attachments already stored on a cleared or reconciled transaction are not recompressed, replaced, or deleted.
+- Viewers, the paperclip, and posting are unchanged. This release does not add a scan or camera flow.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.966**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.965 | `updates/20260930_0966_pdf_both_profiles_on_upload.sql` (records 0.966; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.965, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.965
+
+**Optimize new attachments on upload** — 2026-09-30
+
+> No schema update required for this release (local optimize on upload only).  
+> **Patch file (history row):** `updates/20260930_0965_attachment_optimize_on_upload.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.965
+
+- After a PDF, JPEG, or PNG is accepted, Temper tries to optimize it on this server before storing it. Word documents are unchanged. Files are not sent to an external compression service.
+- PDFs use Ghostscript’s ebook profile when `gs` is installed. Retry uses the screen profile. Images are resized so the long edge is at most 2000px (1600px on retry) and recompressed. Images stay images.
+- Small files are optimized too. The stored file is the smaller of the original and the optimize output. If optimize fails or does not shrink the file, the original is stored and the upload still succeeds.
+- When the original is stored, the upload says the file will be stored as that many KB and offers a retry of that upload. If Ghostscript is not installed, the message says so and that a PDF retry will not help.
+- Pending transactions keep add and remove. Cleared and reconciled transactions can still receive new files, and those new files follow the same optimize rules. Attachments already stored on a cleared or reconciled transaction are not recompressed, replaced, or deleted. Retry only re-runs optimize on an upload from the last 24 hours, and only replaces that file when the new result is smaller.
+- Viewers, the paperclip, and posting are unchanged. This release does not add a scan or camera flow.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.965**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.964 | `updates/20260930_0965_attachment_optimize_on_upload.sql` (records 0.965; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.964, then this process-only patch after `php setup_db.php` |
 
 ---
 

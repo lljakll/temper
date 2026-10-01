@@ -7,6 +7,7 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 
 require_once __DIR__ . '/audit.php';
 require_once __DIR__ . '/storage_paths.php';
+require_once __DIR__ . '/attachment_optimize.php';
 
 /**
  * Verify ledger tables exist. Does not create or modify schema —
@@ -1823,11 +1824,15 @@ function ledgerStoreDocument(
         'stored_filename' => $stored,
         'reference_number' => $reference,
         'folder' => $folderKey,
+        'file_size' => $size,
     ];
 }
 
 /**
- * Store a document from a $_FILES entry after full validation.
+ * Store a document from a $_FILES entry after validation.
+ * PDF and image files are optimized locally first. A PDF stores the smaller
+ * Ghostscript output that beats the original, or the original. Images store the
+ * smaller resize. Optimize failure still stores the original.
  */
 function ledgerStoreDocumentFromUpload(
     mysqli $db,
@@ -1839,14 +1844,62 @@ function ledgerStoreDocumentFromUpload(
     if (empty($check['success'])) {
         return ['success' => false, 'error' => $check['error'] ?? 'Invalid upload.'];
     }
-    return ledgerStoreDocument(
+
+    $inputBytes = (int)($check['size'] ?? 0);
+    try {
+        $opt = ledgerOptimizeAttachmentFile($check['tmp_path'], $check['extension'], 'initial');
+    } catch (Throwable $e) {
+        error_log('temper attachment optimize: ' . $e->getMessage());
+        $opt = ledgerOptimizeResult(
+            true,
+            'original',
+            'failed',
+            $inputBytes,
+            null,
+            null,
+            ledgerGhostscriptBinary() !== null,
+            ledgerImageOptimizeAvailable()
+        );
+    }
+
+    $storePath = $check['tmp_path'];
+    $optimizedTemp = null;
+    if (($opt['kept'] ?? '') === 'optimized' && !empty($opt['output_path']) && is_file((string)$opt['output_path'])) {
+        $storePath = (string)$opt['output_path'];
+        $optimizedTemp = $storePath;
+    } elseif (!empty($opt['output_path']) && is_file((string)$opt['output_path'])) {
+        @unlink((string)$opt['output_path']);
+        $opt['output_path'] = null;
+        $opt['kept'] = 'original';
+    }
+
+    $result = ledgerStoreDocument(
         $db,
         $transactionId,
         $userId,
         $check['original_name'],
-        $check['tmp_path'],
+        $storePath,
         $check['mime_type']
     );
+
+    if ($optimizedTemp !== null && is_file($optimizedTemp)) {
+        @unlink($optimizedTemp);
+    }
+
+    if (empty($result['success'])) {
+        return $result;
+    }
+
+    $storedBytes = (int)($result['file_size'] ?? 0);
+    $payload = ledgerAttachmentOptimizePayload(
+        $check['original_name'],
+        $check['extension'],
+        $storedBytes,
+        $opt
+    );
+    $payload['doc_id'] = (int)$result['id'];
+    $result['optimize'] = $payload;
+    return $result;
 }
 
 /**
