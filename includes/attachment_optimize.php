@@ -7,7 +7,8 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
 
 /**
  * Local optimize-on-upload for new ledger attachments.
- * Each new PDF runs Ghostscript ebook (about 150 dpi) and screen (about 100 dpi).
+ * Each new PDF runs Ghostscript ebook (about 150 dpi) and screen (about 100 dpi)
+ * on the pdfwrite device. The gs process does not open an X11 display.
  * The smaller output that beats the original is the one returned. JPEG and PNG
  * are resized and recompressed with GD. Images stay images.
  * No external compression service and no user choice of profile.
@@ -183,6 +184,67 @@ function ledgerPdfOptimizeMeta(array $result, array $failures, ?string $chosen):
 }
 
 /**
+ * True when the process environment would send Ghostscript at an X11 display.
+ * GS_DEVICE=x11* (or the display device) does. A set DISPLAY with no other
+ * device does too, because the usual Linux default device is x11alpha.
+ *
+ * @param array<string, string> $env
+ */
+function ledgerGhostscriptEnvPointsAtX11(array $env): bool {
+    $device = strtolower(trim((string)($env['GS_DEVICE'] ?? '')));
+    if ($device !== '' && (strncmp($device, 'x11', 3) === 0 || $device === 'display')) {
+        return true;
+    }
+    $display = trim((string)($env['DISPLAY'] ?? ''));
+    return $display !== '' && $device === '';
+}
+
+/**
+ * Environment for one gs process. pdfwrite is the initial device, so a
+ * headless server does not open the compiled-in x11 device. When the parent
+ * environment points at X11, DISPLAY and that GS_DEVICE are not passed on.
+ *
+ * @param array<string, string> $env
+ * @return array<string, string>
+ */
+function ledgerGhostscriptHeadlessEnv(array $env): array {
+    if (ledgerGhostscriptEnvPointsAtX11($env)) {
+        unset($env['GS_DEVICE'], $env['DISPLAY']);
+    }
+    $env['GS_DEVICE'] = 'pdfwrite';
+    return $env;
+}
+
+/**
+ * @return array<string, string>
+ */
+function ledgerProcessEnvironment(): array {
+    $raw = getenv();
+    $env = [];
+    if (is_array($raw)) {
+        foreach ($raw as $key => $value) {
+            if (!is_string($key) || !is_string($value)) {
+                continue;
+            }
+            $env[$key] = $value;
+        }
+    }
+    if ($env !== []) {
+        return $env;
+    }
+    foreach (['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'TEMP', 'TMP', 'GS_LIB', 'GS_FONTPATH', 'GS_OPTIONS', 'GS_DEVICE', 'DISPLAY'] as $key) {
+        $value = getenv($key);
+        if (is_string($value) && $value !== '') {
+            $env[$key] = $value;
+        }
+    }
+    if (!isset($env['PATH']) || $env['PATH'] === '') {
+        $env['PATH'] = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+    }
+    return $env;
+}
+
+/**
  * Write one Ghostscript profile to a new temp file. Does not read or replace $work.
  *
  * @return array{ok:bool,path:?string,bytes:int,exit:int,timed_out:bool,stderr:string}
@@ -200,9 +262,15 @@ function ledgerWritePdfProfile(string $gs, string $work, string $setting, int $t
     $screen = $setting === 'screen';
     $pdfSetting = $screen ? '/screen' : '/ebook';
     $dpi = $screen ? 100 : 150;
+    // pdfwrite is explicit. Do not rely on the default device (often x11alpha).
     $cmd = [
         $gs,
         '-sDEVICE=pdfwrite',
+        '-dSAFER',
+        '-dBATCH',
+        '-dNOPAUSE',
+        '-dNOPROMPT',
+        '-dQUIET',
         '-dCompatibilityLevel=1.4',
         '-dPDFSETTINGS=' . $pdfSetting,
         '-dDownsampleColorImages=true',
@@ -213,14 +281,10 @@ function ledgerWritePdfProfile(string $gs, string $work, string $setting, int $t
         '-dGrayImageResolution=' . $dpi,
         '-dColorImageDownsampleThreshold=1.0',
         '-dGrayImageDownsampleThreshold=1.0',
-        '-dNOPAUSE',
-        '-dQUIET',
-        '-dBATCH',
-        '-dSAFER',
         '-sOutputFile=' . $out,
         $work,
     ];
-    $ran = ledgerRunLocalCommand($cmd, $timeoutSeconds);
+    $ran = ledgerRunLocalCommand($cmd, $timeoutSeconds, ledgerGhostscriptHeadlessEnv(ledgerProcessEnvironment()));
     $bytes = is_file($out) ? (int)filesize($out) : 0;
     $valid = $bytes > 0 && ledgerFileStartsWith($out, '%PDF-');
     $ok = !$ran['timed_out'] && (int)$ran['exit'] === 0 && $valid;
@@ -515,14 +579,11 @@ function ledgerAttachmentOptimizePayload(
     if ($gsMissing) {
         $prefix = 'Ghostscript is not installed. ';
         $warning = true;
-    } elseif ($ext === 'pdf' && count($failures) >= 2) {
-        $prefix = 'The ebook and screen profiles failed. ';
+    } elseif ($ext === 'pdf' && $kept !== 'optimized' && ($failures !== [] || $reason === 'failed')) {
+        $prefix = 'PDF compression failed. ';
         $warning = true;
     } elseif ($ext === 'pdf' && count($failures) === 1) {
         $prefix = 'The ' . $failures[0] . ' profile failed. ';
-        $warning = true;
-    } elseif ($ext === 'pdf' && $reason === 'failed' && $kept !== 'optimized') {
-        $prefix = 'The ebook and screen profiles failed. ';
         $warning = true;
     } elseif ($imageMissing) {
         $prefix = 'Image optimization is not available on this server. ';
@@ -583,16 +644,17 @@ function ledgerSavedImageMatches(string $path, string $ext): bool {
 }
 
 /**
+ * @param array<string, string>|null $env Child environment. Null inherits the parent.
  * @return array{exit:int,stdout:string,stderr:string,timed_out:bool}
  */
-function ledgerRunLocalCommand(array $command, int $timeoutSeconds): array {
+function ledgerRunLocalCommand(array $command, int $timeoutSeconds, ?array $env = null): array {
     $descriptors = [
         0 => ['pipe', 'r'],
         1 => ['pipe', 'w'],
         2 => ['pipe', 'w'],
     ];
     $pipes = [];
-    $proc = @proc_open($command, $descriptors, $pipes, sys_get_temp_dir());
+    $proc = @proc_open($command, $descriptors, $pipes, sys_get_temp_dir(), $env);
     if (!is_resource($proc)) {
         return ['exit' => 1, 'stdout' => '', 'stderr' => 'Could not start the local optimizer.', 'timed_out' => false];
     }
