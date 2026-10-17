@@ -8693,7 +8693,7 @@ foreach ($colDefs as $col):
         if (window.__temperDocScanLoading) return window.__temperDocScanLoading;
         window.__temperDocScanLoading = new Promise(function(resolve, reject) {
             const script = document.createElement('script');
-            script.src = 'assets/js/temper-doc-scan.js?v=0.969';
+            script.src = 'assets/js/temper-doc-scan.js?v=0.973';
             script.async = true;
             script.onload = function() {
                 if (window.TemperDocScan && typeof window.TemperDocScan.open === 'function') {

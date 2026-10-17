@@ -9,8 +9,9 @@ if (basename($_SERVER['PHP_SELF'] ?? '') === basename(__FILE__)) {
  * Local optimize-on-upload for new ledger attachments.
  * Each new PDF runs Ghostscript ebook (about 150 dpi) and screen (about 100 dpi)
  * on the pdfwrite device. The gs process does not open an X11 display.
- * The smaller output that beats the original is the one returned. JPEG and PNG
- * are resized and recompressed with GD. Images stay images.
+ * The smaller output that beats the original is the one returned. A finished
+ * PDF that is smaller than the upload is kept even when PHP reports exit -1.
+ * JPEG and PNG are resized and recompressed with GD. Images stay images.
  * No external compression service and no user choice of profile.
  */
 
@@ -249,7 +250,7 @@ function ledgerProcessEnvironment(): array {
  *
  * @return array{ok:bool,path:?string,bytes:int,exit:int,timed_out:bool,stderr:string}
  */
-function ledgerWritePdfProfile(string $gs, string $work, string $setting, int $timeoutSeconds): array {
+function ledgerWritePdfProfile(string $gs, string $work, string $setting, int $timeoutSeconds, int $inputBytes): array {
     $empty = ['ok' => false, 'path' => null, 'bytes' => 0, 'exit' => 1, 'timed_out' => false, 'stderr' => ''];
     $out = tempnam(sys_get_temp_dir(), 'temper-opt-');
     if ($out === false) {
@@ -286,8 +287,13 @@ function ledgerWritePdfProfile(string $gs, string $work, string $setting, int $t
     ];
     $ran = ledgerRunLocalCommand($cmd, $timeoutSeconds, ledgerGhostscriptHeadlessEnv(ledgerProcessEnvironment()));
     $bytes = is_file($out) ? (int)filesize($out) : 0;
-    $valid = $bytes > 0 && ledgerFileStartsWith($out, '%PDF-');
-    $ok = !$ran['timed_out'] && (int)$ran['exit'] === 0 && $valid;
+    $exit = (int)$ran['exit'];
+    $timedOut = (bool)$ran['timed_out'];
+    // Exit 0 is a normal gs success. Exit -1 means PHP lost the status after
+    // the child had already been reaped. A finished PDF smaller than the
+    // upload is still a success in that case. Any other exit is a gs failure,
+    // and the caller logs stderr.
+    $ok = ledgerPdfProfileSucceeded($exit, $timedOut, $out, $bytes, $inputBytes);
     return [
         'ok' => $ok,
         'path' => $out,
@@ -310,6 +316,18 @@ function ledgerOptimizePdfFile(
     $bothFailed = ['ebook', 'screen'];
     $gs = ledgerGhostscriptBinary();
     if ($gs === null) {
+        $pathEnv = getenv('PATH');
+        $pathText = is_string($pathEnv) ? trim($pathEnv) : '';
+        if ($pathText === '') {
+            $pathText = '(empty)';
+        }
+        if (strlen($pathText) > 400) {
+            $pathText = substr($pathText, 0, 400) . '...';
+        }
+        error_log(
+            'temper attachment optimize: gs_missing Ghostscript is not on the web user PATH. PATH='
+            . $pathText
+        );
         return ledgerPdfOptimizeMeta(
             ledgerOptimizeResult(true, 'original', 'gs_missing', $inputBytes, null, null, false, $imageTool),
             [],
@@ -343,7 +361,7 @@ function ledgerOptimizePdfFile(
         $failures = [];
         $candidates = [];
         foreach (['ebook', 'screen'] as $setting) {
-            $one = ledgerWritePdfProfile($gs, $work, $setting, 40);
+            $one = ledgerWritePdfProfile($gs, $work, $setting, 40, $inputBytes);
             if (is_string($one['path']) && $one['path'] !== '') {
                 $scratch[] = $one['path'];
             }
@@ -621,6 +639,28 @@ function ledgerAttachmentOptimizePayload(
     ];
 }
 
+/**
+ * True when this Ghostscript profile can be stored.
+ * Exit 0 with a PDF header is the normal success.
+ * Exit -1 is PHP reporting a lost status. That profile still succeeds when
+ * the file exists, starts with a PDF header, ends with %%EOF, and is smaller
+ * than the upload. A real non-zero gs exit does not succeed.
+ */
+function ledgerPdfProfileSucceeded(int $exitCode, bool $timedOut, string $path, int $bytes, int $inputBytes): bool {
+    if ($timedOut || $bytes <= 0 || $inputBytes <= 0 || $path === '' || !is_file($path)) {
+        return false;
+    }
+    if (!ledgerFileStartsWith($path, '%PDF-')) {
+        return false;
+    }
+    if ($exitCode === 0) {
+        return true;
+    }
+    return $exitCode === -1
+        && $bytes < $inputBytes
+        && ledgerPdfFileHasEofMarker($path);
+}
+
 function ledgerFileStartsWith(string $path, string $prefix): bool {
     $fh = @fopen($path, 'rb');
     if ($fh === false) {
@@ -629,6 +669,26 @@ function ledgerFileStartsWith(string $path, string $prefix): bool {
     $got = (string)fread($fh, strlen($prefix));
     fclose($fh);
     return $got === $prefix;
+}
+
+function ledgerPdfFileHasEofMarker(string $path): bool {
+    $fh = @fopen($path, 'rb');
+    if ($fh === false) {
+        return false;
+    }
+    $size = @filesize($path);
+    if (!is_int($size) || $size < 5) {
+        fclose($fh);
+        return false;
+    }
+    $tailLen = min($size, 2048);
+    if (@fseek($fh, -$tailLen, SEEK_END) !== 0) {
+        fclose($fh);
+        return false;
+    }
+    $tail = (string)fread($fh, $tailLen);
+    fclose($fh);
+    return str_contains($tail, '%%EOF');
 }
 
 function ledgerSavedImageMatches(string $path, string $ext): bool {
@@ -658,20 +718,49 @@ function ledgerRunLocalCommand(array $command, int $timeoutSeconds, ?array $env 
     if (!is_resource($proc)) {
         return ['exit' => 1, 'stdout' => '', 'stderr' => 'Could not start the local optimizer.', 'timed_out' => false];
     }
-    fclose($pipes[0]);
-    stream_set_blocking($pipes[1], false);
-    stream_set_blocking($pipes[2], false);
+    // Close stdin now. Stdout and stderr stay open until the child finishes
+    // so a full pipe cannot stall gs. proc_get_status() is not used on this
+    // path: once it has reaped the child, proc_close() returns -1 even when
+    // gs wrote a good file. Pipes are closed first, then proc_close() returns
+    // the real status.
+    if (isset($pipes[0]) && is_resource($pipes[0])) {
+        fclose($pipes[0]);
+        unset($pipes[0]);
+    }
+    foreach ([1, 2] as $idx) {
+        if (isset($pipes[$idx]) && is_resource($pipes[$idx])) {
+            stream_set_blocking($pipes[$idx], false);
+        }
+    }
     $stdout = '';
     $stderr = '';
     $start = time();
     $timedOut = false;
-    $exit = 1;
     while (true) {
-        $status = proc_get_status($proc);
-        $stdout .= (string)stream_get_contents($pipes[1]);
-        $stderr .= (string)stream_get_contents($pipes[2]);
-        if (empty($status['running'])) {
+        $read = [];
+        foreach ([1, 2] as $idx) {
+            if (isset($pipes[$idx]) && is_resource($pipes[$idx]) && !feof($pipes[$idx])) {
+                $read[] = $pipes[$idx];
+            }
+        }
+        if ($read === []) {
             break;
+        }
+        $write = null;
+        $except = null;
+        $ready = @stream_select($read, $write, $except, 0, 200000);
+        if (is_array($read)) {
+            foreach ($read as $pipe) {
+                $chunk = stream_get_contents($pipe);
+                if (!is_string($chunk) || $chunk === '') {
+                    continue;
+                }
+                if (isset($pipes[1]) && $pipe === $pipes[1]) {
+                    $stdout .= $chunk;
+                } else {
+                    $stderr .= $chunk;
+                }
+            }
         }
         if ((time() - $start) >= $timeoutSeconds) {
             $timedOut = true;
@@ -680,20 +769,30 @@ function ledgerRunLocalCommand(array $command, int $timeoutSeconds, ?array $env 
             $status = proc_get_status($proc);
             if (!empty($status['running'])) {
                 proc_terminate($proc, 9);
+                usleep(100000);
             }
             break;
         }
-        usleep(100000);
+        if ($ready === false) {
+            continue;
+        }
     }
-    $stdout .= (string)stream_get_contents($pipes[1]);
-    $stderr .= (string)stream_get_contents($pipes[2]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
+    foreach ([1, 2] as $idx) {
+        if (!isset($pipes[$idx]) || !is_resource($pipes[$idx])) {
+            continue;
+        }
+        $chunk = stream_get_contents($pipes[$idx]);
+        if (is_string($chunk) && $chunk !== '') {
+            if ($idx === 1) {
+                $stdout .= $chunk;
+            } else {
+                $stderr .= $chunk;
+            }
+        }
+        fclose($pipes[$idx]);
+        unset($pipes[$idx]);
+    }
     $closed = proc_close($proc);
-    if (!$timedOut) {
-        // proc_get_status() keeps exitcode at -1 after it was polled while running.
-        $exit = (int)$closed;
-    }
     if (strlen($stdout) > 2000) {
         $stdout = substr($stdout, 0, 2000);
     }
@@ -701,7 +800,7 @@ function ledgerRunLocalCommand(array $command, int $timeoutSeconds, ?array $env 
         $stderr = substr($stderr, 0, 2000);
     }
     return [
-        'exit' => $timedOut ? 124 : $exit,
+        'exit' => $timedOut ? 124 : (int)$closed,
         'stdout' => $stdout,
         'stderr' => $stderr,
         'timed_out' => $timedOut,

@@ -3,9 +3,13 @@
  *
  * TemperDocScan.open({ onComplete: function (file) {} })
  * The caller receives one named PDF File and uploads it through its own path.
- * Ordinary image picks are not converted here.
+ * A normal file-picker upload never enters this step and is not converted to PDF.
  *
- * Flow: capture → Adjust (crop, flip, free rotate) → Enhance → page browser → named PDF.
+ * Flow: live camera in a secure context (corner overlay, shutter, optional auto-capture).
+ *   On plain HTTP, a camera-app photo via capture="environment" — getUserMedia is not called.
+ *   Then one review screen (drag corners, free rotate, Original / Grayscale / Black & white,
+ *      thumbnails, add, retake, delete, reorder)
+ *   → document name → one PDF.
  * Page detection uses Scanic (assets/vendor/scanic). Corners can always be dragged.
  */
 (function () {
@@ -16,30 +20,44 @@
     var MAX_EDGE = 2000;
     var MAX_PAGES = 12;
     var JPEG_QUALITY = 0.82;
+    var DETECT_EDGE = 640;
     var SCANIC_URL = 'assets/vendor/scanic/scanic.js';
+    var FILTERS = [
+        { id: 'original', label: 'Original' },
+        { id: 'gray', label: 'Grayscale' },
+        { id: 'bw', label: 'Black & white' }
+    ];
 
     var overlay = null;
     var bodyEl = null;
     var statusEl = null;
     var titleEl = null;
+    var toolsEl = null;
     var options = null;
     var pages = [];
-    var sourceCanvas = null;
-    var adjustedCanvas = null;
+    var reviewIndex = 0;
+    var retakeIndex = null;
     var editor = null;
     var keyHandler = null;
     var focusHandler = null;
+    var resizeHandler = null;
     var busy = false;
     var stylesInjected = false;
     var viewToken = 0;
-    var showingResult = false;
-    var lastCorners = null;
-    var flipH = false;
-    var flipV = false;
-    var rotateDeg = 0;
-    var grayPct = 0;
-    var contrastPct = 100;
-    var enhanceFrame = 0;
+    var cameraToken = 0;
+    var mode = '';
+    var cameraStream = null;
+    var videoEl = null;
+    var overlayCanvas = null;
+    var liveCorners = null;
+    var liveMeta = null;
+    var lastLiveCorners = null;
+    var stableCount = 0;
+    var autoCapture = false;
+    var autoArmed = true;
+    var detectTimer = 0;
+    var detecting = false;
+    var renderTimer = 0;
 
     function enc() {
         return new TextEncoder();
@@ -169,9 +187,12 @@
             '.temper-doc-scan-bar,.temper-doc-scan-foot{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;',
             'padding:.6rem .75rem calc(.6rem + env(safe-area-inset-bottom));background:#1c2024;}',
             '.temper-doc-scan-bar{padding-top:calc(.6rem + env(safe-area-inset-top));}',
-            '.temper-doc-scan-bar strong{margin-right:auto;}',
-            '.temper-doc-scan-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:auto;}',
-            '.temper-doc-scan-editor{position:relative;flex:1 1 auto;min-height:220px;background:#000;overflow:hidden;touch-action:none;}',
+            '.temper-doc-scan-tools{display:flex;gap:.5rem;margin-left:auto;flex-wrap:wrap;}',
+            '.temper-doc-scan-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden;}',
+            '.temper-doc-scan-stage{position:relative;flex:1 1 auto;min-height:220px;background:#000;overflow:hidden;}',
+            '.temper-doc-scan-stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;}',
+            '.temper-doc-scan-overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}',
+            '.temper-doc-scan-editor{position:relative;flex:1 1 auto;min-height:180px;background:#000;overflow:hidden;touch-action:none;}',
             '.temper-doc-scan-status{padding:.45rem .75rem;color:#d5dbe2;font-size:.92rem;}',
             '.temper-doc-scan-capture,.temper-doc-scan-name{display:flex;flex-direction:column;gap:.75rem;padding:1.25rem .9rem;}',
             '.temper-doc-scan button{min-height:44px;border-radius:.4rem;border:1px solid #8ea0b5;',
@@ -179,19 +200,20 @@
             '.temper-doc-scan button.primary{background:#0d6efd;border-color:#0d6efd;}',
             '.temper-doc-scan button.is-on{background:#0d6efd;border-color:#0d6efd;}',
             '.temper-doc-scan button:disabled{opacity:.55;}',
-            '.temper-doc-scan-controls{display:flex;flex-direction:column;gap:.65rem;padding:.65rem .75rem 0;}',
+            '.temper-doc-scan-cam-foot{justify-content:center;}',
+            '.temper-doc-scan button.temper-doc-scan-shutter{width:72px;height:72px;min-height:72px;padding:0;',
+            'border-radius:50%;border:4px solid #fff;background:#f4f7fb;color:#121416;}',
+            '.temper-doc-scan button.temper-doc-scan-shutter:active{background:#0d6efd;color:#fff;}',
+            '.temper-doc-scan-review-tools{flex:0 1 auto;max-height:46%;overflow:auto;padding:.35rem .75rem .5rem;}',
+            '.temper-doc-scan-result{display:block;max-width:100%;max-height:120px;margin:0 auto .35rem;object-fit:contain;background:#000;}',
+            '.temper-doc-scan-controls{display:flex;flex-direction:column;gap:.45rem;}',
             '.temper-doc-scan-controls label{display:flex;flex-direction:column;gap:.15rem;font-size:.92rem;}',
             '.temper-doc-scan-controls input[type=range]{width:100%;height:44px;accent-color:#0d6efd;}',
-            '.temper-doc-scan-toggles{display:flex;gap:.5rem;flex-wrap:wrap;}',
-            '.temper-doc-scan-preview-wrap{position:relative;flex:1 1 0;min-height:140px;background:#000;',
-            'display:flex;align-items:center;justify-content:center;overflow:hidden;}',
-            '.temper-doc-scan-preview{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;}',
-            '.temper-doc-scan-browser{display:flex;flex-direction:column;gap:.6rem;padding:.75rem;}',
-            '.temper-doc-scan-page{display:flex;gap:.6rem;align-items:center;background:#1c2024;border-radius:.4rem;padding:.45rem;}',
-            '.temper-doc-scan-page img{width:4.5rem;height:6rem;object-fit:contain;background:#000;border-radius:.25rem;}',
-            '.temper-doc-scan-page-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:.35rem;}',
-            '.temper-doc-scan-page-actions{display:flex;gap:.35rem;flex-wrap:wrap;}',
-            '.temper-doc-scan-page-actions button{min-height:40px;}',
+            '.temper-doc-scan-chips{display:flex;gap:.4rem;flex-wrap:wrap;}',
+            '.temper-doc-scan-thumbs{display:flex;gap:.4rem;overflow-x:auto;padding:.45rem 0 .1rem;}',
+            '.temper-doc-scan-thumbs button{padding:.15rem;min-height:0;width:3.5rem;height:4.6rem;',
+            'display:flex;align-items:center;justify-content:center;background:#000;}',
+            '.temper-doc-scan-thumbs img{max-width:100%;max-height:100%;object-fit:contain;}',
             '.temper-doc-scan-name input{min-height:44px;font:inherit;padding:.45rem .65rem;border-radius:.4rem;',
             'border:1px solid #8ea0b5;background:#0e1216;color:#fff;}'
         ].join('');
@@ -231,6 +253,14 @@
         if (bodyEl) bodyEl.textContent = '';
     }
 
+    function setBar(buttons) {
+        if (!toolsEl) return;
+        toolsEl.textContent = '';
+        (buttons || []).forEach(function (button) {
+            if (button) toolsEl.appendChild(button);
+        });
+    }
+
     function focusPrimary() {
         if (!overlay) return;
         var btn = overlay.querySelector('button.primary');
@@ -252,29 +282,42 @@
 
     function releasePage(page) {
         if (!page) return;
-        releaseUrl(page.thumbUrl);
         releaseUrl(page.fullUrl);
+        page.fullUrl = '';
     }
 
     function releasePages() {
         pages.forEach(releasePage);
         pages = [];
+        reviewIndex = 0;
+        retakeIndex = null;
     }
 
-    function resetPageWork() {
-        sourceCanvas = null;
-        adjustedCanvas = null;
-        lastCorners = null;
-        showingResult = false;
-        flipH = false;
-        flipV = false;
-        rotateDeg = 0;
-        grayPct = 0;
-        contrastPct = 100;
-        if (enhanceFrame) {
-            cancelAnimationFrame(enhanceFrame);
-            enhanceFrame = 0;
+    function stopDetect() {
+        if (detectTimer) {
+            clearTimeout(detectTimer);
+            detectTimer = 0;
         }
+        detecting = false;
+    }
+
+    function stopCamera() {
+        stopDetect();
+        liveCorners = null;
+        liveMeta = null;
+        lastLiveCorners = null;
+        stableCount = 0;
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(function (track) {
+                try { track.stop(); } catch (e) { /* already stopped */ }
+            });
+            cameraStream = null;
+        }
+        if (videoEl) {
+            try { videoEl.srcObject = null; } catch (e2) { /* ignore */ }
+        }
+        videoEl = null;
+        overlayCanvas = null;
     }
 
     function detachGuards() {
@@ -286,26 +329,37 @@
             document.removeEventListener('focusin', focusHandler, true);
             focusHandler = null;
         }
+        if (resizeHandler) {
+            window.removeEventListener('resize', resizeHandler);
+            resizeHandler = null;
+        }
     }
 
     function close(force) {
         if (!overlay) return;
-        if (!force && (pages.length || sourceCanvas)) {
+        if (!force && pages.length) {
             var ask = (typeof window.confirm === 'function') ? window.confirm : function () { return true; };
-            if (!ask('Close and discard this scan?')) return;
+            if (!ask('Cancel and discard pages that are not saved?')) return;
         }
         viewToken += 1;
+        cameraToken += 1;
+        if (renderTimer) {
+            clearTimeout(renderTimer);
+            renderTimer = 0;
+        }
         destroyEditor();
+        stopCamera();
         releasePages();
-        resetPageWork();
         detachGuards();
         if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
         overlay = null;
         bodyEl = null;
         statusEl = null;
         titleEl = null;
+        toolsEl = null;
         options = null;
         busy = false;
+        mode = '';
     }
 
     function loadScript(url) {
@@ -347,6 +401,8 @@
         canvas.height = h;
         var ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('This browser cannot read that photo.');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
         ctx.drawImage(source, 0, 0, w, h);
         return canvas;
     }
@@ -402,19 +458,6 @@
         return drawToCanvas(src, src.width, src.height);
     }
 
-    function flipCanvas(src, horizontal, vertical) {
-        if (!horizontal && !vertical) return src;
-        var canvas = document.createElement('canvas');
-        canvas.width = src.width;
-        canvas.height = src.height;
-        var ctx = canvas.getContext('2d');
-        if (!ctx) return src;
-        ctx.translate(horizontal ? canvas.width : 0, vertical ? canvas.height : 0);
-        ctx.scale(horizontal ? -1 : 1, vertical ? -1 : 1);
-        ctx.drawImage(src, 0, 0);
-        return canvas;
-    }
-
     function rotateCanvas(src, degrees) {
         var deg = Number(degrees) || 0;
         if (Math.abs(deg) < 0.05) return src;
@@ -439,40 +482,33 @@
     function clampByte(n) {
         if (n < 0) return 0;
         if (n > 255) return 255;
-        return n;
+        return n | 0;
     }
 
-    function enhanceCanvas(src, gray, contrastValue) {
-        var g = Math.max(0, Math.min(100, Number(gray) || 0)) / 100;
-        var contrast = (Number(contrastValue) || 100) / 100;
+    function applyFilter(src, filterName) {
+        if (!src || filterName === 'original' || !filterName) return src;
         var canvas = document.createElement('canvas');
         canvas.width = src.width;
         canvas.height = src.height;
         var ctx = canvas.getContext('2d');
         if (!ctx) return src;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(src, 0, 0);
-        if (g === 0 && Math.abs(contrast - 1) < 0.001) return canvas;
         var image = ctx.getImageData(0, 0, canvas.width, canvas.height);
         var data = image.data;
+        var bw = filterName === 'bw';
         var i;
+        var y;
         for (i = 0; i < data.length; i += 4) {
-            var r = data[i];
-            var gc = data[i + 1];
-            var b = data[i + 2];
-            if (g > 0) {
-                var y = (0.299 * r) + (0.587 * gc) + (0.114 * b);
-                r = r + (y - r) * g;
-                gc = gc + (y - gc) * g;
-                b = b + (y - b) * g;
+            y = (0.299 * data[i]) + (0.587 * data[i + 1]) + (0.114 * data[i + 2]);
+            if (bw) {
+                y = ((y - 128) * 1.35) + 128;
+                y = y >= 160 ? 255 : 0;
             }
-            if (Math.abs(contrast - 1) >= 0.001) {
-                r = ((r - 128) * contrast) + 128;
-                gc = ((gc - 128) * contrast) + 128;
-                b = ((b - 128) * contrast) + 128;
-            }
-            data[i] = clampByte(r);
-            data[i + 1] = clampByte(gc);
-            data[i + 2] = clampByte(b);
+            data[i] = clampByte(y);
+            data[i + 1] = clampByte(y);
+            data[i + 2] = clampByte(y);
         }
         ctx.putImageData(image, 0, 0);
         return canvas;
@@ -509,492 +545,862 @@
         return n + '°';
     }
 
-    function readRotateControl() {
-        var node = document.getElementById('temperDocScanRotate');
-        if (node) rotateDeg = Number(node.value) || 0;
-    }
-
-    function currentCorners() {
-        if (editor && typeof editor.getCorners === 'function') {
-            return editor.getCorners();
+    function cornerDelta(a, b) {
+        if (!a || !b) return Infinity;
+        var keys = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'];
+        var max = 0;
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            var pa = a[keys[i]];
+            var pb = b[keys[i]];
+            if (!pa || !pb) return Infinity;
+            var dist = Math.hypot((pa.x || 0) - (pb.x || 0), (pa.y || 0) - (pb.y || 0));
+            if (dist > max) max = dist;
         }
-        return lastCorners;
+        return max;
     }
 
-    function showCapture() {
-        viewToken += 1;
-        destroyEditor();
-        resetPageWork();
-        clearBody();
-        setTitle('Scan');
-        setStatus(pages.length
-            ? 'Take a photo or choose an image for the next page.'
-            : 'Take a photo or choose an image.');
-        var camera = el('input', { type: 'file', accept: 'image/*', capture: 'environment', 'data-act': 'camera', style: 'display:none' });
-        var library = el('input', { type: 'file', accept: 'image/*', 'data-act': 'library', style: 'display:none' });
-        camera.addEventListener('change', function () { onPick(camera); });
-        library.addEventListener('change', function () { onPick(library); });
-        var capture = el('div', { class: 'temper-doc-scan-capture' }, [
-            el('button', { type: 'button', class: 'primary', text: 'Take photo', onclick: function () { camera.click(); } }),
-            el('button', { type: 'button', text: 'Choose image', onclick: function () { library.click(); } }),
-            camera,
-            library
-        ]);
+    function blankPage(canvas) {
+        return {
+            sourceCanvas: canvas,
+            corners: null,
+            rotateDeg: 0,
+            filter: 'original',
+            jpeg: null,
+            width: canvas.width,
+            height: canvas.height,
+            thumbUrl: '',
+            fullUrl: ''
+        };
+    }
+
+    function currentPage() {
+        return pages[reviewIndex] || null;
+    }
+
+    function cancelButton() {
+        return el('button', {
+            type: 'button',
+            text: 'Cancel',
+            'data-act': 'cancel',
+            onclick: function () { close(false); }
+        });
+    }
+
+    function cameraBarButtons() {
+        var buttons = [];
         if (pages.length) {
-            capture.appendChild(el('button', {
+            buttons.push(el('button', {
                 type: 'button',
-                text: 'Pages',
-                onclick: function () { showBrowser(); }
+                text: 'Back',
+                'data-act': 'back',
+                onclick: function () { if (!busy) backToReview(); }
             }));
         }
-        bodyEl.appendChild(capture);
-        focusPrimary();
+        buttons.push(cancelButton());
+        return buttons;
     }
 
-    function onPick(input) {
+    function reviewBarButtons() {
+        return [
+            el('button', {
+                type: 'button',
+                class: 'primary',
+                text: 'Save',
+                'data-act': 'save',
+                onclick: function () { onSave(); }
+            }),
+            cancelButton()
+        ];
+    }
+
+    function showCamera() {
+        var token = ++cameraToken;
+        viewToken += 1;
+        if (renderTimer) {
+            clearTimeout(renderTimer);
+            renderTimer = 0;
+        }
+        destroyEditor();
+        stopCamera();
+        mode = 'camera';
+        clearBody();
+        if (bodyEl) bodyEl.setAttribute('data-screen', 'camera');
+        setTitle('Camera');
+        setBar(cameraBarButtons());
+
+        // Plain HTTP is not a secure context, so getUserMedia is unavailable.
+        // enumerateDevices() is also empty until permission is granted. Neither
+        // means the phone has no camera. The camera app opens from a file input.
+        if (window.isSecureContext !== true) {
+            showFileCapture('Take a photo with the camera, or choose one.');
+            return;
+        }
+
+        setStatus('Opening camera…');
+
+        var stage = el('div', { class: 'temper-doc-scan-stage' });
+        videoEl = el('video', { autoplay: true, muted: true, playsinline: true });
+        videoEl.autoplay = true;
+        videoEl.muted = true;
+        videoEl.playsInline = true;
+        overlayCanvas = el('canvas', { class: 'temper-doc-scan-overlay', 'aria-hidden': 'true' });
+        stage.appendChild(videoEl);
+        stage.appendChild(overlayCanvas);
+        bodyEl.appendChild(stage);
+
+        var library = photoFileInput(false);
+        var autoBtn = el('button', {
+            type: 'button',
+            text: 'Auto',
+            'data-act': 'auto',
+            class: autoCapture ? 'is-on' : '',
+            'aria-pressed': autoCapture ? 'true' : 'false',
+            'aria-label': 'Auto-capture when the page is steady',
+            onclick: function (event) { toggleAuto(event.currentTarget); }
+        });
+        var shutter = el('button', {
+            type: 'button',
+            class: 'temper-doc-scan-shutter',
+            'data-act': 'shutter',
+            'aria-label': 'Shutter',
+            onclick: function () { onShutter(); }
+        });
+        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot temper-doc-scan-cam-foot' }, [
+            autoBtn,
+            shutter,
+            el('button', {
+                type: 'button',
+                text: 'Choose a photo',
+                'data-act': 'choose-photo',
+                onclick: function () { library.click(); }
+            })
+        ]));
+        bodyEl.appendChild(library);
+        bindResize();
+        startCamera(token);
+    }
+
+    function bindResize() {
+        if (resizeHandler) return;
+        resizeHandler = function () { resizeOverlay(); };
+        window.addEventListener('resize', resizeHandler);
+    }
+
+    function toggleAuto(button) {
+        autoCapture = !autoCapture;
+        stableCount = 0;
+        autoArmed = true;
+        if (button) {
+            button.className = autoCapture ? 'is-on' : '';
+            button.setAttribute('aria-pressed', autoCapture ? 'true' : 'false');
+        }
+        if (!liveCorners) {
+            setStatus(autoCapture
+                ? 'Auto is on. A steady page is taken, or use the shutter.'
+                : 'Shutter takes the picture.');
+        }
+    }
+
+    function photoFileInput(capture) {
+        var attrs = {
+            type: 'file',
+            accept: 'image/*',
+            'data-act': capture ? 'camera' : 'photo-input',
+            style: 'display:none'
+        };
+        if (capture) attrs.capture = 'environment';
+        var input = el('input', attrs);
+        input.addEventListener('change', function () { onPhotoFile(input); });
+        return input;
+    }
+
+    function startCamera(token) {
+        var media = navigator.mediaDevices;
+        if (!media || typeof media.getUserMedia !== 'function') {
+            showFileCapture('Take a photo with the camera, or choose one.');
+            return;
+        }
+        media.getUserMedia({
+            audio: false,
+            video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }
+        }).then(function (stream) {
+            if (token !== cameraToken || mode !== 'camera' || !videoEl) {
+                stream.getTracks().forEach(function (track) { try { track.stop(); } catch (e) { /* ignore */ } });
+                return;
+            }
+            cameraStream = stream;
+            videoEl.srcObject = stream;
+            var play = videoEl.play();
+            if (play && typeof play.catch === 'function') play.catch(function () { /* autoplay can reject */ });
+            function armDetect() {
+                if (token !== cameraToken || mode !== 'camera' || !videoEl || videoEl._temperArmed) return;
+                if (!videoEl.videoWidth) return;
+                videoEl._temperArmed = true;
+                resizeOverlay();
+                setStatus(autoCapture
+                    ? 'Auto is on. A steady page is taken, or use the shutter.'
+                    : 'Shutter takes the picture.');
+                scheduleDetect(token);
+            }
+            videoEl.addEventListener('loadeddata', armDetect);
+            videoEl.addEventListener('loadedmetadata', armDetect);
+            var tries = 0;
+            function poke() {
+                if (token !== cameraToken || mode !== 'camera' || !videoEl) return;
+                armDetect();
+                if (!videoEl._temperArmed && tries < 25) {
+                    tries += 1;
+                    setTimeout(poke, 200);
+                }
+            }
+            poke();
+        }).catch(function (err) {
+            if (token !== cameraToken || mode !== 'camera') return;
+            var name = err && err.name ? String(err.name) : '';
+            if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+                showFileCapture('Camera permission was denied.');
+                return;
+            }
+            showFileCapture('The camera did not open. Take a photo, or choose one.');
+        });
+    }
+
+    function showFileCapture(message) {
+        stopCamera();
+        if (mode !== 'camera' || !bodyEl) return;
+        clearBody();
+        bodyEl.setAttribute('data-screen', 'camera');
+        setTitle('Camera');
+        setBar(cameraBarButtons());
+        setStatus(message);
+        var camera = photoFileInput(true);
+        var library = photoFileInput(false);
+        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-capture' }, [
+            el('p', { text: message }),
+            el('button', {
+                type: 'button',
+                class: 'primary',
+                text: 'Take photo',
+                'data-act': 'take-photo',
+                onclick: function () { camera.click(); }
+            }),
+            el('button', {
+                type: 'button',
+                text: 'Choose a photo',
+                'data-act': 'choose-photo',
+                onclick: function () { library.click(); }
+            }),
+            camera,
+            library
+        ]));
+    }
+
+    function onPhotoFile(input) {
         var file = input.files && input.files[0];
         input.value = '';
-        if (!file) return;
+        if (!file || busy) return;
         if (file.type && file.type.indexOf('image/') !== 0) {
-            setStatus('Choose a photo. Other files stay on the regular upload.');
+            setStatus('Choose a photo.');
             return;
         }
-        if (pages.length >= MAX_PAGES) {
-            setStatus('This scan already has ' + MAX_PAGES + ' pages. Finish, then scan again if you need more.');
-            return;
-        }
-        setStatus('Reading photo…');
         busy = true;
+        setStatus('Reading photo…');
         fileToCanvas(file).then(function (canvas) {
             busy = false;
-            resetPageWork();
-            sourceCanvas = canvas;
-            showAdjust(false);
+            acceptCapture(canvas);
         }).catch(function (err) {
             busy = false;
             setStatus((err && err.message) || 'This photo could not be read. Use a JPEG or PNG.');
         });
     }
 
-    function showAdjust(restore) {
-        var token = ++viewToken;
-        destroyEditor();
-        showingResult = false;
-        clearBody();
-        setTitle('Adjust');
-        setStatus(restore
-            ? 'Drag the corners. Flip and rotate, then Apply.'
-            : 'Looking for the page…');
-        var host = el('div', { class: 'temper-doc-scan-editor' });
-        bodyEl.appendChild(host);
+    function scheduleDetect(token) {
+        if (detectTimer) clearTimeout(detectTimer);
+        detectTimer = setTimeout(function () { runDetect(token); }, 450);
+    }
 
-        var rotateLabel = el('span', { id: 'temperDocScanRotateLabel', text: 'Rotate ' + formatDegrees(rotateDeg) });
+    function runDetect(token) {
+        detectTimer = 0;
+        if (token !== cameraToken || mode !== 'camera' || !videoEl || detecting) return;
+        if ((videoEl.readyState || 0) < 2 || !videoEl.videoWidth) {
+            scheduleDetect(token);
+            return;
+        }
+        var frame;
+        try {
+            frame = grabAnalysis(videoEl);
+        } catch (e) {
+            scheduleDetect(token);
+            return;
+        }
+        detecting = true;
+        ensureScanic().then(function (scanic) {
+            return scanic.scanDocument(frame.canvas, { mode: 'detect' });
+        }).then(function (result) {
+            detecting = false;
+            if (token !== cameraToken || mode !== 'camera') return;
+            var corners = (result && result.success && result.corners) ? result.corners : null;
+            if (corners) {
+                liveCorners = corners;
+                liveMeta = { aw: frame.aw, ah: frame.ah };
+                resizeOverlay();
+                noteSteady(corners);
+            } else {
+                liveCorners = null;
+                liveMeta = null;
+                lastLiveCorners = null;
+                stableCount = 0;
+                autoArmed = true;
+                clearOverlay();
+                setStatus(autoCapture
+                    ? 'Auto is on. Point at a page, or use the shutter.'
+                    : 'Shutter takes the picture.');
+            }
+            scheduleDetect(token);
+        }).catch(function () {
+            detecting = false;
+            if (token !== cameraToken || mode !== 'camera') return;
+            setStatus('Page outline is unavailable. Shutter still takes the picture.');
+            scheduleDetect(token);
+        });
+    }
+
+    function grabAnalysis(video) {
+        var vw = video.videoWidth;
+        var vh = video.videoHeight;
+        var long = Math.max(vw, vh);
+        var scale = long > DETECT_EDGE ? DETECT_EDGE / long : 1;
+        var aw = Math.max(1, Math.round(vw * scale));
+        var ah = Math.max(1, Math.round(vh * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = aw;
+        canvas.height = ah;
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) throw new Error('No canvas.');
+        ctx.drawImage(video, 0, 0, aw, ah);
+        return { canvas: canvas, aw: aw, ah: ah };
+    }
+
+    function resizeOverlay() {
+        if (!overlayCanvas || !overlayCanvas.parentNode) return;
+        var stage = overlayCanvas.parentNode;
+        var w = stage.clientWidth || 0;
+        var h = stage.clientHeight || 0;
+        if (w < 2 || h < 2) return;
+        var dpr = window.devicePixelRatio || 1;
+        overlayCanvas.width = Math.max(1, Math.round(w * dpr));
+        overlayCanvas.height = Math.max(1, Math.round(h * dpr));
+        drawOverlay();
+    }
+
+    function clearOverlay() {
+        if (!overlayCanvas) return;
+        var ctx = overlayCanvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+
+    function drawOverlay() {
+        if (!overlayCanvas) return;
+        var ctx = overlayCanvas.getContext('2d');
+        if (!ctx) return;
+        var dpr = window.devicePixelRatio || 1;
+        var w = overlayCanvas.width / dpr;
+        var h = overlayCanvas.height / dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        if (!liveCorners || !liveMeta || !videoEl || !videoEl.videoWidth) return;
+        var vw = videoEl.videoWidth;
+        var vh = videoEl.videoHeight;
+        var scale = Math.min(w / vw, h / vh);
+        var dw = vw * scale;
+        var dh = vh * scale;
+        var ox = (w - dw) / 2;
+        var oy = (h - dh) / 2;
+        function pt(p) {
+            return {
+                x: ox + ((p.x || 0) / liveMeta.aw) * dw,
+                y: oy + ((p.y || 0) / liveMeta.ah) * dh
+            };
+        }
+        var tl = pt(liveCorners.topLeft || {});
+        var tr = pt(liveCorners.topRight || {});
+        var br = pt(liveCorners.bottomRight || {});
+        var bl = pt(liveCorners.bottomLeft || {});
+        ctx.beginPath();
+        ctx.moveTo(tl.x, tl.y);
+        ctx.lineTo(tr.x, tr.y);
+        ctx.lineTo(br.x, br.y);
+        ctx.lineTo(bl.x, bl.y);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(61, 220, 132, 0.18)';
+        ctx.strokeStyle = '#3ddc84';
+        ctx.lineWidth = 3;
+        ctx.fill();
+        ctx.stroke();
+        [tl, tr, br, bl].forEach(function (p) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+        });
+    }
+
+    function noteSteady(corners) {
+        if (lastLiveCorners && cornerDelta(lastLiveCorners, corners) < 12) stableCount += 1;
+        else stableCount = 0;
+        lastLiveCorners = corners;
+        if (autoCapture && stableCount >= 3 && autoArmed) {
+            setStatus('Holding steady…');
+            if (onShutter()) autoArmed = false;
+            return;
+        }
+        setStatus(autoCapture
+            ? 'Page found. Hold steady, or use the shutter.'
+            : 'Page found. Shutter takes the picture.');
+    }
+
+    function onShutter() {
+        if (busy || mode !== 'camera' || !videoEl) return false;
+        var w = videoEl.videoWidth || 0;
+        var h = videoEl.videoHeight || 0;
+        if (w < 2 || h < 2) {
+            setStatus('Wait for the camera picture.');
+            return false;
+        }
+        var canvas;
+        try {
+            canvas = drawToCanvas(videoEl, w, h);
+        } catch (err) {
+            setStatus((err && err.message) || 'Could not take that picture.');
+            return false;
+        }
+        acceptCapture(canvas);
+        return true;
+    }
+
+    function acceptCapture(canvas) {
+        if (!canvas || !canvas.width) return;
+        var page = blankPage(canvas);
+        if (retakeIndex !== null && pages[retakeIndex]) {
+            releasePage(pages[retakeIndex]);
+            pages[retakeIndex] = page;
+            reviewIndex = retakeIndex;
+        } else {
+            if (pages.length >= MAX_PAGES) {
+                setStatus('This scan already has ' + MAX_PAGES + ' pages.');
+                if (pages.length) showReview();
+                return;
+            }
+            pages.push(page);
+            reviewIndex = pages.length - 1;
+        }
+        retakeIndex = null;
+        showReview();
+    }
+
+    function backToReview() {
+        retakeIndex = null;
+        if (pages.length) showReview();
+        else showCamera();
+    }
+
+    function prepareReviewCorners(page) {
+        if (page.corners) return Promise.resolve(page.corners);
+        return ensureScanic().then(function (scanic) {
+            return scanic.scanDocument(page.sourceCanvas, { mode: 'detect' });
+        }).then(function (result) {
+            page.corners = (result && result.success && result.corners)
+                ? result.corners
+                : fullImageCorners(page.sourceCanvas.width, page.sourceCanvas.height);
+            return page.corners;
+        }).catch(function () {
+            page.corners = fullImageCorners(page.sourceCanvas.width, page.sourceCanvas.height);
+            return page.corners;
+        });
+    }
+
+    function showReview() {
+        var token = ++viewToken;
+        cameraToken += 1;
+        if (renderTimer) {
+            clearTimeout(renderTimer);
+            renderTimer = 0;
+        }
+        destroyEditor();
+        stopCamera();
+        mode = 'review';
+        var page = currentPage();
+        if (!page) {
+            showCamera();
+            return;
+        }
+        clearBody();
+        bodyEl.setAttribute('data-screen', 'review');
+        setTitle('Review');
+        setBar(reviewBarButtons());
+        setStatus('Page ' + (reviewIndex + 1) + ' of ' + pages.length + '. Looking for the page…');
+
+        var host = el('div', { class: 'temper-doc-scan-editor', 'data-act': 'editor' });
+        bodyEl.appendChild(host);
+        var result = el('img', {
+            id: 'temperDocScanResult',
+            class: 'temper-doc-scan-result',
+            alt: 'Reviewed page'
+        });
+        if (page.fullUrl) result.src = page.fullUrl;
+        var rotateLabel = el('span', {
+            id: 'temperDocScanRotateLabel',
+            text: 'Rotate ' + formatDegrees(page.rotateDeg)
+        });
         var rotate = el('input', {
             type: 'range',
             id: 'temperDocScanRotate',
             min: '-180',
             max: '180',
             step: '0.1',
-            value: String(rotateDeg),
+            value: String(page.rotateDeg || 0),
             'aria-label': 'Rotate'
         });
         rotate.addEventListener('input', function () {
-            rotateDeg = Number(rotate.value) || 0;
-            rotateLabel.textContent = 'Rotate ' + formatDegrees(rotateDeg);
+            var current = currentPage();
+            if (!current) return;
+            current.rotateDeg = Number(rotate.value) || 0;
+            rotateLabel.textContent = 'Rotate ' + formatDegrees(current.rotateDeg);
+            scheduleRender();
         });
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-controls' }, [
-            el('div', { class: 'temper-doc-scan-toggles' }, [
-                el('button', {
-                    type: 'button',
-                    class: flipH ? 'is-on' : '',
-                    text: 'Flip horizontal',
-                    'aria-pressed': flipH ? 'true' : 'false',
-                    onclick: function (event) {
-                        flipH = !flipH;
-                        event.currentTarget.className = flipH ? 'is-on' : '';
-                        event.currentTarget.setAttribute('aria-pressed', flipH ? 'true' : 'false');
-                    }
-                }),
-                el('button', {
-                    type: 'button',
-                    class: flipV ? 'is-on' : '',
-                    text: 'Flip vertical',
-                    'aria-pressed': flipV ? 'true' : 'false',
-                    onclick: function (event) {
-                        flipV = !flipV;
-                        event.currentTarget.className = flipV ? 'is-on' : '';
-                        event.currentTarget.setAttribute('aria-pressed', flipV ? 'true' : 'false');
-                    }
-                })
+        var chips = el('div', { class: 'temper-doc-scan-chips', role: 'group', 'aria-label': 'Filter' });
+        FILTERS.forEach(function (item) {
+            var on = page.filter === item.id;
+            chips.appendChild(el('button', {
+                type: 'button',
+                text: item.label,
+                class: on ? 'is-on' : '',
+                'data-act': 'filter',
+                'data-filter': item.id,
+                'aria-pressed': on ? 'true' : 'false',
+                onclick: function () { setFilter(item.id); }
+            }));
+        });
+        var thumbs = el('div', { class: 'temper-doc-scan-thumbs', 'data-act': 'thumbs' });
+        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-review-tools' }, [
+            result,
+            el('div', { class: 'temper-doc-scan-controls' }, [
+                el('label', {}, [rotateLabel, rotate]),
+                chips
             ]),
-            el('label', {}, [rotateLabel, rotate])
+            thumbs
         ]));
+        refreshThumbStrip();
         bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot' }, [
-            el('button', { type: 'button', text: 'Retake', onclick: function () { if (!busy) showCapture(); } }),
-            el('button', { type: 'button', text: 'Full image', onclick: function () { useFullImage(); } }),
-            el('button', { type: 'button', 'data-act': 'apply', text: 'Apply', onclick: function () { onApply(); } }),
-            el('button', { type: 'button', class: 'primary', 'data-act': 'adjust-next', text: 'Next', onclick: function () { onAdjustNext(); } })
-        ]));
-
-        ensureScanic().then(function (scanic) {
-            if (restore && lastCorners) {
-                if (token !== viewToken || !sourceCanvas) return;
-                mountEditor(scanic, host, lastCorners);
-                setStatus('Drag the corners. Flip and rotate, then Apply.');
-                return;
-            }
-            return scanic.scanDocument(sourceCanvas, { mode: 'detect' }).then(function (result) {
-                if (token !== viewToken || !sourceCanvas) return;
-                var corners = (result && result.success && result.corners) ? result.corners : null;
-                lastCorners = corners;
-                mountEditor(scanic, host, corners);
-                setStatus(corners
-                    ? 'Drag the corners to the page edges. Flip and rotate, then Apply.'
-                    : 'No page outline found. Drag the corners to crop the page.');
-            });
-        }).catch(function (err) {
-            if (token !== viewToken) return;
-            setStatus((err && err.message) || 'Page detection could not be loaded.');
-        });
-    }
-
-    function mountEditor(scanic, host, corners) {
-        destroyEditor();
-        editor = scanic.createCornerEditor({
-            container: host,
-            image: sourceCanvas,
-            corners: corners || undefined,
-            toolbar: { enabled: false },
-            magnifier: { zoom: 2, size: 110 },
-            nudges: { enabled: true, steps: [1, 10] }
-        });
-    }
-
-    function useFullImage() {
-        if (!editor || !sourceCanvas || typeof editor.setCorners !== 'function') return;
-        var corners = fullImageCorners(sourceCanvas.width, sourceCanvas.height);
-        editor.setCorners(corners);
-        lastCorners = corners;
-        setStatus('Corners cover the photo. Drag any corner to crop.');
-    }
-
-    function runAdjust() {
-        if (busy) return Promise.reject(new Error('Wait for the page outline.'));
-        if (!sourceCanvas) return Promise.reject(new Error('Retake the photo.'));
-        var corners = currentCorners();
-        if (!corners) return Promise.reject(new Error('Wait for the page outline, or retake the photo.'));
-        readRotateControl();
-        var token = viewToken;
-        busy = true;
-        setStatus('Applying…');
-        return ensureScanic().then(function (scanic) {
-            return scanic.extractDocument(sourceCanvas, corners, { output: 'canvas' });
-        }).then(function (result) {
-            if (token !== viewToken) {
-                busy = false;
-                return null;
-            }
-            var output = result && result.output;
-            if (!result || result.success === false || !output || !output.width) {
-                throw new Error('Could not crop that page. Move the corners and try again.');
-            }
-            lastCorners = corners;
-            var canvas = scaleCanvas(output);
-            canvas = flipCanvas(canvas, flipH, flipV);
-            canvas = rotateCanvas(canvas, rotateDeg);
-            canvas = scaleCanvas(canvas);
-            adjustedCanvas = canvas;
-            showingResult = true;
-            busy = false;
-            return canvas;
-        }).catch(function (err) {
-            busy = false;
-            throw err;
-        });
-    }
-
-    function onApply() {
-        if (busy) return;
-        runAdjust().then(function (canvas) {
-            if (canvas) showAdjustResult();
-        }).catch(function (err) {
-            setStatus((err && err.message) || 'Could not apply that adjustment.');
-        });
-    }
-
-    function onAdjustNext() {
-        if (busy) return;
-        if (showingResult && adjustedCanvas) {
-            showEnhance();
-            return;
-        }
-        runAdjust().then(function (canvas) {
-            if (canvas) showEnhance();
-        }).catch(function (err) {
-            setStatus((err && err.message) || 'Could not apply that adjustment.');
-        });
-    }
-
-    function showAdjustResult() {
-        viewToken += 1;
-        destroyEditor();
-        showingResult = true;
-        clearBody();
-        setTitle('Adjust');
-        setStatus('Adjustments are applied. Crop again to move the corners, or continue.');
-        var img = el('img', { class: 'temper-doc-scan-preview', alt: 'Adjusted page' });
-        try {
-            img.src = adjustedCanvas.toDataURL('image/jpeg', 0.8);
-        } catch (e) {
-            img.alt = 'Adjusted page';
-        }
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-preview-wrap' }, [img]));
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot' }, [
-            el('button', { type: 'button', 'data-act': 'crop-again', text: 'Crop again', onclick: function () { if (!busy) showAdjust(true); } }),
-            el('button', { type: 'button', class: 'primary', 'data-act': 'adjust-next', text: 'Next', onclick: function () { onAdjustNext(); } })
-        ]));
-        focusPrimary();
-    }
-
-    function paintEnhance() {
-        var host = document.getElementById('temperDocScanEnhancePreview');
-        if (!host || !adjustedCanvas) return;
-        host.textContent = '';
-        var view = enhanceCanvas(adjustedCanvas, grayPct, contrastPct);
-        view.className = 'temper-doc-scan-preview';
-        host.appendChild(view);
-    }
-
-    function scheduleEnhancePaint() {
-        if (enhanceFrame) return;
-        enhanceFrame = requestAnimationFrame(function () {
-            enhanceFrame = 0;
-            paintEnhance();
-        });
-    }
-
-    function showEnhance() {
-        viewToken += 1;
-        destroyEditor();
-        showingResult = true;
-        clearBody();
-        setTitle('Enhance');
-        setStatus('Adjust grayscale and contrast. Next adds this page to the document.');
-        bodyEl.appendChild(el('div', { id: 'temperDocScanEnhancePreview', class: 'temper-doc-scan-preview-wrap' }));
-        var grayLabel = el('span', { id: 'temperDocScanGrayLabel', text: 'Grayscale ' + Math.round(grayPct) + '%' });
-        var gray = el('input', {
-            type: 'range',
-            id: 'temperDocScanGray',
-            min: '0',
-            max: '100',
-            step: '1',
-            value: String(grayPct),
-            'aria-label': 'Grayscale'
-        });
-        gray.addEventListener('input', function () {
-            grayPct = Number(gray.value) || 0;
-            grayLabel.textContent = 'Grayscale ' + Math.round(grayPct) + '%';
-            scheduleEnhancePaint();
-        });
-        var contrastLabel = el('span', { id: 'temperDocScanContrastLabel', text: 'Contrast ' + Math.round(contrastPct) + '%' });
-        var contrast = el('input', {
-            type: 'range',
-            id: 'temperDocScanContrast',
-            min: '50',
-            max: '200',
-            step: '1',
-            value: String(contrastPct),
-            'aria-label': 'Contrast'
-        });
-        contrast.addEventListener('input', function () {
-            contrastPct = Number(contrast.value) || 100;
-            contrastLabel.textContent = 'Contrast ' + Math.round(contrastPct) + '%';
-            scheduleEnhancePaint();
-        });
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-controls' }, [
-            el('label', {}, [grayLabel, gray]),
-            el('label', {}, [contrastLabel, contrast])
-        ]));
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot' }, [
-            el('button', { type: 'button', text: 'Back', onclick: function () { if (!busy) showAdjustResult(); } }),
-            el('button', { type: 'button', class: 'primary', 'data-act': 'enhance-next', text: 'Next', onclick: function () { acceptEnhancedPage(); } })
-        ]));
-        paintEnhance();
-        focusPrimary();
-    }
-
-    function acceptEnhancedPage() {
-        if (busy || !adjustedCanvas) return;
-        if (pages.length >= MAX_PAGES) {
-            setStatus('This scan already has ' + MAX_PAGES + ' pages.');
-            return;
-        }
-        busy = true;
-        setStatus('Adding page…');
-        var finalCanvas;
-        try {
-            finalCanvas = enhanceCanvas(adjustedCanvas, grayPct, contrastPct);
-        } catch (err) {
-            busy = false;
-            setStatus((err && err.message) || 'Could not enhance that page.');
-            return;
-        }
-        canvasToJpeg(finalCanvas).then(function (jpeg) {
-            var thumb = document.createElement('canvas');
-            var tw = 160;
-            var th = Math.max(1, Math.round(finalCanvas.height * (tw / finalCanvas.width)));
-            thumb.width = tw;
-            thumb.height = th;
-            var tctx = thumb.getContext('2d');
-            if (tctx) tctx.drawImage(finalCanvas, 0, 0, tw, th);
-            var thumbUrl = '';
-            try { thumbUrl = thumb.toDataURL('image/jpeg', 0.7); } catch (e) { thumbUrl = ''; }
-            var fullUrl = '';
-            try {
-                fullUrl = URL.createObjectURL(new Blob([jpeg], { type: 'image/jpeg' }));
-            } catch (e2) {
-                fullUrl = thumbUrl;
-            }
-            pages.push({
-                jpeg: jpeg,
-                width: finalCanvas.width,
-                height: finalCanvas.height,
-                thumbUrl: thumbUrl,
-                fullUrl: fullUrl
-            });
-            busy = false;
-            resetPageWork();
-            showBrowser();
-        }).catch(function (err) {
-            busy = false;
-            setStatus((err && err.message) || 'Could not add that page.');
-        });
-    }
-
-    function movePage(index, dir) {
-        var next = index + dir;
-        if (next < 0 || next >= pages.length) return;
-        var item = pages[index];
-        pages.splice(index, 1);
-        pages.splice(next, 0, item);
-        showBrowser();
-    }
-
-    function deletePage(index) {
-        var page = pages[index];
-        if (!page) return;
-        releasePage(page);
-        pages.splice(index, 1);
-        if (!pages.length) showCapture();
-        else showBrowser();
-    }
-
-    function showBrowser() {
-        viewToken += 1;
-        destroyEditor();
-        showingResult = false;
-        clearBody();
-        setTitle('Pages');
-        setStatus(pages.length
-            ? 'Finish names the document and builds one PDF.'
-            : 'No pages yet.');
-        var list = el('div', { class: 'temper-doc-scan-browser' });
-        pages.forEach(function (page, index) {
-            var img = el('img', { alt: 'Page ' + (index + 1) });
-            if (page.thumbUrl) img.src = page.thumbUrl;
-            list.appendChild(el('div', { class: 'temper-doc-scan-page', 'data-page-index': String(index) }, [
-                el('button', {
-                    type: 'button',
-                    text: '',
-                    'aria-label': 'View page ' + (index + 1),
-                    onclick: function () { showPageView(index); }
-                }),
-                el('div', { class: 'temper-doc-scan-page-main' }, [
-                    el('div', { text: 'Page ' + (index + 1) }),
-                    el('div', { class: 'temper-doc-scan-page-actions' }, [
-                        el('button', { type: 'button', text: 'View', onclick: function () { showPageView(index); } }),
-                        el('button', {
-                            type: 'button',
-                            text: 'Earlier',
-                            disabled: index === 0 ? 'disabled' : null,
-                            onclick: function () { movePage(index, -1); }
-                        }),
-                        el('button', {
-                            type: 'button',
-                            text: 'Later',
-                            disabled: index === pages.length - 1 ? 'disabled' : null,
-                            onclick: function () { movePage(index, 1); }
-                        }),
-                        el('button', { type: 'button', text: 'Delete', onclick: function () { deletePage(index); } })
-                    ])
-                ])
-            ]));
-            var thumbBtn = list.lastChild.querySelector('button');
-            if (thumbBtn && img) thumbBtn.appendChild(img);
-        });
-        bodyEl.appendChild(list);
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot' }, [
-            el('button', {
-                type: 'button',
-                text: 'Add page',
-                disabled: pages.length >= MAX_PAGES ? 'disabled' : null,
-                onclick: function () { showCapture(); }
-            }),
-            el('button', {
-                type: 'button',
-                class: 'primary',
-                'data-act': 'finish',
-                text: 'Finish',
-                disabled: pages.length ? null : 'disabled',
-                onclick: function () { showName(); }
-            })
-        ]));
-        focusPrimary();
-    }
-
-    function showPageView(index) {
-        var page = pages[index];
-        if (!page) {
-            showBrowser();
-            return;
-        }
-        viewToken += 1;
-        clearBody();
-        setTitle('Page ' + (index + 1));
-        setStatus('Page ' + (index + 1) + ' of ' + pages.length + '.');
-        var img = el('img', { class: 'temper-doc-scan-preview', alt: 'Page ' + (index + 1) });
-        img.src = page.fullUrl || page.thumbUrl || '';
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-preview-wrap' }, [img]));
-        bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot' }, [
-            el('button', { type: 'button', text: 'Back', onclick: function () { showBrowser(); } }),
+            el('button', { type: 'button', text: 'Retake', 'data-act': 'retake', onclick: function () { onRetake(); } }),
+            el('button', { type: 'button', text: 'Delete', 'data-act': 'delete', onclick: function () { deletePage(reviewIndex); } }),
             el('button', {
                 type: 'button',
                 text: 'Earlier',
-                disabled: index === 0 ? 'disabled' : null,
-                onclick: function () {
-                    movePage(index, -1);
-                    showPageView(Math.max(0, index - 1));
-                }
+                'data-act': 'earlier',
+                disabled: reviewIndex === 0 ? 'disabled' : null,
+                onclick: function () { movePage(reviewIndex, reviewIndex - 1); }
             }),
             el('button', {
                 type: 'button',
                 text: 'Later',
-                disabled: index === pages.length - 1 ? 'disabled' : null,
-                onclick: function () {
-                    movePage(index, 1);
-                    showPageView(Math.min(pages.length - 1, index + 1));
-                }
+                'data-act': 'later',
+                disabled: reviewIndex >= pages.length - 1 ? 'disabled' : null,
+                onclick: function () { movePage(reviewIndex, reviewIndex + 1); }
             }),
-            el('button', { type: 'button', text: 'Delete', onclick: function () { deletePage(index); } })
+            el('button', {
+                type: 'button',
+                text: 'Add page',
+                'data-act': 'add-page',
+                disabled: pages.length >= MAX_PAGES ? 'disabled' : null,
+                onclick: function () { onAddPage(); }
+            })
         ]));
+
+        prepareReviewCorners(page).then(function () {
+            if (token !== viewToken || mode !== 'review') return null;
+            return ensureScanic();
+        }).then(function (scanic) {
+            if (!scanic || token !== viewToken || mode !== 'review') return;
+            mountEditor(scanic, page);
+            scheduleRender();
+            setStatus('Page ' + (reviewIndex + 1) + ' of ' + pages.length + '. Drag the corners. Rotate and choose a filter.');
+        }).catch(function (err) {
+            if (token !== viewToken || mode !== 'review') return;
+            if (!page.corners) page.corners = fullImageCorners(page.sourceCanvas.width, page.sourceCanvas.height);
+            scheduleRender();
+            setStatus((err && err.message) || 'Page outline is unavailable. You can still rotate, filter, and save.');
+        });
+    }
+
+    function mountEditor(scanic, page) {
+        var host = bodyEl && bodyEl.querySelector('[data-act="editor"]');
+        if (!host || !page || !page.sourceCanvas) return;
+        destroyEditor();
+        var display = applyFilter(page.sourceCanvas, page.filter);
+        editor = scanic.createCornerEditor({
+            container: host,
+            image: display,
+            corners: page.corners || undefined,
+            toolbar: { enabled: false },
+            magnifier: { zoom: 2, size: 110 },
+            nudges: { enabled: true, steps: [1, 10] },
+            onChange: function (corners) {
+                var current = currentPage();
+                if (!current || current !== page) return;
+                current.corners = corners;
+                scheduleRender();
+            }
+        });
+        if (editor && typeof editor.getCorners === 'function') {
+            page.corners = editor.getCorners() || page.corners;
+        }
+    }
+
+    function setFilter(filterName) {
+        var page = currentPage();
+        if (!page || busy || page.filter === filterName) return;
+        page.filter = filterName;
+        var chips = bodyEl ? bodyEl.querySelectorAll('[data-act="filter"]') : [];
+        Array.prototype.forEach.call(chips, function (chip) {
+            var on = chip.getAttribute('data-filter') === filterName;
+            chip.className = on ? 'is-on' : '';
+            chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        ensureScanic().then(function (scanic) {
+            if (mode !== 'review' || currentPage() !== page) return;
+            mountEditor(scanic, page);
+            scheduleRender();
+        }).catch(function () {
+            scheduleRender();
+        });
+    }
+
+    function scheduleRender() {
+        if (renderTimer) clearTimeout(renderTimer);
+        renderTimer = setTimeout(function () {
+            renderTimer = 0;
+            var page = currentPage();
+            var token = viewToken;
+            if (!page || mode !== 'review') return;
+            renderPage(page).then(function () {
+                if (token !== viewToken || mode !== 'review') return;
+                updateResult(page);
+                updateThumbImages();
+            }).catch(function (err) {
+                if (token !== viewToken) return;
+                setStatus((err && err.message) || 'Could not update that page.');
+            });
+        }, 180);
+    }
+
+    function renderPage(page) {
+        if (!page || !page.sourceCanvas) return Promise.reject(new Error('Retake the photo.'));
+        var corners = page.corners || fullImageCorners(page.sourceCanvas.width, page.sourceCanvas.height);
+        return ensureScanic().then(function (scanic) {
+            return scanic.extractDocument(page.sourceCanvas, corners, { output: 'canvas' });
+        }).then(function (result) {
+            var output = result && result.output;
+            if (!output || !output.width) throw new Error('crop');
+            return output;
+        }).catch(function () {
+            return page.sourceCanvas;
+        }).then(function (output) {
+            var canvas = scaleCanvas(output);
+            canvas = rotateCanvas(canvas, page.rotateDeg);
+            canvas = scaleCanvas(canvas);
+            canvas = applyFilter(canvas, page.filter);
+            return canvasToJpeg(canvas).then(function (jpeg) {
+                storeOutput(page, canvas, jpeg);
+                return page;
+            });
+        });
+    }
+
+    function storeOutput(page, canvas, jpeg) {
+        releaseUrl(page.fullUrl);
+        page.jpeg = jpeg;
+        page.width = canvas.width;
+        page.height = canvas.height;
+        try {
+            var thumb = document.createElement('canvas');
+            var tw = 160;
+            var th = Math.max(1, Math.round(canvas.height * (tw / canvas.width)));
+            thumb.width = tw;
+            thumb.height = th;
+            var tctx = thumb.getContext('2d');
+            if (tctx) tctx.drawImage(canvas, 0, 0, tw, th);
+            page.thumbUrl = thumb.toDataURL('image/jpeg', 0.7);
+        } catch (e) {
+            page.thumbUrl = page.thumbUrl || '';
+        }
+        try {
+            page.fullUrl = URL.createObjectURL(new Blob([jpeg], { type: 'image/jpeg' }));
+        } catch (e2) {
+            page.fullUrl = page.thumbUrl;
+        }
+    }
+
+    function updateResult(page) {
+        var img = document.getElementById('temperDocScanResult');
+        if (!img || !page) return;
+        if (page.fullUrl) img.src = page.fullUrl;
+    }
+
+    function updateThumbImages() {
+        if (!bodyEl) return;
+        var buttons = bodyEl.querySelectorAll('[data-act="thumb"]');
+        Array.prototype.forEach.call(buttons, function (btn) {
+            var index = Number(btn.getAttribute('data-page-index'));
+            var page = pages[index];
+            var img = btn.querySelector('img');
+            if (page && img && page.thumbUrl) img.src = page.thumbUrl;
+        });
+    }
+
+    function refreshThumbStrip() {
+        if (!bodyEl) return;
+        var strip = bodyEl.querySelector('[data-act="thumbs"]');
+        if (!strip) return;
+        strip.textContent = '';
+        pages.forEach(function (page, index) {
+            strip.appendChild(buildThumb(page, index));
+        });
+    }
+
+    function buildThumb(page, index) {
+        var img = el('img', { alt: 'Page ' + (index + 1) });
+        if (page.thumbUrl) img.src = page.thumbUrl;
+        var btn = el('button', {
+            type: 'button',
+            class: index === reviewIndex ? 'is-on' : '',
+            'data-act': 'thumb',
+            'data-page-index': String(index),
+            draggable: 'true',
+            'aria-label': 'Review page ' + (index + 1),
+            'aria-current': index === reviewIndex ? 'true' : 'false'
+        }, [img]);
+        btn.addEventListener('click', function () { selectPage(index); });
+        btn.addEventListener('dragstart', function (event) {
+            if (!event.dataTransfer) return;
+            event.dataTransfer.setData('text/plain', String(index));
+            event.dataTransfer.effectAllowed = 'move';
+        });
+        btn.addEventListener('dragover', function (event) {
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        });
+        btn.addEventListener('drop', function (event) {
+            event.preventDefault();
+            var from = Number(event.dataTransfer ? event.dataTransfer.getData('text/plain') : NaN);
+            if (isNaN(from) || from === index) return;
+            movePage(from, index);
+        });
+        return btn;
+    }
+
+    function selectPage(index) {
+        if (busy || index === reviewIndex || !pages[index]) return;
+        var leaving = currentPage();
+        busy = true;
+        renderPage(leaving).then(function () {
+            busy = false;
+            reviewIndex = index;
+            showReview();
+        }).catch(function () {
+            busy = false;
+            reviewIndex = index;
+            showReview();
+        });
+    }
+
+    function movePage(from, to) {
+        if (to < 0 || to >= pages.length || from === to || !pages[from]) return;
+        var current = currentPage();
+        var item = pages.splice(from, 1)[0];
+        pages.splice(to, 0, item);
+        reviewIndex = Math.max(0, pages.indexOf(current));
+        refreshThumbStrip();
+        syncOrderButtons();
+        setStatus('Page ' + (reviewIndex + 1) + ' of ' + pages.length + '. Drag the corners. Rotate and choose a filter.');
+    }
+
+    function syncOrderButtons() {
+        if (!bodyEl) return;
+        var earlier = bodyEl.querySelector('[data-act="earlier"]');
+        var later = bodyEl.querySelector('[data-act="later"]');
+        if (earlier) earlier.disabled = reviewIndex === 0;
+        if (later) later.disabled = reviewIndex >= pages.length - 1;
+    }
+
+    function deletePage(index) {
+        var page = pages[index];
+        if (!page || busy) return;
+        releasePage(page);
+        pages.splice(index, 1);
+        if (!pages.length) {
+            reviewIndex = 0;
+            showCamera();
+            return;
+        }
+        if (reviewIndex > index) reviewIndex -= 1;
+        if (reviewIndex >= pages.length) reviewIndex = pages.length - 1;
+        showReview();
+    }
+
+    function onRetake() {
+        if (busy || mode !== 'review' || !currentPage()) return;
+        retakeIndex = reviewIndex;
+        showCamera();
+    }
+
+    function onAddPage() {
+        if (busy || pages.length >= MAX_PAGES) {
+            if (pages.length >= MAX_PAGES) setStatus('This scan already has ' + MAX_PAGES + ' pages.');
+            return;
+        }
+        var leaving = currentPage();
+        retakeIndex = null;
+        busy = true;
+        renderPage(leaving).then(function () {
+            busy = false;
+            showCamera();
+        }).catch(function () {
+            busy = false;
+            showCamera();
+        });
+    }
+
+    function onSave() {
+        if (busy || !pages.length) return;
+        var page = currentPage();
+        busy = true;
+        setStatus('Preparing pages…');
+        renderPage(page).then(function () {
+            busy = false;
+            showName();
+        }).catch(function (err) {
+            busy = false;
+            setStatus((err && err.message) || 'Could not prepare that page.');
+        });
     }
 
     function showName() {
         if (!pages.length) return;
         viewToken += 1;
+        cameraToken += 1;
+        destroyEditor();
+        mode = 'name';
         clearBody();
-        setTitle('Finish');
-        setStatus('Name this document. Finish builds one PDF.');
+        bodyEl.setAttribute('data-screen', 'name');
+        setTitle('Save');
+        setBar([cancelButton()]);
+        setStatus('Name this document. Save builds one PDF.');
         var input = el('input', {
             type: 'text',
             id: 'temperDocScanName',
@@ -1008,12 +1414,12 @@
             input
         ]));
         bodyEl.appendChild(el('div', { class: 'temper-doc-scan-foot' }, [
-            el('button', { type: 'button', text: 'Back', onclick: function () { if (!busy) showBrowser(); } }),
+            el('button', { type: 'button', text: 'Back', 'data-act': 'name-back', onclick: function () { if (!busy) showReview(); } }),
             el('button', {
                 type: 'button',
                 class: 'primary',
-                'data-act': 'finish-build',
-                text: 'Finish',
+                text: 'Save',
+                'data-act': 'save-build',
                 onclick: function () { finish(); }
             })
         ]));
@@ -1027,44 +1433,41 @@
         var name = safePdfName(nameInput ? nameInput.value : '');
         busy = true;
         setStatus('Building PDF…');
-        var bytes;
-        try {
-            bytes = buildJpegPdf(pages.map(function (page) {
+        Promise.all(pages.map(function (page) {
+            if (page.jpeg && page.width && page.height) return Promise.resolve(page);
+            return renderPage(page);
+        })).then(function () {
+            var bytes = buildJpegPdf(pages.map(function (page) {
                 return { jpeg: page.jpeg, width: page.width, height: page.height };
             }));
-        } catch (err) {
+            var file = new File([bytes], name, { type: 'application/pdf', lastModified: Date.now() });
+            var done = options.onComplete(file);
+            close(true);
+            if (done && typeof done.then === 'function') {
+                done.catch(function () { /* caller reports upload errors */ });
+            }
+        }).catch(function (err) {
             busy = false;
             setStatus((err && err.message) || 'Could not build the PDF.');
-            return;
-        }
-        var file = new File([bytes], name, { type: 'application/pdf', lastModified: Date.now() });
-        try {
-            var result = options.onComplete(file);
-            close(true);
-            if (result && typeof result.then === 'function') {
-                result.catch(function () { /* caller reports upload errors */ });
-            }
-        } catch (err) {
-            busy = false;
-            setStatus((err && err.message) || 'Could not hand off the scan.');
-        }
+        });
     }
 
     function open(nextOptions) {
         if (overlay) return;
         options = nextOptions || {};
         pages = [];
+        reviewIndex = 0;
+        retakeIndex = null;
         busy = false;
-        resetPageWork();
+        autoArmed = true;
+        stableCount = 0;
         injectStyles();
         overlay = el('div', { class: 'temper-doc-scan', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Scan document' });
-        titleEl = el('strong', { text: 'Scan' });
+        titleEl = el('strong', { text: 'Camera' });
+        toolsEl = el('div', { class: 'temper-doc-scan-tools' });
         statusEl = el('div', { class: 'temper-doc-scan-status' });
         bodyEl = el('div', { class: 'temper-doc-scan-body' });
-        overlay.appendChild(el('div', { class: 'temper-doc-scan-bar' }, [
-            titleEl,
-            el('button', { type: 'button', text: 'Close', 'data-act': 'close', onclick: function () { close(false); } })
-        ]));
+        overlay.appendChild(el('div', { class: 'temper-doc-scan-bar' }, [titleEl, toolsEl]));
         overlay.appendChild(statusEl);
         overlay.appendChild(bodyEl);
         document.body.appendChild(overlay);
@@ -1088,7 +1491,7 @@
         };
         document.addEventListener('keydown', keyHandler, true);
         document.addEventListener('focusin', focusHandler, true);
-        showCapture();
+        showCamera();
     }
 
     window.TemperDocScan = {

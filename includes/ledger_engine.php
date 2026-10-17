@@ -450,7 +450,8 @@ function ledgerGetSequenceNumber(mysqli $db, int $transactionId): ?string {
 }
 
 /**
- * Folder key for attachments: prefer Reference # (YY####), else numeric id (legacy).
+ * Folder key for attachments: Reference # (YY####) when it exists,
+ * otherwise the numeric transaction id (pending until a ref is saved).
  */
 function ledgerAttachmentFolderKey(?string $referenceNumber, int $transactionId): string {
     $ref = ledgerNormalizeReferenceNumber($referenceNumber);
@@ -1746,17 +1747,31 @@ function ledgerStoreDocument(
         return ['success' => false, 'error' => 'Upload temporary file is missing or unreadable.'];
     }
 
-    // Attachments live under storage/attachments/{YY####}/ (Reference #). Require a valid ref.
+    if ($transactionId <= 0) {
+        return ['success' => false, 'error' => 'Transaction ID is required.'];
+    }
+
+    // A Reference # stores under storage/attachments/{YY####}/.
+    // Until one exists, store under storage/attachments/{transactionId}/.
+    // A missing ref must not refuse the upload or delete the file.
     $reference = ledgerGetReferenceNumber($db, $transactionId);
     if ($reference === null) {
-        return [
-            'success' => false,
-            'error' => 'Set a Reference # (YY####) on the transaction before uploading attachments.',
-        ];
+        $exists = $db->prepare('SELECT id FROM transaction_details WHERE id = ? LIMIT 1');
+        if (!$exists) {
+            return ['success' => false, 'error' => 'Database error preparing transaction lookup.'];
+        }
+        $exists->bind_param('i', $transactionId);
+        $exists->execute();
+        $txRow = $exists->get_result()->fetch_assoc();
+        $exists->close();
+        if (!$txRow) {
+            return ['success' => false, 'error' => 'Transaction not found.'];
+        }
     }
-    // Pending uploads may gather leftover copies into the reference folder.
+    // Editable transactions may gather leftover id-folder copies into the ref folder.
     // Cleared/reconciled adds must not rename, replace, or move files already stored.
-    if (ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)) {
+    // Skip relocate while the ref is still blank; saving a ref moves the id folder.
+    if ($reference !== null && ledgerTransactionAllowsAttachmentFileChanges($db, $transactionId)) {
         ledgerRelocateTransactionAttachments($db, $transactionId, (string)$transactionId, $reference);
     }
 

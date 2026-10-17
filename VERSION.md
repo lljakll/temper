@@ -19,6 +19,10 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.974](#v0974)
+- [v0.973](#v0973)
+- [v0.972](#v0972)
+- [v0.971](#v0971)
 - [v0.970](#v0970)
 - [v0.969](#v0969)
 - [v0.968](#v0968)
@@ -177,6 +181,106 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.974
+
+**Attachments upload before a Reference # exists** — 2026-10-17
+
+> No schema update required for this release (attachment storage only).  
+> **Patch file (history row):** `updates/20261017_0974_attachment_upload_without_reference.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.974
+
+- Upload and Scan succeed on a transaction that has no Reference #. A missing ref does not delete the file and does not block the upload.
+- The file is stored under `storage/attachments/{transactionId}/` until a Reference # exists. `transaction_documents` still records the basename only.
+- Saving a Reference # moves those files into `storage/attachments/{YY####}/` with the same relocate used for a ref change, and later reads use that folder.
+- A file added while the ref was blank is kept. Cleared and reconciled transactions still allow an append-only add and still do not move or replace files already stored.
+- PDF optimize and the scan camera flow are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.974**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.973 | `updates/20261017_0974_attachment_upload_without_reference.sql` (records 0.974; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.973, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.973
+
+**Scan uses the phone camera on plain HTTP** — 2026-10-17
+
+> No schema update required for this release (scan camera only).  
+> **Patch file (history row):** `updates/20261017_0973_scan_http_camera.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.973
+
+- Scan does not decide that there is no camera from `enumerateDevices()` before permission is granted.
+- On HTTPS or localhost, Scan requests the live camera with `getUserMedia`, rear camera preferred, and shows the corner overlay.
+- On plain HTTP, Scan does not call `getUserMedia` and does not say there is no camera. Take photo uses a file input with `capture="environment"`, so the phone camera app opens. The photo then opens the existing review screen.
+- If camera permission is denied on a secure page, Scan says permission was denied and offers Choose a photo. Choose a photo is available on the live camera, the HTTP capture screen, and after a camera error.
+- Review, filters, page thumbnails, and the PDF upload and optimize path are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.973**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.972 | `updates/20261017_0973_scan_http_camera.sql` (records 0.973; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.972, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.972
+
+**PDF optimize keeps a smaller file when PHP reports exit -1** — 2026-10-17
+
+> No schema update required for this release (PDF optimize status only).  
+> **Patch file (history row):** `updates/20261017_0972_pdf_optimize_exit_status.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.972
+
+- A Ghostscript ebook or screen profile is kept when the output exists, is a finished PDF, and is smaller than the upload, including when PHP reports exit -1.
+- The gs process status is read by closing every pipe and then calling `proc_close`. A real failure logs the gs stderr. The smaller of ebook and screen is stored when it beats the original. Otherwise the original is stored, and the confirmation still shows original versus saved size.
+- If Ghostscript is not on the web user's PATH, the log says `gs_missing` and the original is stored. A smaller PDF that gs produced is not labeled failed.
+- Optimize failure still does not fail the upload. Image optimize is unchanged. A scan PDF uses this same PDF path.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.972**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.971 | `updates/20261017_0972_pdf_optimize_exit_status.sql` (records 0.972; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.971, then this process-only patch after `php setup_db.php` |
+
+---
+
+## v0.971
+
+**Scan opens the camera, then one review screen** — 2026-10-11
+
+> No schema update required for this release (scan flow only).  
+> **Patch file (history row):** `updates/20261011_0971_scan_camera_review.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.971
+
+- Scan opens the camera first. A corner overlay shows when a page is detected. The shutter always takes the picture. Auto is optional and takes the picture when the page is steady.
+- After the picture, one review screen crops that page. Drag the corners, rotate to any angle, and choose Original, Grayscale, or Black & white. There is no separate Adjust or Enhance step.
+- Accepted pages are thumbnails on that same screen. Add page returns to the camera. Tap a thumbnail to review that page. Delete a page, or move it earlier or later. Retake replaces the page being reviewed. Cancel discards pages that are not saved.
+- Save asks for a document name, builds one PDF, and sends it through the existing upload and optimize path, including the original-versus-saved size. A file chosen with the regular picker is not scanned and is not turned into a PDF.
+- On a cleared or reconciled transaction, Scan is available only where adding a file is already allowed. Existing attachments stay in place.
+- The step remains `TemperDocScan.open` in `assets/js/temper-doc-scan.js`.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.971**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.970 | `updates/20261011_0971_scan_camera_review.sql` (records 0.971; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.970, then this process-only patch after `php setup_db.php` |
 
 ---
 

@@ -240,7 +240,8 @@ function getLogsDir(): string {
 /**
  * Directory for ledger file attachments.
  * Preferred layout: storage/attachments/{YY####}/ (manual Reference #).
- * Legacy: storage/attachments/{transactionId}/ and storage/transaction_documents/{id}/.
+ * Until a Reference # exists, files stay in storage/attachments/{transactionId}/.
+ * Legacy: storage/transaction_documents/{id}/.
  */
 function getTransactionDocumentsDir(): string {
     return ensureStorageSubdir('attachments')['path'];
