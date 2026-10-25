@@ -19,6 +19,7 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.975](#v0975)
 - [v0.974](#v0974)
 - [v0.973](#v0973)
 - [v0.972](#v0972)
@@ -181,6 +182,33 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.975
+
+**Temporary unlock of cleared and reconciled transactions** — 2026-10-24
+
+> No schema update required for this release (configuration and audit only).  
+> **Patch file (history row):** `updates/20261024_0975_cleared_reconciled_edit_override.sql`  
+> **Schema version:** `20260827_0944_setup_baseline_consolidation` *(carried forward)*  
+> **Min app version:** 0.975
+
+- System Configuration has an Administrator-only switch, off by default: “Allow edits to cleared and reconciled.” Turning it on records the time. Other roles cannot change the switch.
+- While the switch is off, cleared and reconciled transactions stay immutable, including status. Budget-only edits are unchanged.
+- While the switch is on, an Administrator can open and edit one cleared or reconciled transaction, including status. Other roles stay locked. Opening edit writes an audit entry with the original status. Transactions that are not opened are not scanned or logged.
+- Each save of a transaction opened under the override needs one comment. A blank comment blocks that save. The audit entry stores the comment, user, active role, transaction id and reference, a summary of changes, the status being saved, and whether “Keep this status when locking.” was checked.
+- That checkbox appears on the edit form only while the override is on. It defaults to off. If it is checked on any save during the unlock, turning the switch off leaves that transaction’s saved status in place.
+- Turning the switch off reads override audit entries since the turn-on time. Status is restored to the original cleared or reconciled value when no save kept it. Field changes stay. Transactions that were already pending are left alone. The re-lock is logged with which transactions were restored and which were kept.
+- These saves and the re-lock do not move, replace, or delete attachment files. A reference change is refused when the transaction already has attachment rows, so those files are not orphaned. Fund rules, posting, and PDF optimize are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.975**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.974 | `updates/20261024_0975_cleared_reconciled_edit_override.sql` (records 0.975; no DDL) |
+| Fresh setup (0.944) | Apply 0.945–0.974, then this process-only patch after `php setup_db.php` |
 
 ---
 

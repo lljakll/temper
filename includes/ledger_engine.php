@@ -855,7 +855,7 @@ function ledgerLogEvent(
     string $username,
     string $summary,
     array $details = []
-): void {
+): int {
     ledgerRequireTables($db);
 
     // Deletes and path changes stay locked after clear/reconcile.
@@ -868,7 +868,7 @@ function ledgerLogEvent(
             'ledgerLogEvent: refusing ' . $eventType
             . ' on locked transaction ' . $transactionId
         );
-        return;
+        return 0;
     }
 
     if (function_exists('temperStampUsernameWithActiveRole')) {
@@ -881,6 +881,7 @@ function ledgerLogEvent(
     );
     $stmt->bind_param('isisss', $transactionId, $eventType, $userId, $username, $summary, $json);
     $stmt->execute();
+    $eventId = (int)$stmt->insert_id;
     $stmt->close();
 
     logAuditAction(
@@ -890,6 +891,7 @@ function ledgerLogEvent(
         'ledger.' . $eventType,
         'transaction=' . $transactionId . ' ' . $summary . ($details ? ' ' . json_encode($details, JSON_UNESCAPED_UNICODE) : '')
     );
+    return $eventId;
 }
 
 /**
@@ -1043,6 +1045,14 @@ function ledgerDescribeTransactionUpdate(
     $newDesc = trim((string)($newHeader['description'] ?? ''));
     if ($oldDesc !== $newDesc) {
         $changes[] = 'Description updated.';
+    }
+
+    if (array_key_exists('status', $newHeader)) {
+        $oldStatus = strtolower(trim((string)($existing['status'] ?? '')));
+        $newStatus = strtolower(trim((string)$newHeader['status']));
+        if ($newStatus !== '' && $oldStatus !== $newStatus) {
+            $changes[] = 'Status changed from ' . ($oldStatus !== '' ? $oldStatus : '—') . ' to ' . $newStatus . '.';
+        }
     }
 
     // Normalize lines for comparison: key by account|fund|type
@@ -1421,6 +1431,534 @@ function ledgerIsEditable(array $transaction): bool {
 
 function ledgerStatusIsPending(mixed $status): bool {
     return strtolower(trim((string)$status)) === 'pending';
+}
+
+/** One comment per override save. Not one comment per field. */
+const LEDGER_OVERRIDE_COMMENT_MAX = 2000;
+
+const LEDGER_OVERRIDE_EVENT_OPENED = 'override_edit_opened';
+const LEDGER_OVERRIDE_EVENT_SAVED = 'override_edit_saved';
+const LEDGER_OVERRIDE_EVENT_RELOCK = 'override_relock';
+
+/**
+ * Header update used only by the temporary cleared/reconciled override.
+ * Does not move, replace, or delete attachment files.
+ */
+function ledgerApplyOverrideHeaderUpdate(
+    mysqli $db,
+    int $transactionId,
+    string $transactionDate,
+    string $checkNumber,
+    string $payTo,
+    ?string $referenceNumber,
+    string $description,
+    ?string $budgetId,
+    string $status
+): bool {
+    $status = ledgerNormalizeTransactionStatus($status);
+    if ($transactionId <= 0 || $status === '') {
+        return false;
+    }
+    $stmt = $db->prepare(
+        "UPDATE transaction_details SET
+            transaction_date=?, check_number=?, pay_to=?, reference_number=?, description=?, budget_id=?, status=?,
+            cleared_date = CASE
+                WHEN ? = 'pending' THEN NULL
+                ELSE IFNULL(cleared_date, CURDATE())
+            END,
+            date_reconciled = CASE
+                WHEN ? = 'reconciled' THEN IFNULL(date_reconciled, CURDATE())
+                ELSE NULL
+            END
+         WHERE id=?"
+    );
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param(
+        'sssssssssi',
+        $transactionDate,
+        $checkNumber,
+        $payTo,
+        $referenceNumber,
+        $description,
+        $budgetId,
+        $status,
+        $status,
+        $status,
+        $transactionId
+    );
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+/**
+ * A reference change on an override save would move attachment files. Refuse it.
+ */
+function ledgerOverrideReferenceChangeBlocked(array $existing, ?string $newReference): bool {
+    $old = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
+    $new = ledgerNormalizeReferenceNumber($newReference);
+    return $new !== $old && !empty($existing['documents']);
+}
+
+function ledgerNormalizeTransactionStatus(string $status): string {
+    $status = strtolower(trim($status));
+    if (!in_array($status, ['pending', 'cleared', 'reconciled'], true)) {
+        return '';
+    }
+    return $status;
+}
+
+function ledgerClipText(string $text, int $max): string {
+    if ($max < 1) {
+        return '';
+    }
+    if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+        if (mb_strlen($text) <= $max) {
+            return $text;
+        }
+        return mb_substr($text, 0, $max - 1) . '…';
+    }
+    if (strlen($text) <= $max) {
+        return $text;
+    }
+    return substr($text, 0, $max - 1) . '…';
+}
+
+function ledgerSessionActiveRoleName(): string {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return '';
+    }
+    return trim((string)($_SESSION['active_role_name'] ?? ''));
+}
+
+function ledgerParseKeepStatusFlag(mixed $raw): bool {
+    return $raw === true || $raw === 1 || $raw === '1'
+        || $raw === 'true' || $raw === 'on' || $raw === 'yes';
+}
+
+function ledgerDbNow(mysqli $db): string {
+    $res = $db->query('SELECT DATE_FORMAT(NOW(), "%Y-%m-%d %H:%i:%s") AS n');
+    $row = $res ? $res->fetch_assoc() : null;
+    if ($res) {
+        $res->close();
+    }
+    $now = trim((string)($row['n'] ?? ''));
+    return $now !== '' ? $now : date('Y-m-d H:i:s');
+}
+
+/**
+ * Active Administrator role plus the temporary override switch.
+ * Other roles stay on the cleared/reconciled lock.
+ */
+function ledgerActorMayOverrideLockedEdit(mysqli $db, ?array $actor): bool {
+    if (!$actor || !isClearedReconciledEditOverrideEnabled()) {
+        return false;
+    }
+    $userId = (int)($actor['id'] ?? 0);
+    if ($userId <= 0 || !function_exists('userIsAdministrator')) {
+        return false;
+    }
+    return userIsAdministrator($db, $userId);
+}
+
+function ledgerOverrideEditWasOpened(mysqli $db, int $transactionId, string $since): bool {
+    $since = trim($since);
+    if ($transactionId <= 0 || $since === '') {
+        return false;
+    }
+    $type = LEDGER_OVERRIDE_EVENT_OPENED;
+    $stmt = $db->prepare(
+        'SELECT id FROM transaction_events
+         WHERE transaction_detail_id = ?
+           AND event_type = ?
+           AND created_at >= ?
+         ORDER BY id ASC
+         LIMIT 1'
+    );
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('iss', $transactionId, $type, $since);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return (bool)$row;
+}
+
+/**
+ * @return array{ok:bool,error:?string,comment:string}
+ */
+function ledgerOverrideSaveGate(mysqli $db, int $transactionId, string $comment): array {
+    $comment = trim($comment);
+    if ($comment === '') {
+        return [
+            'ok' => false,
+            'error' => 'A comment is required to save a cleared or reconciled transaction while the temporary override is on.',
+            'comment' => '',
+        ];
+    }
+    $len = function_exists('mb_strlen') ? mb_strlen($comment) : strlen($comment);
+    if ($len > LEDGER_OVERRIDE_COMMENT_MAX) {
+        return [
+            'ok' => false,
+            'error' => 'The comment cannot exceed ' . LEDGER_OVERRIDE_COMMENT_MAX . ' characters.',
+            'comment' => '',
+        ];
+    }
+    $since = getClearedReconciledEditOverrideSince();
+    if ($since === '') {
+        return [
+            'ok' => false,
+            'error' => 'The temporary override has no start time. Turn it off and on again in Configuration.',
+            'comment' => '',
+        ];
+    }
+    if (!ledgerOverrideEditWasOpened($db, $transactionId, $since)) {
+        return [
+            'ok' => false,
+            'error' => 'Open this transaction in edit mode before saving it under the temporary override.',
+            'comment' => '',
+        ];
+    }
+    return ['ok' => true, 'error' => null, 'comment' => $comment];
+}
+
+/**
+ * @return array<string,mixed>|null
+ */
+function ledgerFetchEventById(mysqli $db, int $eventId): ?array {
+    if ($eventId <= 0) {
+        return null;
+    }
+    $stmt = $db->prepare(
+        'SELECT id, event_type, user_id, username, summary, details, created_at
+         FROM transaction_events WHERE id = ? LIMIT 1'
+    );
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param('i', $eventId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return null;
+    }
+    $row['details'] = $row['details'] ? (json_decode((string)$row['details'], true) ?: []) : [];
+    return $row;
+}
+
+/**
+ * Write the edit-mode audit entry for one cleared or reconciled transaction.
+ * Does not scan other transactions.
+ *
+ * @param array<string,mixed> $actor
+ * @return array<string,mixed>
+ */
+function ledgerBeginClearedReconciledOverrideEdit(mysqli $db, int $transactionId, array $actor): array {
+    if (!isClearedReconciledEditOverrideEnabled()) {
+        return [
+            'success' => false,
+            'override_off' => true,
+            'error' => 'Cleared and reconciled transactions stay locked.',
+        ];
+    }
+    $userId = (int)($actor['id'] ?? 0);
+    if ($userId <= 0 || !function_exists('userIsAdministrator') || !userIsAdministrator($db, $userId)) {
+        return [
+            'success' => false,
+            'not_admin' => true,
+            'error' => 'Only an Administrator can edit cleared or reconciled transactions.',
+        ];
+    }
+    $since = getClearedReconciledEditOverrideSince();
+    if ($since === '') {
+        return [
+            'success' => false,
+            'error' => 'The temporary override has no start time. Turn it off and on again in Configuration.',
+        ];
+    }
+    if ($transactionId <= 0) {
+        return ['success' => false, 'error' => 'Transaction ID is required.'];
+    }
+    $tx = ledgerFetchTransaction($db, $transactionId);
+    if (!$tx) {
+        return ['success' => false, 'error' => 'Transaction not found.'];
+    }
+    $original = ledgerNormalizeTransactionStatus((string)($tx['status'] ?? ''));
+    if ($original !== 'cleared' && $original !== 'reconciled') {
+        return [
+            'success' => false,
+            'error' => 'This transaction is pending. The temporary override is only for cleared or reconciled transactions.',
+        ];
+    }
+    $ref = ledgerNormalizeReferenceNumber($tx['reference_number'] ?? null);
+    $role = ledgerSessionActiveRoleName();
+    $summary = ledgerClipText(
+        'Opened for temporary edit. Original status: ' . $original
+        . ($ref !== '' ? ('. Ref ' . $ref) : '')
+        . '.',
+        240
+    );
+    $eventId = ledgerLogEvent(
+        $db,
+        $transactionId,
+        LEDGER_OVERRIDE_EVENT_OPENED,
+        $userId,
+        (string)($actor['username'] ?? 'system'),
+        $summary,
+        [
+            'original_status' => $original,
+            'transaction_id' => $transactionId,
+            'reference_number' => $ref,
+            'active_role' => $role,
+            'override_since' => $since,
+        ]
+    );
+    $event = ledgerFetchEventById($db, $eventId);
+    return [
+        'success' => true,
+        'transaction_id' => $transactionId,
+        'original_status' => $original,
+        'reference_number' => $ref,
+        'event' => $event,
+    ];
+}
+
+/**
+ * @param list<array{id:int,ref:string,status:string,already?:bool}> $rows
+ */
+function ledgerFormatOverrideIdList(array $rows): string {
+    if ($rows === []) {
+        return 'none';
+    }
+    $bits = [];
+    foreach ($rows as $row) {
+        $id = (int)($row['id'] ?? 0);
+        $ref = trim((string)($row['ref'] ?? ''));
+        $status = (string)($row['status'] ?? '');
+        $label = '#' . $id;
+        if ($ref !== '') {
+            $label .= ' ref ' . $ref;
+        }
+        if ($status !== '') {
+            $label .= ' → ' . $status;
+        }
+        if (!empty($row['already'])) {
+            $label .= ' (already)';
+        }
+        $bits[] = $label;
+    }
+    return implode('; ', $bits);
+}
+
+/**
+ * When the temporary override is turned off, restore status from edit-mode
+ * audit entries since the override-on timestamp. Keep status when any save
+ * in that window set the keep-status flag. Field changes and attachments stay.
+ *
+ * @return array{success:bool,error:?string,message:string,restored:list<array>,kept:list<array>}
+ */
+function ledgerRelockClearedReconciledOverride(
+    mysqli $db,
+    string $since,
+    int $actorUserId,
+    string $actorUsername
+): array {
+    $since = trim($since);
+    $restored = [];
+    $kept = [];
+
+    if ($since === '') {
+        $message = 'Temporary override locked. No unlock timestamp was recorded, so no transaction status was changed.';
+        logAuditAction($db, $actorUserId > 0 ? $actorUserId : null, $actorUsername, 'ledger.override_relock', $message);
+        return [
+            'success' => true,
+            'error' => null,
+            'message' => $message,
+            'restored' => [],
+            'kept' => [],
+        ];
+    }
+
+    $opened = LEDGER_OVERRIDE_EVENT_OPENED;
+    $saved = LEDGER_OVERRIDE_EVENT_SAVED;
+    $stmt = $db->prepare(
+        'SELECT id, transaction_detail_id, event_type, details
+         FROM transaction_events
+         WHERE created_at >= ?
+           AND event_type IN (?, ?)
+         ORDER BY id ASC'
+    );
+    if (!$stmt) {
+        return [
+            'success' => false,
+            'error' => 'Could not read override audit entries.',
+            'message' => '',
+            'restored' => [],
+            'kept' => [],
+        ];
+    }
+    $stmt->bind_param('sss', $since, $opened, $saved);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $byTx = [];
+    while ($row = $res->fetch_assoc()) {
+        $txId = (int)($row['transaction_detail_id'] ?? 0);
+        if ($txId <= 0) {
+            continue;
+        }
+        $details = $row['details'] ? (json_decode((string)$row['details'], true) ?: []) : [];
+        if (!is_array($details)) {
+            $details = [];
+        }
+        $byTx[$txId][] = [
+            'type' => (string)($row['event_type'] ?? ''),
+            'details' => $details,
+        ];
+    }
+    $stmt->close();
+
+    $role = ledgerSessionActiveRoleName();
+    foreach ($byTx as $txId => $events) {
+        $original = '';
+        $keep = false;
+        $openedThis = false;
+        foreach ($events as $ev) {
+            if ($ev['type'] === LEDGER_OVERRIDE_EVENT_OPENED && $original === '') {
+                $openedThis = true;
+                $st = ledgerNormalizeTransactionStatus((string)($ev['details']['original_status'] ?? ''));
+                // Already pending when opened: leave it alone.
+                if ($st === 'pending') {
+                    $original = 'pending';
+                } elseif ($st === 'cleared' || $st === 'reconciled') {
+                    $original = $st;
+                }
+            }
+            if ($ev['type'] === LEDGER_OVERRIDE_EVENT_SAVED
+                && ledgerParseKeepStatusFlag($ev['details']['keep_status'] ?? false)
+            ) {
+                $keep = true;
+            }
+        }
+        if (!$openedThis || $original === '' || $original === 'pending') {
+            continue;
+        }
+
+        $curStmt = $db->prepare(
+            'SELECT status, reference_number FROM transaction_details WHERE id = ? LIMIT 1'
+        );
+        if (!$curStmt) {
+            throw new RuntimeException('Could not read transaction #' . $txId . ' for re-lock.');
+        }
+        $curStmt->bind_param('i', $txId);
+        $curStmt->execute();
+        $cur = $curStmt->get_result()->fetch_assoc();
+        $curStmt->close();
+        if (!$cur) {
+            continue;
+        }
+        $curStatus = ledgerNormalizeTransactionStatus((string)($cur['status'] ?? ''));
+        $ref = ledgerNormalizeReferenceNumber($cur['reference_number'] ?? null);
+        $refForLog = $ref !== '' ? $ref : trim((string)($cur['reference_number'] ?? ''));
+
+        if ($keep) {
+            $kept[] = [
+                'id' => $txId,
+                'ref' => $refForLog,
+                'status' => $curStatus !== '' ? $curStatus : (string)($cur['status'] ?? ''),
+            ];
+            ledgerLogEvent(
+                $db,
+                $txId,
+                LEDGER_OVERRIDE_EVENT_RELOCK,
+                $actorUserId > 0 ? $actorUserId : null,
+                $actorUsername,
+                ledgerClipText(
+                    'Temporary override locked. Status kept'
+                    . ($curStatus !== '' ? (' (' . $curStatus . ')') : '')
+                    . ' because a save chose keep-status.',
+                    240
+                ),
+                [
+                    'action' => 'kept',
+                    'original_status' => $original,
+                    'status' => $curStatus,
+                    'keep_status' => true,
+                    'transaction_id' => $txId,
+                    'reference_number' => $refForLog,
+                    'active_role' => $role,
+                ]
+            );
+            continue;
+        }
+
+        $already = ($curStatus === $original);
+        if (!$already) {
+            $upd = $db->prepare('UPDATE transaction_details SET status = ? WHERE id = ?');
+            if (!$upd) {
+                throw new RuntimeException('Could not restore status for transaction #' . $txId . '.');
+            }
+            $upd->bind_param('si', $original, $txId);
+            if (!$upd->execute()) {
+                $err = $upd->error;
+                $upd->close();
+                throw new RuntimeException('Could not restore status for transaction #' . $txId . ': ' . $err);
+            }
+            $upd->close();
+        }
+        $restored[] = [
+            'id' => $txId,
+            'ref' => $refForLog,
+            'status' => $original,
+            'already' => $already,
+        ];
+        ledgerLogEvent(
+            $db,
+            $txId,
+            LEDGER_OVERRIDE_EVENT_RELOCK,
+            $actorUserId > 0 ? $actorUserId : null,
+            $actorUsername,
+            ledgerClipText(
+                'Temporary override locked. Status restored to ' . $original . '.',
+                240
+            ),
+            [
+                'action' => 'restored',
+                'original_status' => $original,
+                'status' => $original,
+                'previous_status' => $curStatus,
+                'already' => $already,
+                'keep_status' => false,
+                'transaction_id' => $txId,
+                'reference_number' => $refForLog,
+                'active_role' => $role,
+            ]
+        );
+    }
+
+    $message = 'Temporary override locked. Restored: '
+        . ledgerFormatOverrideIdList($restored)
+        . '. Kept: '
+        . ledgerFormatOverrideIdList($kept)
+        . '.';
+    logAuditAction(
+        $db,
+        $actorUserId > 0 ? $actorUserId : null,
+        $actorUsername,
+        'ledger.override_relock',
+        $message
+    );
+
+    return [
+        'success' => true,
+        'error' => null,
+        'message' => $message,
+        'restored' => $restored,
+        'kept' => $kept,
+    ];
 }
 
 /** Max IDs for select-all-filtered / bulk pending delete (one year of history). */

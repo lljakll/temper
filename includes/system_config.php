@@ -123,6 +123,16 @@ function temperSystemConfigCatalog(): array {
                 . 'Upload a new image or select one already in storage. Leave empty to keep the default icon.',
             'group' => 'organization',
         ],
+        'allow_cleared_reconciled_edits' => [
+            'default' => false,
+            'type' => 'bool',
+            'label' => 'Allow edits to cleared and reconciled',
+            'description' => 'Temporary override, off by default. While on, an Administrator may open and edit '
+                . 'cleared and reconciled transactions, including status. Other roles stay locked. '
+                . 'Each save needs one comment. Turning this off restores status unless a save kept it. '
+                . 'Field changes stay. Attachments are not changed. Only an Administrator can change this setting.',
+            'group' => 'ledger',
+        ],
     ];
 }
 
@@ -387,6 +397,23 @@ function getAutoBackupConfigFormat(): string {
         return 'sql';
     }
     return $format;
+}
+
+/**
+ * Temporary override: Administrator may edit cleared and reconciled transactions.
+ * Off by default. The turn-on timestamp is stored beside the flag (not a catalog field).
+ */
+function isClearedReconciledEditOverrideEnabled(): bool {
+    return (bool)getSystemConfig('allow_cleared_reconciled_edits', false);
+}
+
+/**
+ * MySQL datetime (Y-m-d H:i:s) when the temporary override was turned on.
+ * Empty when it has never been turned on during this file's life.
+ */
+function getClearedReconciledEditOverrideSince(): string {
+    $raw = getSystemConfig('allow_cleared_reconciled_edits_since', '');
+    return trim(is_string($raw) ? $raw : '');
 }
 
 /**

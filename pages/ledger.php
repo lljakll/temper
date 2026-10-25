@@ -14,6 +14,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
     $ledgerActor = getCurrentUser();
     $canWriteLedger = $ledgerActor && userHasPermission($db, (int)$ledgerActor['id'], 'page.ledger.write');
     $canDeleteLedger = $ledgerActor && ledgerUserCanDeleteTransactions($db, (int)$ledgerActor['id']);
+    $ledgerUserIsAdmin = $ledgerActor && userIsAdministrator($db, (int)$ledgerActor['id']);
     // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
     $canBulkApply = $ledgerActor && $canWriteLedger
         && tempBulkTxnManagerUserCanAccess($db, (int)$ledgerActor['id']);
@@ -1678,6 +1679,21 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             exit;
         }
 
+        if ($action === 'begin_override_edit') {
+            header('Content-Type: application/json; charset=utf-8');
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            $txId = (int)($_POST['tx_id'] ?? 0);
+            $result = ledgerBeginClearedReconciledOverrideEdit(
+                $db,
+                $txId,
+                $actor ?: []
+            );
+            echo json_encode($result, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
         if ($action === 'clear') {
             $ids = json_decode($_POST['selected_ids'] ?? '[]', true) ?: [];
             if (count($ids) > 0) {
@@ -1767,11 +1783,26 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 }
             }
 
-            // Cleared/reconciled: allow budget-only update without re-validating locked header/lines
+            // Cleared/reconciled: budget-only, unless an Administrator is using the temporary override.
             $handledBudgetOnly = false;
+            $overrideSave = false;
+            $overrideComment = '';
             if ($tx_id > 0 && empty($error)) {
                 $lockedTx = ledgerFetchTransaction($db, $tx_id);
                 if ($lockedTx && !ledgerIsEditable($lockedTx)) {
+                    if (ledgerActorMayOverrideLockedEdit($db, $actor)) {
+                        $overrideSave = true;
+                        $gate = ledgerOverrideSaveGate(
+                            $db,
+                            $tx_id,
+                            (string)($_POST['override_comment'] ?? '')
+                        );
+                        if (empty($gate['ok'])) {
+                            $error = $gate['error'] ?? 'This cleared or reconciled transaction cannot be saved.';
+                        } else {
+                            $overrideComment = (string)$gate['comment'];
+                        }
+                    } else {
                     $handledBudgetOnly = true;
                     $oldBudgetId = !empty($lockedTx['budget_id']) ? (int)$lockedTx['budget_id'] : 0;
                     $newBudgetId = $budgetId !== null ? (int)$budgetId : 0;
@@ -1854,11 +1885,12 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                             }
                         }
                     }
+                    }
                 }
             }
 
-            if ($handledBudgetOnly) {
-                // Budget-only save finished (success or error already set)
+            if ($handledBudgetOnly || $error) {
+                // Budget-only save finished, or the override save was refused (comment / edit-mode).
             } elseif (!$d) {
                 $error = "Date is required.";
             } elseif (empty($refCheck['ok'])) {
@@ -1951,15 +1983,28 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                         $existing = ledgerFetchTransaction($db, $tx_id);
                         if (!$existing) {
                             $error = "Transaction not found.";
-                        } elseif (!ledgerIsEditable($existing)) {
+                        } elseif (!ledgerIsEditable($existing) && !$overrideSave) {
                             $error = "This transaction is read-only (cleared or reconciled).";
                         } else {
                             $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
                             $budgetBind = $budgetId !== null ? (string)$budgetId : null;
+                            $overrideStatus = '';
+                            $keepStatusOnLock = false;
+
+                            if ($overrideSave) {
+                                $overrideStatus = ledgerNormalizeTransactionStatus((string)($_POST['tx_status'] ?? ''));
+                                $keepStatusOnLock = ledgerParseKeepStatusFlag($_POST['keep_status_on_lock'] ?? '0');
+                                if ($overrideStatus === '') {
+                                    $error = 'Status must be pending, cleared, or reconciled.';
+                                } elseif (ledgerOverrideReferenceChangeBlocked($existing, $ref)) {
+                                    $error = 'Reference # was not changed. Attachment files stay in place during a temporary unlock and cannot be moved.';
+                                }
+                            }
 
                             // Move files before updating the stored Reference # so paths stay resolvable.
+                            // Override saves do not move, replace, or delete attachment files.
                             $relocResult = null;
-                            $needsReloc = $ref !== null && (
+                            $needsReloc = !$overrideSave && $ref !== null && (
                                 ($oldRef !== '' && preg_match('/^\d{6}$/', $oldRef) && $oldRef !== $ref)
                                 || ($oldRef === '' || !preg_match('/^\d{6}$/', $oldRef))
                             );
@@ -1978,24 +2023,50 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                             }
 
                             if (!empty($error)) {
-                                // Relocate failed; do not change the stored Reference #.
+                                // Relocate failed, or the override save was refused; do not change the transaction.
+                            } else {
+                            $savedOk = false;
+                            if ($overrideSave) {
+                                $savedOk = ledgerApplyOverrideHeaderUpdate(
+                                    $db,
+                                    $tx_id,
+                                    $d,
+                                    $c,
+                                    $p,
+                                    $ref,
+                                    $description,
+                                    $budgetBind,
+                                    $overrideStatus
+                                );
+                                if (!$savedOk) {
+                                    $error = 'Update failed.';
+                                }
                             } else {
                             $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, description=?, budget_id=? WHERE id=?");
                             $upd->bind_param("ssssssi", $d, $c, $p, $ref, $description, $budgetBind, $tx_id);
-                            if ($upd->execute()) {
-                                $upd->close();
+                            $savedOk = $upd->execute();
+                            if (!$savedOk) {
+                                $error = "Update failed: " . $db->error;
+                            }
+                            $upd->close();
+                            }
+                            if ($savedOk) {
 
+                                $describeHeader = [
+                                    'transaction_date' => $d,
+                                    'pay_to' => $p,
+                                    'reference_number' => $ref,
+                                    'check_number' => $c,
+                                    'description' => $description,
+                                    'budget_id' => $budgetId ?? 0,
+                                ];
+                                if ($overrideSave) {
+                                    $describeHeader['status'] = $overrideStatus;
+                                }
                                 $describe = ledgerDescribeTransactionUpdate(
                                     $db,
                                     $existing,
-                                    [
-                                        'transaction_date' => $d,
-                                        'pay_to' => $p,
-                                        'reference_number' => $ref,
-                                        'check_number' => $c,
-                                        'description' => $description,
-                                        'budget_id' => $budgetId ?? 0,
-                                    ],
+                                    $describeHeader,
                                     $vlines
                                 );
 
@@ -2035,6 +2106,51 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                                         ]
                                     );
                                 }
+                                if ($overrideSave) {
+                                    $savedRef = ledgerNormalizeReferenceNumber($ref);
+                                    if ($savedRef === '') {
+                                        $savedRef = $oldRef;
+                                    }
+                                    $roleForLog = ledgerSessionActiveRoleName();
+                                    $keepLabel = $keepStatusOnLock ? 'yes' : 'no';
+                                    $auditChanges = array_merge(
+                                        [
+                                            'Comment: ' . $overrideComment,
+                                            'Status saved: ' . $overrideStatus . '.',
+                                            'Keep this status when locking: ' . $keepLabel . '.',
+                                        ],
+                                        $describe['changes']
+                                    );
+                                    $saveSummary = ledgerClipText(
+                                        'Override save of #' . $tx_id
+                                        . ($savedRef !== '' ? (' ref ' . $savedRef) : '')
+                                        . '. Status ' . $overrideStatus
+                                        . '. Keep status: ' . $keepLabel . '.',
+                                        240
+                                    );
+                                    ledgerLogEvent(
+                                        $db,
+                                        $tx_id,
+                                        LEDGER_OVERRIDE_EVENT_SAVED,
+                                        $actor ? (int)$actor['id'] : null,
+                                        $actor['username'] ?? 'system',
+                                        $saveSummary,
+                                        [
+                                            'comment' => $overrideComment,
+                                            'user_id' => $actor ? (int)$actor['id'] : null,
+                                            'username' => (string)($actor['username'] ?? ''),
+                                            'active_role' => $roleForLog,
+                                            'transaction_id' => $tx_id,
+                                            'reference_number' => $savedRef,
+                                            'summary' => $describe['summary'],
+                                            'changes' => $auditChanges,
+                                            'status' => $overrideStatus,
+                                            'keep_status' => $keepStatusOnLock,
+                                            'debits' => $dt,
+                                            'credits' => $ct,
+                                        ]
+                                    );
+                                } else {
                                 ledgerLogEvent(
                                     $db,
                                     $tx_id,
@@ -2048,11 +2164,9 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                                         'changes' => $describe['changes'],
                                     ]
                                 );
+                                }
                                 $success = "Transaction #$tx_id updated. Debits $" . number_format($dt, 2) . " = Credits $" . number_format($ct, 2);
                                 $savedTxId = (int)$tx_id;
-                            } else {
-                                $error = "Update failed: " . $db->error;
-                                $upd->close();
                             }
                             } // relocate succeeded
                         }
@@ -2810,6 +2924,36 @@ foreach ($colDefs as $col):
                         </div>
                     </div>
 
+                    <div id="txOverrideEditPanel" class="d-none border border-warning rounded p-2 mt-2 bg-warning-subtle">
+                        <p class="small mb-2">
+                            Temporary override. This cleared or reconciled transaction can be edited, including status.
+                            One comment is required for this save. Attachments are not moved or deleted.
+                        </p>
+                        <div class="row g-2">
+                            <div class="col-12 col-sm-4">
+                                <label class="form-label small mb-1" for="tx_status">Status</label>
+                                <select class="form-select form-select-sm" name="tx_status" id="tx_status" disabled>
+                                    <option value="pending">Pending</option>
+                                    <option value="cleared">Cleared</option>
+                                    <option value="reconciled">Reconciled</option>
+                                </select>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small mb-1" for="override_comment">Comment *</label>
+                                <textarea class="form-control form-control-sm" name="override_comment" id="override_comment"
+                                          rows="2" maxlength="2000" disabled
+                                          placeholder="Why this cleared or reconciled transaction is being changed"></textarea>
+                            </div>
+                            <div class="col-12">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input" type="checkbox" name="keep_status_on_lock"
+                                           id="keep_status_on_lock" value="1" disabled>
+                                    <label class="form-check-label small" for="keep_status_on_lock">Keep this status when locking.</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="mt-2">
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <h6 class="mb-0 small">Lines <small class="text-muted">(min 2 required)</small></h6>
@@ -3245,6 +3389,7 @@ foreach ($colDefs as $col):
 
     const canWriteLedger = <?= $canWriteLedger ? 'true' : 'false' ?>;
     const canDeleteLedger = <?= $canDeleteLedger ? 'true' : 'false' ?>;
+    const ledgerUserIsAdmin = <?= !empty($ledgerUserIsAdmin) ? 'true' : 'false' ?>;
     // TEMP_BULK_TXN_MANAGER — remove when historical load tools are retired
     const canBulkApply = <?= !empty($canBulkApply) ? 'true' : 'false' ?>;
     const addTxBtn = document.getElementById('addTxBtn');
@@ -3576,6 +3721,8 @@ foreach ($colDefs as $col):
     let budgetAutoMode = true;
     /** Cleared/reconciled edit: only budget may change; other header/line fields stay locked. */
     let budgetOnlyEditMode = false;
+    let overrideEditMode = false;
+    let overrideEditOpening = false;
     const BUDGET_STATUS_WARN_MSG = 'This transaction is already cleared/reconciled. Changing budget will not affect the audit trail but may impact reporting.';
 
     function budgetById(id) {
@@ -5337,9 +5484,79 @@ foreach ($colDefs as $col):
         updateReferenceHintVisibility();
     }
 
+    function setOverrideEditPanel(show, status) {
+        overrideEditMode = !!show;
+        const panel = document.getElementById('txOverrideEditPanel');
+        const comment = document.getElementById('override_comment');
+        const keep = document.getElementById('keep_status_on_lock');
+        const statusEl = document.getElementById('tx_status');
+        if (panel) panel.classList.toggle('d-none', !show);
+        [comment, keep, statusEl].forEach(function(el) {
+            if (el) el.disabled = !show;
+        });
+        if (comment) comment.value = '';
+        if (keep) keep.checked = false;
+        if (statusEl) {
+            const st = String(status || '').toLowerCase();
+            statusEl.value = (st === 'pending' || st === 'cleared' || st === 'reconciled') ? st : 'cleared';
+        }
+    }
+
+    function beginOverrideEditRequest(id) {
+        const fd = new FormData();
+        fd.append('action', 'begin_override_edit');
+        fd.append('tx_id', String(id));
+        return fetch('pages/ledger.php', {
+            method: 'POST',
+            body: fd,
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        }).then(function(r) {
+            return r.json();
+        });
+    }
+
+    /** Full edit of a cleared/reconciled transaction while the temporary override is on. */
+    function applyOverrideFullEdit(data) {
+        const id = data && data.id ? data.id : (txIdField.value || '');
+        clearPendingDocDeletes(true);
+        linesBody.innerHTML = '';
+        const lines = (data && data.lines) || [];
+        if (lines.length > 0) {
+            lines.forEach(function(l) {
+                const row = createLineRow(l);
+                linesBody.appendChild(row);
+                attachLineListeners(row);
+            });
+        } else {
+            addLine();
+            addLine();
+        }
+        budgetOnlyEditMode = false;
+        setMainFieldsReadOnly(false);
+        setBudgetStatusWarning(false);
+        setOverrideEditPanel(true, data && data.status);
+        formTitle.textContent = data && data.reference_number
+            ? ('Edit ' + data.reference_number + ' (#' + id + ') — temporary unlock')
+            : ('Edit Transaction #' + id + ' — temporary unlock');
+        updateModeBadge('edit');
+        if (addLineBtn) addLineBtn.style.display = '';
+        if (resetLinesBtn) resetLinesBtn.style.display = '';
+        if (saveBtn) saveBtn.style.display = '';
+        if (cancelBtn2) cancelBtn2.style.display = '';
+        renderMetaSection(data || currentViewData);
+        setDocUploadVisible(!!canWriteLedger);
+        renderDocumentsList((data && data.documents) || (currentViewData && currentViewData.documents) || [], false);
+        updateBudgetPeriodWarning();
+        recalcTotals();
+        markTxFormClean();
+        openTxFormModal();
+    }
+
     /** Enter budget-only edit UI for a cleared/reconciled transaction (lines stay locked). */
     function applyBudgetOnlyEditMode(data) {
         budgetOnlyEditMode = true;
+        setOverrideEditPanel(false);
         budgetAutoMode = false;
         setMainFieldsReadOnly(true, { budgetEnabled: true });
         setBudgetStatusWarning(true);
@@ -6664,6 +6881,7 @@ foreach ($colDefs as $col):
         setDocUploadVisible(false);
         setMainFieldsReadOnly(true);
         setBudgetStatusWarning(false);
+        setOverrideEditPanel(false);
         if (formTitle) formTitle.textContent = 'Transaction Details';
         updateModeBadge('blank');
         if (addLineBtn) addLineBtn.style.display = 'none';
@@ -6707,6 +6925,7 @@ foreach ($colDefs as $col):
             // no listeners for view
         });
         budgetOnlyEditMode = false;
+        setOverrideEditPanel(false);
         setMainFieldsReadOnly(true);
         setBudgetStatusWarning(false);
         formTitle.textContent = data.reference_number
@@ -6749,6 +6968,54 @@ foreach ($colDefs as $col):
         const lines = data.lines || [];
         const locked = isTxClearedOrReconciled(data);
 
+        if (locked && ledgerUserIsAdmin) {
+            if (overrideEditOpening) return;
+            overrideEditOpening = true;
+            beginOverrideEditRequest(data.id)
+                .then(function(res) {
+                    if (res && res.success) {
+                        if (res.event) {
+                            data.events = [res.event].concat(data.events || []);
+                            if (currentViewData && String(currentViewData.id) === String(data.id)) {
+                                currentViewData.events = data.events;
+                            }
+                        }
+                        applyOverrideFullEdit(data);
+                        return;
+                    }
+                    if (res && res.error && !res.override_off) {
+                        showToast(res.error, 'warning');
+                    }
+                    linesBody.innerHTML = '';
+                    lines.forEach(l => {
+                        const row = createLineRow(l, true);
+                        linesBody.appendChild(row);
+                    });
+                    renderMetaSection(data);
+                    applyBudgetOnlyEditMode(data);
+                    recalcTotals();
+                    markTxFormClean();
+                    openTxFormModal();
+                })
+                .catch(function() {
+                    showToast('Could not open edit mode.', 'danger');
+                    linesBody.innerHTML = '';
+                    lines.forEach(l => {
+                        const row = createLineRow(l, true);
+                        linesBody.appendChild(row);
+                    });
+                    renderMetaSection(data);
+                    applyBudgetOnlyEditMode(data);
+                    recalcTotals();
+                    markTxFormClean();
+                    openTxFormModal();
+                })
+                .finally(function() {
+                    overrideEditOpening = false;
+                });
+            return;
+        }
+
         if (locked) {
             // Cleared/reconciled: show lines read-only; only budget is editable
             lines.forEach(l => {
@@ -6774,6 +7041,7 @@ foreach ($colDefs as $col):
             addLine();
         }
         budgetOnlyEditMode = false;
+        setOverrideEditPanel(false);
         setMainFieldsReadOnly(false);
         setBudgetStatusWarning(false);
         formTitle.textContent = data.reference_number
@@ -6797,8 +7065,40 @@ foreach ($colDefs as $col):
         if (!id) return;
         restorePendingDocDeletes(id);
 
-        // Cleared/reconciled: unlock budget only. Do not restore a delete queue.
+        // Cleared/reconciled: full edit for an Administrator while the override is on; otherwise budget only.
         if (isTxClearedOrReconciled(currentViewData)) {
+            if (ledgerUserIsAdmin) {
+                if (overrideEditOpening) return;
+                overrideEditOpening = true;
+                beginOverrideEditRequest(id)
+                    .then(function(res) {
+                        if (res && res.success) {
+                            if (res.event && currentViewData) {
+                                currentViewData.events = [res.event].concat(currentViewData.events || []);
+                            }
+                            applyOverrideFullEdit(currentViewData || { id: id });
+                            return;
+                        }
+                        if (res && res.error && !res.override_off) {
+                            showToast(res.error, 'warning');
+                        }
+                        clearPendingDocDeletes(true);
+                        applyBudgetOnlyEditMode(currentViewData || { id: id });
+                        markTxFormClean();
+                        openTxFormModal();
+                    })
+                    .catch(function() {
+                        showToast('Could not open edit mode.', 'danger');
+                        clearPendingDocDeletes(true);
+                        applyBudgetOnlyEditMode(currentViewData || { id: id });
+                        markTxFormClean();
+                        openTxFormModal();
+                    })
+                    .finally(function() {
+                        overrideEditOpening = false;
+                    });
+                return;
+            }
             clearPendingDocDeletes(true);
             applyBudgetOnlyEditMode(currentViewData || { id: id });
             markTxFormClean();
@@ -6807,6 +7107,7 @@ foreach ($colDefs as $col):
         }
 
         budgetOnlyEditMode = false;
+        setOverrideEditPanel(false);
         setMainFieldsReadOnly(false);
         setBudgetStatusWarning(false);
         formTitle.textContent = 'Edit Transaction #' + id;
@@ -6837,6 +7138,7 @@ foreach ($colDefs as $col):
         currentViewData = null;
         budgetOnlyEditMode = false;
         form.reset();
+        setOverrideEditPanel(false);
         const today = new Date().toISOString().slice(0, 10);
         document.getElementById('transaction_date').value = today;
         if (refInput) refInput.value = '';
@@ -8076,6 +8378,18 @@ foreach ($colDefs as $col):
         fd.delete('tx_document');
         fd.delete('document');
         fd.set('action', 'save');
+        if (overrideEditMode) {
+            const commentEl = document.getElementById('override_comment');
+            const keepEl = document.getElementById('keep_status_on_lock');
+            const statusEl = document.getElementById('tx_status');
+            fd.set('override_comment', commentEl ? commentEl.value : '');
+            fd.set('keep_status_on_lock', keepEl && keepEl.checked ? '1' : '0');
+            fd.set('tx_status', statusEl ? statusEl.value : '');
+        } else {
+            fd.delete('override_comment');
+            fd.delete('keep_status_on_lock');
+            fd.delete('tx_status');
+        }
         return fd;
     }
 
@@ -8095,6 +8409,15 @@ foreach ($colDefs as $col):
             e.stopPropagation();
             if (form.dataset.saving === '1') {
                 return;
+            }
+
+            if (overrideEditMode) {
+                const overrideComment = (document.getElementById('override_comment')?.value || '').trim();
+                if (!overrideComment) {
+                    showToast('A comment is required to save this cleared or reconciled transaction.', 'warning');
+                    document.getElementById('override_comment')?.focus();
+                    return;
+                }
             }
 
             const seqVal = (document.getElementById('reference_number')?.value || '').trim();

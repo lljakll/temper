@@ -1,8 +1,9 @@
 <?php
 /**
  * System — Configuration.
- * Administrator-only settings: church name/icon, Developer Mode (also controls
- * application idle timeout), auto-archive timer, and related preferences.
+ * Administrator-only settings: church name/icon, the temporary cleared/reconciled
+ * edit override, Developer Mode (also controls application idle timeout),
+ * auto-archive timer, and related preferences.
  * Settings persist under storage/config/system.json.
  * Login idle timeout: 10 min when Developer Mode is off; fully disabled when on
  * (host/system session cleaner ≈24 minutes still applies).
@@ -57,6 +58,8 @@ function configPayload(): array {
         'allow_hard_delete' => allowHardDeleteUsers(),
         'church_name' => getChurchDisplayName(),
         'church_icon' => getChurchIconRelativePath(),
+        'allow_cleared_reconciled_edits' => isClearedReconciledEditOverrideEnabled(),
+        'allow_cleared_reconciled_edits_since' => getClearedReconciledEditOverrideSince(),
         'brand' => getBrandClientPayload(),
         'storage_images' => listStorageImagesForBrandPicker(),
         'app_env' => (string)APP_ENV,
@@ -265,6 +268,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updates['church_name'] = $name;
         }
 
+        if (array_key_exists('allow_cleared_reconciled_edits', $_POST)) {
+            $updates['allow_cleared_reconciled_edits'] = configParseBool($_POST['allow_cleared_reconciled_edits']);
+        }
+
         if (array_key_exists('church_icon', $_POST)) {
             $norm = temperNormalizeChurchIconSetting((string)$_POST['church_icon']);
             if (empty($norm['success'])) {
@@ -292,9 +299,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
 
         $before = loadSystemConfig(true);
-        $result = saveSystemConfig($updates);
-        if (!$result['success']) {
-            configSendJson(['success' => false, 'error' => $result['error'] ?? 'Save failed.'], $db);
+        $wantOverride = array_key_exists('allow_cleared_reconciled_edits', $updates)
+            ? (bool)$updates['allow_cleared_reconciled_edits']
+            : (bool)($before['allow_cleared_reconciled_edits'] ?? false);
+        $hadOverride = (bool)($before['allow_cleared_reconciled_edits'] ?? false);
+        $overrideSince = trim((string)($before['allow_cleared_reconciled_edits_since'] ?? ''));
+        // Record the turn-on time once per unlock. Do not reset it on later saves while it stays on.
+        if ($wantOverride && (!$hadOverride || $overrideSince === '')) {
+            require_once __DIR__ . '/../includes/ledger_engine.php';
+            $updates['allow_cleared_reconciled_edits_since'] = ledgerDbNow($db);
+        }
+
+        $relockMessage = '';
+        if ($hadOverride && !$wantOverride) {
+            require_once __DIR__ . '/../includes/ledger_engine.php';
+            $db->begin_transaction();
+            try {
+                $relock = ledgerRelockClearedReconciledOverride(
+                    $db,
+                    $overrideSince,
+                    $actorId,
+                    $actorUsername
+                );
+                if (empty($relock['success'])) {
+                    $db->rollback();
+                    configSendJson([
+                        'success' => false,
+                        'error' => $relock['error'] ?? 'Could not lock cleared and reconciled transactions.',
+                    ], $db);
+                }
+                $relockMessage = (string)($relock['message'] ?? '');
+                $result = saveSystemConfig($updates);
+                if (!$result['success']) {
+                    $db->rollback();
+                    configSendJson(['success' => false, 'error' => $result['error'] ?? 'Save failed.'], $db);
+                }
+                $db->commit();
+            } catch (Throwable $e) {
+                $db->rollback();
+                configSendJson([
+                    'success' => false,
+                    'error' => 'Could not lock cleared and reconciled transactions: ' . $e->getMessage(),
+                ], $db);
+            }
+        } else {
+            $result = saveSystemConfig($updates);
+            if (!$result['success']) {
+                configSendJson(['success' => false, 'error' => $result['error'] ?? 'Save failed.'], $db);
+            }
         }
 
         $after = $result['settings'] ?? loadSystemConfig(true);
@@ -318,9 +370,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $detail
         );
 
+        $savedMessage = 'Configuration saved.';
+        if ($relockMessage !== '') {
+            $savedMessage .= ' ' . $relockMessage;
+        }
         configSendJson(array_merge([
             'success' => true,
-            'message' => 'Configuration saved.',
+            'message' => $savedMessage,
         ], configPayload()), $db);
     }
 
@@ -352,6 +408,8 @@ $storageUnusedParent = $storageStatus['unused_parent_storage'] ?? null;
 $storageSubdirs = is_array($storageStatus['subdirs'] ?? null) ? $storageStatus['subdirs'] : [];
 $churchName = (string)($payload['church_name'] ?? getChurchDisplayName());
 $churchIcon = (string)($payload['church_icon'] ?? '');
+$allowClearedOverride = !empty($payload['allow_cleared_reconciled_edits']);
+$clearedOverrideSince = (string)($payload['allow_cleared_reconciled_edits_since'] ?? '');
 $storageImages = is_array($payload['storage_images'] ?? null) ? $payload['storage_images'] : [];
 $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIcon) : '';
 ?>
@@ -458,6 +516,42 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
                                     Clear icon
                                 </button>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Ledger group -->
+                    <h3 class="h6 text-uppercase text-muted mb-3" style="letter-spacing: 0.04em; font-size: 0.75rem;">
+                        Ledger
+                    </h3>
+
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 p-3 rounded border mb-4">
+                        <div class="flex-grow-1">
+                            <label class="form-label fw-semibold mb-1" for="cfgClearedReconciledEdits">
+                                Allow edits to cleared and reconciled
+                            </label>
+                            <p class="small text-muted mb-0">
+                                Temporary override. Off by default. Only an Administrator can change this.
+                                While <strong>On</strong>, an Administrator may open and edit a cleared or reconciled
+                                transaction, including status. Other roles stay locked. Each save needs one comment.
+                                Turning this <strong>Off</strong> restores status unless a save used
+                                “Keep this status when locking.” Field changes stay. Attachments are not changed.
+                            </p>
+                            <p class="small text-muted mb-0 mt-2<?= ($allowClearedOverride && $clearedOverrideSince !== '') ? '' : ' d-none' ?>"
+                               id="cfgClearedOverrideSince">
+                                <?php if ($allowClearedOverride && $clearedOverrideSince !== ''): ?>
+                                    Turned on <?= htmlspecialchars($clearedOverrideSince, ENT_QUOTES, 'UTF-8') ?>.
+                                <?php endif; ?>
+                            </p>
+                        </div>
+                        <div class="form-check form-switch m-0 pt-1 text-nowrap">
+                            <input class="form-check-input" type="checkbox" role="switch"
+                                   id="cfgClearedReconciledEdits"
+                                   aria-checked="<?= $allowClearedOverride ? 'true' : 'false' ?>"
+                                   <?= $allowClearedOverride ? 'checked' : '' ?>>
+                            <label class="form-check-label small fw-semibold" for="cfgClearedReconciledEdits"
+                                   id="cfgClearedReconciledEditsLabel">
+                                <?= $allowClearedOverride ? 'On' : 'Off' ?>
+                            </label>
                         </div>
                     </div>
 
@@ -734,6 +828,14 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
                             <?= htmlspecialchars(rtrim(rtrim(number_format($sidebarHoverCollapseSec, 2, '.', ''), '0'), '.') ?: '0') ?>s
                         </span>
                     </dd>
+                    <dt class="col-6 text-muted">Cleared / reconciled edits</dt>
+                    <dd class="col-6" id="cfgStatusClearedOverride">
+                        <?php if ($allowClearedOverride): ?>
+                            <span class="badge text-bg-warning" title="<?= htmlspecialchars($clearedOverrideSince, ENT_QUOTES, 'UTF-8') ?>">On</span>
+                        <?php else: ?>
+                            <span class="badge text-bg-secondary">Off</span>
+                        <?php endif; ?>
+                    </dd>
                     <dt class="col-6 text-muted">Auto-backup</dt>
                     <dd class="col-6" id="cfgStatusAutoBackup">
                         <?php if ($autoBackupEnabled): ?>
@@ -800,6 +902,11 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
     const sidebarCollapseInput = document.getElementById('cfgSidebarHoverCollapse');
     const autoBackupToggle = document.getElementById('cfgAutoBackupEnabled');
     const autoBackupToggleLabel = document.getElementById('cfgAutoBackupEnabledLabel');
+    const clearedOverrideToggle = document.getElementById('cfgClearedReconciledEdits');
+    const clearedOverrideToggleLabel = document.getElementById('cfgClearedReconciledEditsLabel');
+    const clearedOverrideSinceEl = document.getElementById('cfgClearedOverrideSince');
+    const statusClearedOverride = document.getElementById('cfgStatusClearedOverride');
+    let clearedOverrideWasOn = <?= $allowClearedOverride ? 'true' : 'false' ?>;
     const autoBackupFrequency = document.getElementById('cfgAutoBackupFrequency');
     const autoBackupFormat = document.getElementById('cfgAutoBackupFormat');
     const churchNameInput = document.getElementById('cfgChurchName');
@@ -852,6 +959,14 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
         if (hoursHint && hoursInput) {
             const h = parseInt(hoursInput.value, 10) || 0;
             hoursHint.textContent = 'hour' + (h === 1 ? '' : 's') + (disabled ? ' (disabled)' : '');
+        }
+    }
+
+    function syncClearedOverrideUi() {
+        const on = !!(clearedOverrideToggle && clearedOverrideToggle.checked);
+        setOnOffLabel(clearedOverrideToggleLabel, on);
+        if (clearedOverrideToggle) {
+            clearedOverrideToggle.setAttribute('aria-checked', on ? 'true' : 'false');
         }
     }
 
@@ -967,6 +1082,22 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
         if (res.sidebar_hover_collapse_delay_seconds != null && sidebarCollapseInput) {
             sidebarCollapseInput.value = String(res.sidebar_hover_collapse_delay_seconds);
         }
+        if (typeof res.allow_cleared_reconciled_edits === 'boolean' && clearedOverrideToggle) {
+            clearedOverrideToggle.checked = res.allow_cleared_reconciled_edits;
+            clearedOverrideWasOn = res.allow_cleared_reconciled_edits;
+        }
+        if (clearedOverrideSinceEl) {
+            const since = res.allow_cleared_reconciled_edits_since
+                ? String(res.allow_cleared_reconciled_edits_since) : '';
+            const on = res.allow_cleared_reconciled_edits === true;
+            if (on && since) {
+                clearedOverrideSinceEl.textContent = 'Turned on ' + since + '.';
+                clearedOverrideSinceEl.classList.remove('d-none');
+            } else {
+                clearedOverrideSinceEl.textContent = '';
+                clearedOverrideSinceEl.classList.add('d-none');
+            }
+        }
         if (typeof res.auto_backup_enabled === 'boolean' && autoBackupToggle) {
             autoBackupToggle.checked = res.auto_backup_enabled;
         }
@@ -997,6 +1128,7 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
         }
         syncAutoArchiveUi();
         syncAutoBackupUi();
+        syncClearedOverrideUi();
 
         // Live client idle timer: enabled only when Developer Mode is off (10 minutes)
         if (window.__temperLoginTimeout) {
@@ -1060,6 +1192,14 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
                 ? res.sidebar_hover_collapse_delay_seconds : 2;
             statusSidebarHover.innerHTML = '<span class="badge text-bg-success" title="Expand / collapse delay">'
                 + String(ex) + 's / ' + String(cl) + 's</span>';
+        }
+        if (statusClearedOverride) {
+            const on = res.allow_cleared_reconciled_edits === true;
+            const since = res.allow_cleared_reconciled_edits_since
+                ? String(res.allow_cleared_reconciled_edits_since) : '';
+            statusClearedOverride.innerHTML = on
+                ? '<span class="badge text-bg-warning" title="' + since.replace(/"/g, '') + '">On</span>'
+                : '<span class="badge text-bg-secondary">Off</span>';
         }
         if (statusAutoBackup) {
             if (res.auto_backup_enabled) {
@@ -1125,6 +1265,9 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
     if (autoBackupToggle) {
         autoBackupToggle.addEventListener('change', syncAutoBackupUi);
     }
+    if (clearedOverrideToggle) {
+        clearedOverrideToggle.addEventListener('change', syncClearedOverrideUi);
+    }
     if (churchIconSelect) {
         churchIconSelect.addEventListener('change', function() {
             setChurchIconPreview(churchIconSelect.value || '');
@@ -1173,6 +1316,7 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
     }
     syncAutoArchiveUi();
     syncAutoBackupUi();
+    syncClearedOverrideUi();
 
     if (form) {
         form.addEventListener('submit', function(e) {
@@ -1202,10 +1346,20 @@ $churchIconPreview = $churchIcon !== '' ? temperBrandPickerPreviewUrl($churchIco
                 toast('Sidebar Hover Collapse Delay cannot exceed 30 seconds.', 'warning');
                 return;
             }
+            const overrideOn = !!(clearedOverrideToggle && clearedOverrideToggle.checked);
+            if (clearedOverrideWasOn && !overrideOn) {
+                const ok = confirm(
+                    'Turn off “Allow edits to cleared and reconciled”?\n\n'
+                    + 'Status returns to the original cleared or reconciled value for each transaction opened during this unlock, unless a save used “Keep this status when locking.”\n\n'
+                    + 'Field edits stay. Attachments are not changed. Transactions that were already pending are left alone.'
+                );
+                if (!ok) return;
+            }
             const fd = new FormData();
             fd.append('action', 'save_config');
             // Explicit 1/0: checked switch = Developer Mode On (disables application idle timeout)
             fd.append('developer_mode', (toggle && toggle.checked) ? '1' : '0');
+            fd.append('allow_cleared_reconciled_edits', overrideOn ? '1' : '0');
             fd.append('auto_archive_disabled', disableArchive && disableArchive.checked ? '1' : '0');
             fd.append('auto_archive_timer_hours', String(hours > 0 ? hours : 24));
             fd.append('sidebar_hover_expand_delay_seconds', String(expandSec));
