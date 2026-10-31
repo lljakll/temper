@@ -284,6 +284,287 @@ function budgetIsAssignableId(mysqli $db, int $budgetId): bool {
     return $ok;
 }
 
+/**
+ * account_id => lowest budget_lines.id on one budget.
+ * Several lines for the same account keep the lowest id. Missing accounts are absent.
+ *
+ * @return array<int, int>
+ */
+function budgetLineIdsByAccount(mysqli $db, int $budgetId): array {
+    if ($budgetId <= 0) {
+        return [];
+    }
+    $stmt = $db->prepare(
+        'SELECT account_id, MIN(id) AS line_id
+         FROM budget_lines
+         WHERE budget_id = ? AND account_id IS NOT NULL AND account_id > 0
+         GROUP BY account_id'
+    );
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param('i', $budgetId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $map = [];
+    while ($row = $res->fetch_assoc()) {
+        $map[(int)$row['account_id']] = (int)$row['line_id'];
+    }
+    $stmt->close();
+    return $map;
+}
+
+/** Lowest budget line on $budgetId for $accountId, or null when that budget has no such line. */
+function budgetLineIdForAccount(mysqli $db, int $budgetId, int $accountId): ?int {
+    if ($accountId <= 0) {
+        return null;
+    }
+    $map = budgetLineIdsByAccount($db, $budgetId);
+    return $map[$accountId] ?? null;
+}
+
+/**
+ * Budget lines a transaction line may be assigned to (active, approved, or closed).
+ *
+ * @return list<array{id:int,budget_id:int,account_id:int,fiscal_year:int,budget_name:string}>
+ */
+function budgetFetchAssignableLineOptions(mysqli $db): array {
+    $rows = [];
+    $r = $db->query(
+        "SELECT bl.id, bl.budget_id, bl.account_id, b.fiscal_year, b.name
+         FROM budget_lines bl
+         JOIN budgets b ON b.id = bl.budget_id
+         WHERE b.status IN ('active', 'approved', 'closed')
+           AND bl.account_id IS NOT NULL AND bl.account_id > 0
+         ORDER BY FIELD(b.status, 'active', 'approved', 'closed'),
+                  b.fiscal_year DESC, b.name, bl.id"
+    );
+    if (!$r) {
+        return $rows;
+    }
+    while ($row = $r->fetch_assoc()) {
+        $rows[] = [
+            'id' => (int)$row['id'],
+            'budget_id' => (int)$row['budget_id'],
+            'account_id' => (int)$row['account_id'],
+            'fiscal_year' => (int)$row['fiscal_year'],
+            'budget_name' => (string)$row['name'],
+        ];
+    }
+    $r->close();
+    return $rows;
+}
+
+/**
+ * Validate a posted transaction-line budget assignment.
+ * Zero means the line is in no budget. A positive id must be a line for $accountId
+ * on an assignable budget. This does not create a budget line.
+ *
+ * @return array{ok:bool,budget_line_id:?int,error:?string}
+ */
+function budgetResolveTransactionLineAssignment(mysqli $db, int $postedBudgetLineId, int $accountId): array {
+    if ($postedBudgetLineId <= 0) {
+        return ['ok' => true, 'budget_line_id' => null, 'error' => null];
+    }
+    $stmt = $db->prepare(
+        "SELECT bl.id, bl.account_id, b.status
+         FROM budget_lines bl
+         JOIN budgets b ON b.id = bl.budget_id
+         WHERE bl.id = ?
+         LIMIT 1"
+    );
+    if (!$stmt) {
+        return ['ok' => false, 'budget_line_id' => null, 'error' => 'Unable to check the line budget.'];
+    }
+    $stmt->bind_param('i', $postedBudgetLineId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        return ['ok' => false, 'budget_line_id' => null, 'error' => 'One line is assigned to a budget line that does not exist.'];
+    }
+    if ((int)$row['account_id'] !== $accountId) {
+        return ['ok' => false, 'budget_line_id' => null, 'error' => "One line's budget does not match its account."];
+    }
+    $status = (string)($row['status'] ?? '');
+    if (!in_array($status, ['active', 'approved', 'closed'], true)) {
+        return ['ok' => false, 'budget_line_id' => null, 'error' => 'One line is assigned to a budget that is not available for transactions.'];
+    }
+    return ['ok' => true, 'budget_line_id' => (int)$row['id'], 'error' => null];
+}
+
+/** Stored budget name, or "none" when the line is not in a budget. */
+function budgetLineAssignmentLabel(mysqli $db, int $budgetLineId): string {
+    static $cache = [];
+    if ($budgetLineId <= 0) {
+        return 'none';
+    }
+    if (isset($cache[$budgetLineId])) {
+        return $cache[$budgetLineId];
+    }
+    $stmt = $db->prepare(
+        'SELECT b.name
+         FROM budget_lines bl
+         JOIN budgets b ON b.id = bl.budget_id
+         WHERE bl.id = ?
+         LIMIT 1'
+    );
+    if (!$stmt) {
+        return 'Budget line #' . $budgetLineId;
+    }
+    $stmt->bind_param('i', $budgetLineId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        $cache[$budgetLineId] = 'Budget line #' . $budgetLineId;
+        return $cache[$budgetLineId];
+    }
+    $name = trim((string)$row['name']);
+    if ($name === '') {
+        $name = 'Budget #' . $budgetLineId;
+    }
+    $cache[$budgetLineId] = $name;
+    return $cache[$budgetLineId];
+}
+
+/**
+ * Set each transaction line's budget_line_id from the header budget's matching account line.
+ * A header with no budget, or an account the budget does not list, stores null.
+ * Does not insert budget lines and does not change amounts, funds, or accounts.
+ */
+function budgetAssignTransactionLinesFromHeader(mysqli $db, int $transactionId, ?int $headerBudgetId): void {
+    if ($transactionId <= 0) {
+        return;
+    }
+    $map = ($headerBudgetId !== null && $headerBudgetId > 0)
+        ? budgetLineIdsByAccount($db, $headerBudgetId)
+        : [];
+    $sel = $db->prepare('SELECT id, account_id FROM transaction_lines WHERE transaction_detail_id = ? ORDER BY id');
+    if (!$sel) {
+        throw new RuntimeException('Unable to load transaction lines for the budget assignment.');
+    }
+    $sel->bind_param('i', $transactionId);
+    $sel->execute();
+    $res = $sel->get_result();
+    $rows = [];
+    while ($row = $res->fetch_assoc()) {
+        $rows[] = $row;
+    }
+    $sel->close();
+    if ($rows === []) {
+        return;
+    }
+    $upd = $db->prepare('UPDATE transaction_lines SET budget_line_id = ? WHERE id = ?');
+    if (!$upd) {
+        throw new RuntimeException('Unable to save the line budget assignment.');
+    }
+    foreach ($rows as $row) {
+        $aid = (int)$row['account_id'];
+        $lineId = (int)$row['id'];
+        $assigned = $map[$aid] ?? null;
+        $param = $assigned !== null ? (string)(int)$assigned : null;
+        $upd->bind_param('si', $param, $lineId);
+        $upd->execute();
+    }
+    $upd->close();
+}
+
+/**
+ * Save budget lines, keeping ids that already belong to this budget.
+ * A removed line is deleted. Callers must not invent lines for accounts the user left off.
+ *
+ * @param list<array{id?:int,account_id:int,budgeted_amount:float,notes:string}> $lines
+ */
+function budgetSyncLines(mysqli $db, int $budgetId, array $lines): void {
+    if ($budgetId <= 0) {
+        throw new RuntimeException('Budget is missing.');
+    }
+    $existing = [];
+    $sel = $db->prepare('SELECT id FROM budget_lines WHERE budget_id = ?');
+    if (!$sel) {
+        throw new RuntimeException('Unable to load budget lines.');
+    }
+    $sel->bind_param('i', $budgetId);
+    $sel->execute();
+    $res = $sel->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $existing[(int)$row['id']] = true;
+    }
+    $sel->close();
+
+    $upd = $db->prepare(
+        'UPDATE budget_lines SET account_id = ?, budgeted_amount = ?, notes = ? WHERE id = ? AND budget_id = ?'
+    );
+    $ins = $db->prepare(
+        'INSERT INTO budget_lines (budget_id, account_id, budgeted_amount, notes) VALUES (?, ?, ?, ?)'
+    );
+    if (!$upd || !$ins) {
+        if ($upd) {
+            $upd->close();
+        }
+        if ($ins) {
+            $ins->close();
+        }
+        throw new RuntimeException('Unable to save budget lines.');
+    }
+
+    $keep = [];
+    foreach ($lines as $line) {
+        $aid = (int)($line['account_id'] ?? 0);
+        $amt = (float)($line['budgeted_amount'] ?? 0);
+        $notes = (string)($line['notes'] ?? '');
+        $id = (int)($line['id'] ?? 0);
+        if ($aid <= 0) {
+            continue;
+        }
+        if ($id > 0 && isset($existing[$id]) && !isset($keep[$id])) {
+            $upd->bind_param('idsii', $aid, $amt, $notes, $id, $budgetId);
+            if (!$upd->execute()) {
+                $err = $upd->error;
+                $upd->close();
+                $ins->close();
+                throw new RuntimeException($err !== '' ? $err : 'Unable to update a budget line.');
+            }
+            $keep[$id] = true;
+            continue;
+        }
+        $ins->bind_param('iids', $budgetId, $aid, $amt, $notes);
+        if (!$ins->execute()) {
+            $err = $ins->error;
+            $upd->close();
+            $ins->close();
+            throw new RuntimeException($err !== '' ? $err : 'Unable to add a budget line.');
+        }
+    }
+    $upd->close();
+    $ins->close();
+
+    $drop = [];
+    foreach ($existing as $id => $_) {
+        if (!isset($keep[$id])) {
+            $drop[] = (int)$id;
+        }
+    }
+    if ($drop === []) {
+        return;
+    }
+    $placeholders = implode(',', array_fill(0, count($drop), '?'));
+    $del = $db->prepare("DELETE FROM budget_lines WHERE budget_id = ? AND id IN ($placeholders)");
+    if (!$del) {
+        throw new RuntimeException('Unable to remove budget lines.');
+    }
+    $types = 'i' . str_repeat('i', count($drop));
+    $params = array_merge([$budgetId], $drop);
+    $del->bind_param($types, ...$params);
+    if (!$del->execute()) {
+        $err = $del->error;
+        $del->close();
+        throw new RuntimeException($err !== '' ? $err : 'Unable to remove budget lines.');
+    }
+    $del->close();
+}
+
 function budgetFetchActiveList(mysqli $db): array {
     $rows = [];
     $r = $db->query(
@@ -736,7 +1017,9 @@ function budgetSignedActivitySql(string $linesAlias = 'tl', string $accountsAlia
 }
 
 /**
- * Actual activity posted to accounts during a date range, keyed by account_id.
+ * Account activity in a date range, keyed by account_id.
+ * Budget remaining and budget-vs-actual do not use this. Those totals follow
+ * transaction_lines.budget_line_id. A null budget line is not in any budget.
  *
  * When $fundId is set, fund-balance-affecting account types (income, expense,
  * equity) are limited to that fund. Asset/liability fund tags do not drive fund
@@ -801,60 +1084,98 @@ function budgetFetchAccountActuals(
 }
 
 /**
+ * Signed activity assigned to specific budget lines, keyed by budget_line_id.
+ * Lines with a null budget_line_id are omitted. Transaction date is not a filter
+ * unless both bounds are passed (budget-vs-actual year-to-date or custom range).
+ *
+ * @param list<int> $budgetLineIds
+ * @return array<int, float>
+ */
+function budgetFetchLineActuals(
+    mysqli $db,
+    array $budgetLineIds,
+    ?string $startDate = null,
+    ?string $endDate = null
+): array {
+    $ids = [];
+    foreach ($budgetLineIds as $id) {
+        $id = (int)$id;
+        if ($id > 0) {
+            $ids[$id] = $id;
+        }
+    }
+    $ids = array_values($ids);
+    if ($ids === []) {
+        return [];
+    }
+
+    $useDates = $startDate !== null && $endDate !== null
+        && budgetValidIsoDate($startDate) && budgetValidIsoDate($endDate);
+    $signed = budgetSignedActivitySql('tl', 'a');
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $sql = "SELECT tl.budget_line_id AS budget_line_id,
+                   COALESCE(SUM({$signed}), 0) AS actual
+            FROM transaction_lines tl
+            JOIN transaction_details td ON td.id = tl.transaction_detail_id
+            JOIN accounts a ON a.id = tl.account_id
+            WHERE tl.budget_line_id IN ({$placeholders})";
+    $params = $ids;
+    $types = str_repeat('i', count($ids));
+    if ($useDates) {
+        $sql .= ' AND td.transaction_date >= ? AND td.transaction_date <= ?';
+        $params[] = $startDate;
+        $params[] = $endDate;
+        $types .= 'ss';
+    }
+    $sql .= ' GROUP BY tl.budget_line_id';
+
+    $stmt = $db->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $out = [];
+    while ($row = $res->fetch_assoc()) {
+        $out[(int)$row['budget_line_id']] = round((float)$row['actual'], 2);
+    }
+    $stmt->close();
+    return $out;
+}
+
+/**
  * Attach actual + remaining to budget line arrays.
- * Remaining = budgeted amount − actual activity on that line's account
- * (and fund, when the line is tied to a fund) during the budget period.
+ * Remaining = budgeted amount − signed activity on transaction lines whose
+ * budget_line_id is this line. A null assignment is not in this budget.
+ * $startDate and $endDate are ignored: assignment is the source of truth,
+ * including a reimbursement dated outside the budget period.
  *
  * @param list<array<string, mixed>> $lines
  * @return list<array<string, mixed>>
  */
-function budgetAttachLineRemainings(mysqli $db, array $lines, string $startDate, string $endDate): array
+function budgetAttachLineRemainings(mysqli $db, array $lines, string $startDate = '', string $endDate = ''): array
 {
-    $noFundIds = [];
-    $byFund = [];
+    unset($startDate, $endDate);
+    $ids = [];
     foreach ($lines as $line) {
-        $aid = (int)($line['account_id'] ?? 0);
-        if ($aid <= 0) {
-            continue;
-        }
-        $fid = isset($line['fund_id']) && $line['fund_id'] !== '' && $line['fund_id'] !== null
-            ? (int)$line['fund_id']
-            : 0;
-        if ($fid > 0) {
-            $byFund[$fid][$aid] = $aid;
-        } else {
-            $noFundIds[$aid] = $aid;
+        $lid = (int)($line['id'] ?? 0);
+        if ($lid > 0) {
+            $ids[] = $lid;
         }
     }
-
-    $actualsNoFund = budgetFetchAccountActuals($db, $startDate, $endDate, array_values($noFundIds), null);
-    $actualsByFund = [];
-    foreach ($byFund as $fid => $aids) {
-        $actualsByFund[(int)$fid] = budgetFetchAccountActuals(
-            $db,
-            $startDate,
-            $endDate,
-            array_values($aids),
-            (int)$fid
-        );
-    }
+    $actuals = budgetFetchLineActuals($db, $ids);
 
     foreach ($lines as &$line) {
         $aid = (int)($line['account_id'] ?? 0);
-        $fid = isset($line['fund_id']) && $line['fund_id'] !== '' && $line['fund_id'] !== null
-            ? (int)$line['fund_id']
-            : 0;
+        $lid = (int)($line['id'] ?? 0);
         $budgeted = round((float)($line['budgeted_amount'] ?? 0), 2);
-        if ($aid <= 0) {
+        if ($aid <= 0 || $lid <= 0) {
             $line['actual'] = 0.0;
             $line['remaining'] = null;
             continue;
         }
-        if ($fid > 0) {
-            $actual = (float)($actualsByFund[$fid][$aid] ?? 0.0);
-        } else {
-            $actual = (float)($actualsNoFund[$aid] ?? 0.0);
-        }
+        $actual = (float)($actuals[$lid] ?? 0.0);
         $line['actual'] = $actual;
         $line['remaining'] = round($budgeted - $actual, 2);
     }

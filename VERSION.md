@@ -19,6 +19,13 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.982](#v0982)
+- [v0.981](#v0981)
+- [v0.980](#v0980)
+- [v0.979](#v0979)
+- [v0.978](#v0978)
+- [v0.977](#v0977)
+- [v0.976](#v0976)
 - [v0.975](#v0975)
 - [v0.974](#v0974)
 - [v0.973](#v0973)
@@ -182,6 +189,180 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.982
+
+**Transaction lines grid stays inside the modal while columns resize** — 2026-10-30
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261030_0982_line_grid_fit.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.982
+
+- The transaction lines table is the width of the modal content. The grid has no horizontal scrollbar, so Credit stays on screen.
+- Dragging an interior column border widens one column and narrows the next. The table width does not change. The outer edges and the rows do not resize.
+- The opening layout is still Account 22%, Fund 18%, Budget line 8%, Note 30%, Debit 10%, Credit 10%, and Remove 2%. Those shares are of the lines table.
+- View and Edit use the same grid. Budget labels, header fields, and the set of columns are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.982**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.981 | `updates/20261030_0982_line_grid_fit.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.981, then this patch after `php setup_db.php` |
+
+---
+
+## v0.981
+
+**Transaction line columns can be resized for the modal session** — 2026-10-29
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261029_0981_line_column_resize.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.981
+
+- The transaction lines grid has a drag handle on each interior vertical border. Dragging a handle changes that column's width in View and Edit.
+- The outer edge of the table does not resize. Rows do not resize. The drag does not resize the modal.
+- The opening layout is still Account 22%, Fund 18%, Budget line 8%, Note 30%, Debit 10%, Credit 10%, and Remove 2%. After a drag, that column keeps the chosen width until the page is left. Widths are not saved.
+- Budget labels, header fields, and the set of columns are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.981**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.980 | `updates/20261029_0981_line_column_resize.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.980, then this patch after `php setup_db.php` |
+
+---
+
+## v0.980
+
+**Transaction line columns use fixed percentages of the lines table** — 2026-10-29
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261029_0980_line_column_widths.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.980
+
+- The transaction lines grid uses one set of column widths in View and Edit: Account 22%, Fund 18%, Budget line 8%, Note 30%, Debit 10%, Credit 10%, and Remove 2%. Those shares are of the lines table and stay in place when the modal or window is resized.
+- The fund name wraps inside its column. "General Operating Fund" is shown in full.
+- The budget control stays inside 8%. Its padding is tight so a short name such as "CY27" or "None" fits.
+- Note stays the widest column. Natural, Functional, and the header Budget field stay off the form. Budget names stay the stored name, without an FY prefix.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.980**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.979 | `updates/20261029_0980_line_column_widths.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.979, then this patch after `php setup_db.php` |
+
+---
+
+## v0.979
+
+**Budget labels show the stored name, and the Budget line column is narrower** — 2026-10-29
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261029_0979_budget_label_prefix.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.979
+
+- Budget dropdowns show the name stored on the budget. "Blue" stays "Blue". "CY26" stays "CY26". The built prefix "FY 2026 —", "FY## —", and a year taken from the budget are no longer added in front of that name.
+- The transaction line dropdown, the view-mode budget text, the budget cycle activate and close dropdowns, and the budget change descriptions use that stored name.
+- The transaction form Budget line column is about half its previous width, sized for a short name of about 5–10 characters. Account, Fund, Note, and the amount columns are unchanged.
+- Line-level budget assignment, budget report math, fund rules, and the removed header Budget field are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.979**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.978 | `updates/20261029_0979_budget_label_prefix.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.978, then this patch after `php setup_db.php` |
+
+---
+
+## v0.978
+
+**Transaction form drops the header budget and shows View as text** — 2026-10-29
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261029_0978_transaction_form_layout.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.978
+
+- The transaction form no longer has a header Budget field. Budget is chosen on each line. A new line starts at None. Saving an existing transaction does not clear `transaction_details.budget_id`, so the ledger list filter is unchanged.
+- View mode shows Date, Ref #, Pay To, Check #, Description, and each line as wrapping text. Account, Fund, Budget line, Note, Debit, and Credit are not dropdowns or inputs in View. Edit keeps those controls.
+- Natural and Functional are removed from the transaction form in View and Edit. Reports still use the category stored on the account or line.
+- Line columns are Account, Fund, Budget line, Note, Debit, and Credit. Account and Budget line are wider than Note, Fund, and the amount columns. Pay To and Description wrap the full value.
+- A cleared or reconciled transaction can still change each line's budget. Amounts, accounts, funds, notes, status, and attachments stay locked.
+- Debits, Credits, and Diff are unchanged. A balanced transaction shows a Diff of $0.00. Budget report math, fund rules, and budget labels are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.978**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.977 | `updates/20261029_0978_transaction_form_layout.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.977, then this patch after `php setup_db.php` |
+
+---
+
+## v0.977
+
+**Line budget dropdown lists every selectable budget** — 2026-10-29
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261029_0977_line_budget_dropdown.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.977
+
+- Each transaction line’s budget dropdown lists the same budgets as the header (active, approved, and closed), including before an account is chosen and when the header budget is blank.
+- Choosing a budget saves that budget’s line for the line’s account. None still leaves the line out of every budget. The header budget is pre-selected only when it has a line for that account.
+- A chosen budget that has no line for the account is not saved as a blank assignment. Save asks for None or another budget.
+- Budget remaining, budget-vs-actual, fund rules, and the 0.976 backfill are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.977**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.976 | `updates/20261029_0977_line_budget_dropdown.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.976, then this patch after `php setup_db.php` |
+
+---
+
+## v0.976
+
+**Budget assignment is per transaction line** — 2026-10-29
+
+> **SCHEMA UPDATE REQUIRED – SEE PATCH METADATA FOR DETAILS**
+>
+> **Patch file:** `updates/20261029_0976_line_budget_assignment.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment`
+> **Min app version:** 0.976
+
+- `transaction_lines.budget_line_id` is the source of truth for budget remaining, budget export remaining, and Budget vs Actual. A blank line budget is not in any budget.
+- The transaction header budget stays on the form as the default for new lines. It does not drive those totals. The ledger list still shows and filters by that header budget.
+- On add or edit, a new line takes the header budget’s line for the same account when one exists. The line can be changed to another budget’s line for that account, or cleared. One transaction can mix budgets and unassigned lines.
+- A cleared or reconciled transaction still cannot change amounts, accounts, funds, or attachments. Changing its header budget reassigns each existing line to that budget’s matching line, or to none when the budget has no line for the account.
+- Saving a draft budget keeps existing budget line ids. Removing a budget line clears transaction assignments to that line.
+- Existing lines with no budget line are filled only when the header budget already has a line for that account. The patch does not create budget lines.
+- Budget remaining counts every assigned line, including a date outside the budget period. Budget vs Actual full period does the same. Year to date and a custom range still limit assigned lines by date.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.976**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.975 | `updates/20261029_0976_line_budget_assignment.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.975, then this patch after `php setup_db.php` |
 
 ---
 

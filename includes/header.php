@@ -1708,7 +1708,7 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             }
         }
 
-        /* ── Transaction / budget line grids wrap into stacked blocks ───── */
+        /* ── Narrow screens: transaction lines keep their percentages; budget lines stack ── */
         @media (max-width: 767.98px) {
             #txFormModal .tx-date-col,
             #txFormModal #transaction_date,
@@ -1716,68 +1716,6 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             #txFormModal #reference_number {
                 min-width: 0 !important;
                 width: 100%;
-            }
-            #txLinesTable {
-                min-width: 0 !important;
-                width: 100%;
-            }
-            #txLinesTable thead {
-                display: none;
-            }
-            #txLinesTable,
-            #txLinesTable tbody {
-                display: block;
-                width: 100%;
-            }
-            #txLinesTable tr {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 0.15rem 0.65rem;
-                width: 100%;
-                border: 1px solid var(--bs-border-color);
-                border-radius: 0.65rem;
-                margin-bottom: 0.75rem;
-                padding: 0.7rem 0.8rem;
-                background: var(--bs-body-bg);
-            }
-            #txLinesTable td {
-                display: flex;
-                flex-direction: column;
-                align-items: stretch;
-                gap: 0.2rem;
-                width: 100% !important;
-                min-width: 0 !important;
-                max-width: none !important;
-                border: 0 !important;
-                padding: 0.28rem 0 !important;
-            }
-            #txLinesTable td:nth-child(-n+5),
-            #txLinesTable td:nth-child(8) {
-                grid-column: 1 / -1;
-            }
-            #txLinesTable td::before {
-                content: attr(data-label);
-                font-size: 0.72rem;
-                font-weight: 600;
-                color: var(--bs-secondary-color);
-            }
-            #txLinesTable td:nth-child(8)::before {
-                content: none;
-            }
-            #txLinesTable td:nth-child(8) {
-                align-items: flex-end;
-            }
-            #txLinesTable .line-amount,
-            #txLinesTable .line-note,
-            #txLinesTable .line-cat-label,
-            #txLinesTable select {
-                min-width: 0 !important;
-                max-width: none !important;
-                width: 100%;
-            }
-            #txLinesTable .line-cat-label {
-                white-space: normal;
-                max-width: none;
             }
             #linesTable {
                 min-width: 0 !important;

@@ -251,39 +251,35 @@ require_once __DIR__ . '/../includes/permissions.php';
                 }
                 $bQ->close();
 
-                // Actuals from transactions in period
-                $actGroupCol = match ($groupBy) {
-                    'account'            => 'tl.account_id',
-                    'functional_category'=> 'tl.functional_category_id',
-                    default              => 'tl.natural_category_id',
-                };
-                $actLabelJoin = match ($groupBy) {
-                    'account'            => 'LEFT JOIN accounts albl ON albl.id = tl.account_id',
-                    'functional_category'=> 'LEFT JOIN functional_categories albl ON albl.id = tl.functional_category_id',
-                    default              => 'LEFT JOIN natural_categories albl ON albl.id = tl.natural_category_id',
-                };
-                $actLabelField = match ($groupBy) {
-                    'account'            => "COALESCE(albl.name, 'Unassigned Account')",
-                    'functional_category'=> "COALESCE(albl.name, 'Unassigned Class')",
-                    default              => "COALESCE(albl.name, 'Uncategorized')",
-                };
-
-                $aSql = "SELECT $actGroupCol AS gid, $actLabelField AS label,
-                                SUM(CASE
-                                    WHEN a.normal_balance = 'debit' AND tl.type = 'debit' THEN tl.amount
-                                    WHEN a.normal_balance = 'debit' AND tl.type = 'credit' THEN -tl.amount
-                                    WHEN a.normal_balance = 'credit' AND tl.type = 'credit' THEN tl.amount
-                                    WHEN a.normal_balance = 'credit' AND tl.type = 'debit' THEN -tl.amount
-                                    ELSE 0
-                                END) AS actual
+                // Actuals are transaction lines assigned to this budget's lines.
+                // A null budget_line_id is not in any budget. Full period includes
+                // assignments dated outside the budget (cross-year reimbursement).
+                // Year to date and custom range still limit those assignments by date.
+                $signed = budgetSignedActivitySql('tl', 'ta');
+                $dateSql = '';
+                if ($period !== 'full') {
+                    $dateSql = ' AND td.transaction_date >= ? AND td.transaction_date <= ?';
+                }
+                $aSql = "SELECT $groupCol AS gid, $labelField AS label,
+                                SUM({$signed}) AS actual
                          FROM transaction_lines tl
+                         JOIN budget_lines bl ON bl.id = tl.budget_line_id
                          JOIN transaction_details td ON td.id = tl.transaction_detail_id
-                         JOIN accounts a ON a.id = tl.account_id
-                         $actLabelJoin
-                         WHERE td.transaction_date >= ? AND td.transaction_date <= ?
+                         JOIN accounts ta ON ta.id = tl.account_id
+                         $labelJoin
+                         WHERE bl.budget_id = ?
+                         $dateSql
                          GROUP BY gid, label";
                 $aQ = $db->prepare($aSql);
-                $aQ->bind_param('ss', $pStart, $pEnd);
+                if (!$aQ) {
+                    echo json_encode(['error' => 'Unable to total lines assigned to this budget.']);
+                    exit;
+                }
+                if ($period === 'full') {
+                    $aQ->bind_param('i', $bid);
+                } else {
+                    $aQ->bind_param('iss', $bid, $pStart, $pEnd);
+                }
                 $aQ->execute();
                 $aRes = $aQ->get_result();
                 while ($a = $aRes->fetch_assoc()) {
@@ -337,6 +333,9 @@ require_once __DIR__ . '/../includes/permissions.php';
                     'year_budget_count' => count($yearBudgets),
                     'period_start'=> $pStart,
                     'period_end'  => $pEnd,
+                    'actuals_note'=> $period === 'full'
+                        ? 'Actuals are lines assigned to this budget, including dates outside the budget period.'
+                        : 'Actuals are lines assigned to this budget in the selected dates. Lines with no budget are omitted.',
                     'group_by'    => $groupBy,
                     'rows'        => $rows,
                     'totals'      => [
@@ -991,6 +990,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             if (!data.rows.length) rows = '<tr><td colspan="5" class="text-center text-muted py-3">No budget lines found for this period.</td></tr>';
             const netCls = data.totals.variance >= 0 ? 'text-success' : 'text-danger';
             const netSign = data.totals.variance >= 0 ? '+' : '';
+            const actualsNote = data.actuals_note ? ' &bull; ' + data.actuals_note : '';
             const fyNote = data.fiscal_year === data.current_fiscal_year ? ' &bull; Current FY' : '';
             const multiYear = (data.year_budget_count || 0) > 1
                 ? ' &bull; ' + data.year_budget_count + ' budgets in FY ' + data.fiscal_year
@@ -999,7 +999,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 ? ' &bull; ' + data.active_budgets.length + ' active budgets system-wide'
                 : '';
             return `
-                <div class="small text-muted mb-2">Generated ${data.generated} &bull; FY ${data.fiscal_year}${fyNote} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}${multiYear}${multiActive}</div>
+                <div class="small text-muted mb-2">Generated ${data.generated} &bull; FY ${data.fiscal_year}${fyNote} &bull; ${data.budget_name} (${data.budget_status}) &bull; ${data.period_start} to ${data.period_end}${actualsNote}${multiYear}${multiActive}</div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle mb-0 temper-stack-on-mobile">
                         <thead class="table-dark"><tr><th>Category</th><th class="text-end">Budget</th><th class="text-end">Actual</th><th class="text-end">Variance</th><th class="text-end">% Used</th></tr></thead>

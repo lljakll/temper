@@ -22,20 +22,17 @@ require_once __DIR__ . '/../includes/permissions.php';
 
     if (isset($_GET['line_actuals'])) {
         header('Content-Type: application/json');
-        $start = (string)($_GET['start_date'] ?? '');
-        $end = (string)($_GET['end_date'] ?? '');
-        $fundId = (int)($_GET['fund_id'] ?? 0);
         $ids = [];
-        foreach (explode(',', (string)($_GET['account_ids'] ?? '')) as $part) {
-            $aid = (int)trim($part);
-            if ($aid > 0) {
-                $ids[] = $aid;
+        foreach (explode(',', (string)($_GET['budget_line_ids'] ?? '')) as $part) {
+            $lid = (int)trim($part);
+            if ($lid > 0) {
+                $ids[] = $lid;
             }
         }
-        $map = budgetFetchAccountActuals($db, $start, $end, $ids, $fundId > 0 ? $fundId : null);
+        $map = budgetFetchLineActuals($db, $ids);
         $actuals = [];
-        foreach ($map as $accountId => $actual) {
-            $actuals[(string)$accountId] = $actual;
+        foreach ($map as $lineId => $actual) {
+            $actuals[(string)$lineId] = $actual;
         }
         echo json_encode(['actuals' => $actuals]);
         exit;
@@ -255,47 +252,52 @@ require_once __DIR__ . '/../includes/permissions.php';
                         break;
                     }
                     $total += $amt;
-                    $vlines[] = ['account_id' => $aid, 'budgeted_amount' => $amt, 'notes' => $notes];
+                    $vlines[] = [
+                        'id' => (int)($l['id'] ?? 0),
+                        'account_id' => $aid,
+                        'budgeted_amount' => $amt,
+                        'notes' => $notes,
+                    ];
                 }
 
                 if ($lineError) {
                     $pageFlash = ['message' => $lineError, 'type' => 'warning'];
                 } else {
-                if ($id > 0) {
-                    $stmt = $db->prepare("UPDATE budgets SET fiscal_year=?, name=?, start_date=?, end_date=?, approved_date=?, reference_number=?, status=?, total_budgeted=?, description=? WHERE id=?");
-                    $stmt->bind_param('issssssdsi', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc, $id);
-                    if (!$stmt->execute()) {
-                        $pageFlash = ['message' => 'Error saving budget: ' . $db->error, 'type' => 'danger'];
-                    }
-                    $stmt->close();
-                    $del = $db->prepare("DELETE FROM budget_lines WHERE budget_id = ?");
-                    $del->bind_param('i', $id);
-                    $del->execute();
-                    $del->close();
-                } else {
-                    $stmt = $db->prepare("INSERT INTO budgets (fiscal_year, name, start_date, end_date, approved_date, reference_number, status, total_budgeted, description) VALUES (?,?,?,?,?,?,?,?,?)");
-                    $stmt->bind_param('issssssds', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc);
-                    if (!$stmt->execute()) {
-                        $pageFlash = ['message' => 'Error saving budget: ' . $db->error, 'type' => 'danger'];
+                $db->begin_transaction();
+                try {
+                    if ($id > 0) {
+                        $stmt = $db->prepare("UPDATE budgets SET fiscal_year=?, name=?, start_date=?, end_date=?, approved_date=?, reference_number=?, status=?, total_budgeted=?, description=? WHERE id=?");
+                        $stmt->bind_param('issssssdsi', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc, $id);
+                        if (!$stmt->execute()) {
+                            $err = $stmt->error;
+                            $stmt->close();
+                            throw new RuntimeException($err !== '' ? $err : 'Error saving budget.');
+                        }
+                        $stmt->close();
                     } else {
+                        $stmt = $db->prepare("INSERT INTO budgets (fiscal_year, name, start_date, end_date, approved_date, reference_number, status, total_budgeted, description) VALUES (?,?,?,?,?,?,?,?,?)");
+                        $stmt->bind_param('issssssds', $fy, $name, $start, $end, $approved, $ref, $status, $total, $desc);
+                        if (!$stmt->execute()) {
+                            $err = $stmt->error;
+                            $stmt->close();
+                            throw new RuntimeException($err !== '' ? $err : 'Error saving budget.');
+                        }
                         $id = (int)$stmt->insert_id;
+                        $stmt->close();
                     }
-                    $stmt->close();
-                }
-                if ($id > 0 && !$pageFlash) {
-                    $ins = $db->prepare("INSERT INTO budget_lines (budget_id, account_id, budgeted_amount, notes) VALUES (?,?,?,?)");
-                    foreach ($vlines as $v) {
-                        $aid = $v['account_id'];
-                        $amt = $v['budgeted_amount'];
-                        $notes = $v['notes'];
-                        $ins->bind_param('iids', $id, $aid, $amt, $notes);
-                        $ins->execute();
+                    if ($id <= 0) {
+                        throw new RuntimeException('Error saving budget.');
                     }
-                    $ins->close();
+                    // Keep existing line ids so transaction assignments survive a draft edit.
+                    budgetSyncLines($db, $id, $vlines);
+                    $db->commit();
                     $pageFlash = [
                         'message' => $status === 'approved' ? 'Budget approved and saved successfully.' : 'Budget saved successfully.',
                         'type' => 'success',
                     ];
+                } catch (Throwable $e) {
+                    $db->rollback();
+                    $pageFlash = ['message' => 'Error saving budget: ' . $e->getMessage(), 'type' => 'danger'];
                 }
                 }
                 }
@@ -1057,8 +1059,8 @@ require_once __DIR__ . '/../includes/permissions.php';
     let cycleData = { active: [], approved: [], current_fiscal_year: <?= (int)$currentFiscalYear ?> };
     let lineUidSeq = 1;
     let actualsCache = {};
-    let actualsRange = { start: '', end: '' };
     let lineEditUid = null;
+    let lineEditLineId = '';
     let lineEditIsNew = false;
     let lineEditAmountBound = false;
 
@@ -1085,41 +1087,29 @@ require_once __DIR__ . '/../includes/permissions.php';
         el.classList.toggle('text-muted', !has);
         if (extraClass) el.classList.toggle(extraClass, has && Number(value) < 0);
     }
-    function currentPeriod() {
-        return {
-            start: document.getElementById('startDate')?.value || '',
-            end: document.getElementById('endDate')?.value || ''
-        };
+    function seedActual(lineId, actual) {
+        if (!lineId) return;
+        actualsCache[String(lineId)] = Number(actual) || 0;
     }
-    function seedActual(accountId, actual) {
-        if (!accountId) return;
-        actualsCache[String(accountId)] = Number(actual) || 0;
-    }
-    function getCachedActual(accountId) {
-        if (!accountId) return 0;
-        const v = actualsCache[String(accountId)];
+    function getCachedActual(lineId) {
+        if (!lineId) return 0;
+        const v = actualsCache[String(lineId)];
         return v === undefined ? 0 : Number(v) || 0;
     }
-    function remainingForAmount(amount, accountId) {
-        const period = currentPeriod();
-        if (!accountId || !period.start || !period.end) return null;
-        return Math.round(((Number(amount) || 0) - getCachedActual(accountId)) * 100) / 100;
+    /** Remaining follows the budget line id. A new unsaved line has no postings yet. */
+    function remainingForAmount(amount, lineId) {
+        const amt = Number(amount);
+        if (!Number.isFinite(amt)) return null;
+        return Math.round((amt - getCachedActual(lineId)) * 100) / 100;
     }
-    function fetchActuals(accountIds) {
-        const period = currentPeriod();
-        if (period.start !== actualsRange.start || period.end !== actualsRange.end) {
-            actualsCache = {};
-            actualsRange = { start: period.start, end: period.end };
-        }
-        const ids = [...new Set((accountIds || []).map(id => String(id)).filter(id => id && id !== '0'))];
-        if (!period.start || !period.end || !ids.length) return Promise.resolve();
+    function fetchActuals(lineIds) {
+        const ids = [...new Set((lineIds || []).map(id => String(id)).filter(id => id && id !== '0'))];
+        if (!ids.length) return Promise.resolve();
         const missing = ids.filter(id => actualsCache[id] === undefined);
         if (!missing.length) return Promise.resolve();
         const q = new URLSearchParams({
             line_actuals: '1',
-            start_date: period.start,
-            end_date: period.end,
-            account_ids: missing.join(',')
+            budget_line_ids: missing.join(',')
         });
         return fetch(`pages/${page}.php?${q.toString()}`)
             .then(r => r.json())
@@ -1144,15 +1134,15 @@ require_once __DIR__ . '/../includes/permissions.php';
         return parseFloat(tr.dataset.amount || '0') || 0;
     }
     function applyRowRemaining(tr) {
-        const aid = rowAccountId(tr);
-        const rem = remainingForAmount(rowAmount(tr), aid);
-        if (aid) tr.dataset.actual = String(getCachedActual(aid));
+        const lid = tr.dataset.lineId || '';
+        const rem = remainingForAmount(rowAmount(tr), lid);
+        if (lid) tr.dataset.actual = String(getCachedActual(lid));
         else delete tr.dataset.actual;
         const cell = tr.querySelector('.line-cell-remaining');
         setRemainingEl(cell, rem);
     }
     function refreshAllRemainings() {
-        const ids = [...linesBody.querySelectorAll('tr.line-row')].map(rowAccountId).filter(Boolean);
+        const ids = [...linesBody.querySelectorAll('tr.line-row')].map(tr => tr.dataset.lineId || '').filter(Boolean);
         return fetchActuals(ids).then(() => {
             linesBody.querySelectorAll('tr.line-row').forEach(applyRowRemaining);
             updateTotal();
@@ -1234,7 +1224,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         linesBody.querySelectorAll('tr.line-row').forEach(tr => {
             const amt = rowAmount(tr);
             t += amt;
-            const r = remainingForAmount(amt, rowAccountId(tr));
+            const r = remainingForAmount(amt, tr.dataset.lineId || '');
             if (r !== null) {
                 rem += r;
                 remCount++;
@@ -1349,8 +1339,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         if (data.id) tr.dataset.lineId = data.id;
         if (data.account_id) tr.dataset.accountId = data.account_id;
         const amt = parseFloat(data.budgeted_amount) || 0;
-        if (data.actual !== undefined && data.actual !== null && data.account_id) {
-            seedActual(data.account_id, data.actual);
+        if (data.id && data.actual !== undefined && data.actual !== null) {
+            seedActual(data.id, data.actual);
             tr.dataset.actual = String(Number(data.actual) || 0);
         }
         const acctInfo = accountById(data.account_id);
@@ -1376,10 +1366,8 @@ require_once __DIR__ . '/../includes/permissions.php';
                 const aid = accSel.value;
                 if (aid) tr.dataset.accountId = aid;
                 else delete tr.dataset.accountId;
-                fetchActuals(aid ? [aid] : []).then(() => {
-                    applyRowRemaining(tr);
-                    updateTotal();
-                });
+                applyRowRemaining(tr);
+                updateTotal();
             });
             syncLineCategoryLabels(tr);
             tr.querySelector('.rm-line').addEventListener('click', () => { tr.remove(); updateTotal(); });
@@ -1413,7 +1401,7 @@ require_once __DIR__ . '/../includes/permissions.php';
             account_name: acct?.name || tr.querySelector('.line-cell-cat .line-cell-text')?.textContent || '',
             coa: (coaEl?.textContent || acct?.coa_number || '').trim() || '—',
             amount: rowAmount(tr),
-            remaining: remainingForAmount(rowAmount(tr), aid),
+            remaining: remainingForAmount(rowAmount(tr), tr.dataset.lineId || ''),
             notes: tr.querySelector('.line-notes')?.value ?? tr.querySelector('.line-notes-readonly')?.textContent ?? ''
         };
     }
@@ -1458,8 +1446,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         return parseFloat(input?.dataset.amount || '0') || 0;
     }
     function updateLineEditRemaining() {
-        const aid = document.getElementById('lineEditAccount')?.value || '';
-        const rem = remainingForAmount(lineEditAmountValue(), aid);
+        const rem = remainingForAmount(lineEditAmountValue(), lineEditLineId);
         setRemainingEl(document.getElementById('lineEditRemaining'), rem);
     }
     function setLineEditorEditable(canEditAccountAmount, canEditNotes) {
@@ -1483,6 +1470,7 @@ require_once __DIR__ . '/../includes/permissions.php';
         if (!lineModal || !lineModalEl) return;
         lineEditIsNew = !tr;
         lineEditUid = tr ? tr.dataset.uid : '';
+        lineEditLineId = tr ? (tr.dataset.lineId || '') : '';
         const accSel = document.getElementById('lineEditAccount');
         const accDisp = document.getElementById('lineEditAccountDisplay');
         const amtInput = document.getElementById('lineEditAmount');
@@ -1511,8 +1499,8 @@ require_once __DIR__ . '/../includes/permissions.php';
         const canEditNotes = formMode === 'draft' || formMode === 'approved';
         setLineEditorEditable(canEditAll, canEditNotes);
         syncLineEditCategoryLabels();
-        if (aid) {
-            fetchActuals([aid]).then(updateLineEditRemaining);
+        if (lineEditLineId) {
+            fetchActuals([lineEditLineId]).then(updateLineEditRemaining);
         } else {
             updateLineEditRemaining();
         }
@@ -1544,8 +1532,7 @@ require_once __DIR__ . '/../includes/permissions.php';
                 account_name: acct?.name || '',
                 coa_number: acct?.coa_number || '',
                 natural_name: acct?.natural_name || '',
-                functional_name: acct?.functional_name || '',
-                actual: getCachedActual(aid)
+                functional_name: acct?.functional_name || ''
             }, 'draft');
         } else {
             const tr = linesBody.querySelector('tr[data-uid="' + lineEditUid + '"]');
@@ -1720,13 +1707,13 @@ require_once __DIR__ . '/../includes/permissions.php';
         document.getElementById('budgetStatusDisplay').value = b.status ? b.status.charAt(0).toUpperCase() + b.status.slice(1) : '';
         document.getElementById('budgetDesc').value = b.description || '';
         actualsCache = {};
-        actualsRange = { start: b.start_date || '', end: b.end_date || '' };
         linesBody.innerHTML = '';
         const hasLines = Array.isArray(b.lines) && b.lines.length;
         const lines = hasLines
             ? sortLinesByCoa(b.lines)
             : (mode === 'draft' && !isBudgetMobileChrome() ? [{}] : []);
         lines.forEach(l => addLine(l, mode));
+        refreshAllRemainings();
         setFormMode(mode);
         renderMobileLineCards();
         const titles = { draft: b.id ? 'Edit Budget' : 'New Budget', approved: 'View Budget (Notes Editable)', locked: 'View Budget' };
@@ -1792,15 +1779,13 @@ require_once __DIR__ . '/../includes/permissions.php';
             const sel = document.getElementById('cyclePromoteSelect');
             sel.innerHTML = '<option value="">— Select Approved budget —</option>';
             (data.approved || []).forEach(b => {
-                const currentTag = Number(b.fiscal_year) === Number(data.current_fiscal_year) ? ' · Current FY' : '';
-                sel.innerHTML += `<option value="${b.id}" data-start="${b.start_date}">${b.name} (FY ${b.fiscal_year}${currentTag})</option>`;
+                sel.innerHTML += `<option value="${b.id}" data-start="${b.start_date}">${b.name}</option>`;
             });
 
             const closeSel = document.getElementById('cycleCloseSelect');
             closeSel.innerHTML = '<option value="">— Select active budget to close —</option>';
             (data.active || []).forEach(b => {
-                const currentTag = Number(b.fiscal_year) === Number(data.current_fiscal_year) ? ' · Current FY' : '';
-                closeSel.innerHTML += `<option value="${b.id}">${b.name} (FY ${b.fiscal_year}${currentTag})</option>`;
+                closeSel.innerHTML += `<option value="${b.id}">${b.name}</option>`;
             });
 
             document.getElementById('cycleConfirmBtn').disabled = !(data.approved || []).length;
@@ -2039,8 +2024,7 @@ require_once __DIR__ . '/../includes/permissions.php';
     const lineEditAccount = document.getElementById('lineEditAccount');
     if (lineEditAccount) {
         lineEditAccount.addEventListener('change', () => {
-            const aid = lineEditAccount.value;
-            fetchActuals(aid ? [aid] : []).then(() => syncLineEditCategoryLabels());
+            syncLineEditCategoryLabels();
         });
     }
     const lineEditApply = document.getElementById('lineEditApply');
@@ -2075,9 +2059,6 @@ require_once __DIR__ . '/../includes/permissions.php';
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('change', () => {
-            actualsCache = {};
-            actualsRange = { start: '', end: '' };
-            refreshAllRemainings();
             renderSummaryCard();
         });
     });

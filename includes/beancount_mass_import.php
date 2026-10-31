@@ -1807,16 +1807,20 @@ function beancountMassImportWriteOne(mysqli $db, array $item, array $actor, bool
     $chk->execute();
     $chk->close();
 
+    require_once __DIR__ . '/budget_utils.php';
+    $headerLineMap = $budgetId !== null ? budgetLineIdsByAccount($db, (int)$budgetId) : [];
     $lineRows = [];
     foreach ($vlines as $v) {
+        $aid = (int)$v['account_id'];
         $lineRows[] = [
-            'account_id' => $v['account_id'],
+            'account_id' => $aid,
             'fund_id' => $v['fund_id'],
             'amount' => $v['amount'],
             'type' => $v['type'],
             'natural_category_id' => $v['natural_category_id'],
             'functional_category_id' => $v['functional_category_id'],
             'description' => '',
+            'budget_line_id' => $headerLineMap[$aid] ?? null,
         ];
     }
     ledgerReplaceLines($db, $tid, $lineRows);

@@ -225,19 +225,74 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
         // Single description column (no memo / no " | " split)
         $det['description'] = $det['description'] ?? '';
         $det['budget_id'] = !empty($det['budget_id']) ? (int)$det['budget_id'] : '';
+        $accountMeta = [];
+        $fundMeta = [];
+        $aidKeys = [];
+        $fidKeys = [];
+        foreach ($det['lines'] as $l) {
+            $aidKeys[(int)$l['account_id']] = true;
+            if ($l['fund_id'] !== null && (int)$l['fund_id'] > 0) {
+                $fidKeys[(int)$l['fund_id']] = true;
+            }
+        }
+        if ($aidKeys !== []) {
+            $idList = array_keys($aidKeys);
+            $ph = implode(',', array_fill(0, count($idList), '?'));
+            $st = $db->prepare("SELECT id, name, normal_balance FROM accounts WHERE id IN ($ph)");
+            if ($st) {
+                $st->bind_param(str_repeat('i', count($idList)), ...$idList);
+                $st->execute();
+                $res = $st->get_result();
+                while ($row = $res->fetch_assoc()) {
+                    $accountMeta[(int)$row['id']] = $row;
+                }
+                $st->close();
+            }
+        }
+        if ($fidKeys !== []) {
+            $idList = array_keys($fidKeys);
+            $ph = implode(',', array_fill(0, count($idList), '?'));
+            $st = $db->prepare("SELECT id, name, code FROM funds WHERE id IN ($ph)");
+            if ($st) {
+                $st->bind_param(str_repeat('i', count($idList)), ...$idList);
+                $st->execute();
+                $res = $st->get_result();
+                while ($row = $res->fetch_assoc()) {
+                    $fundMeta[(int)$row['id']] = $row;
+                }
+                $st->close();
+            }
+        }
         $lines = [];
         foreach ($det['lines'] as $l) {
             $lineType = strtolower(trim((string)($l['type'] ?? 'debit')));
             if ($lineType !== 'debit' && $lineType !== 'credit') {
                 $lineType = 'debit';
             }
+            $aid = (int)$l['account_id'];
+            $fid = $l['fund_id'] !== null ? (int)$l['fund_id'] : 0;
+            $acct = $accountMeta[$aid] ?? null;
+            $fund = $fid > 0 ? ($fundMeta[$fid] ?? null) : null;
+            $fundLabel = '';
+            if ($fund) {
+                $fundLabel = (string)$fund['name'];
+                $code = trim((string)($fund['code'] ?? ''));
+                if ($code !== '') {
+                    $fundLabel .= ' (' . $code . ')';
+                }
+            }
             $lines[] = [
-                'account_id' => (int)$l['account_id'],
-                'fund_id' => $l['fund_id'] !== null ? (int)$l['fund_id'] : '',
+                'id' => (int)$l['id'],
+                'account_id' => $aid,
+                'account_name' => $acct ? (string)$acct['name'] : '',
+                'normal_balance' => $acct ? (string)$acct['normal_balance'] : '',
+                'fund_id' => $fid > 0 ? $fid : '',
+                'fund_name' => $fundLabel,
                 'amount' => $l['amount'],
                 'type' => $lineType,
                 'natural_category_id' => $l['natural_category_id'] !== null ? (int)$l['natural_category_id'] : '',
                 'functional_category_id' => $l['functional_category_id'] !== null ? (int)$l['functional_category_id'] : '',
+                'budget_line_id' => !empty($l['budget_line_id']) ? (int)$l['budget_line_id'] : '',
                 'description' => ledgerLineNoteFromRow($l),
             ];
         }
@@ -1748,13 +1803,9 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
             $refRaw = $_POST['reference_number'] ?? '';
             $c = trim($_POST['check_number'] ?? '');
             $desc = trim($_POST['description'] ?? '');
-            $budgetIdRaw = (int)($_POST['budget_id'] ?? 0);
-            $budgetId = $budgetIdRaw > 0 ? $budgetIdRaw : null;
-            $allowBudgetOutOfPeriod = in_array(
-                (string)($_POST['allow_budget_out_of_period'] ?? '0'),
-                ['1', 'true'],
-                true
-            );
+            // Header budget is not a form field. New transactions store none.
+            // Edits leave transaction_details.budget_id unchanged for the ledger list.
+            $budgetId = null;
             $tx_id = (int)($_POST['tx_id'] ?? 0);
             $lines = json_decode($_POST['lines_json'] ?? '[]', true) ?: [];
 
@@ -1766,24 +1817,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                 true
             );
 
-            $budgetRow = null;
-            $budgetPeriodError = null;
-            if ($budgetId !== null) {
-                if (!budgetIsAssignableId($db, $budgetId)) {
-                    $budgetPeriodError = 'Selected budget is not available for transactions.';
-                } else {
-                    $budgetRow = budgetFetchById($db, $budgetId);
-                    if ($budgetRow && $d && !budgetDateInPeriod($d, $budgetRow['start_date'], $budgetRow['end_date'])) {
-                        if (!$allowBudgetOutOfPeriod) {
-                            $budgetPeriodError = 'Transaction date is outside the selected budget period ('
-                                . budgetFormatPeriodLabel($budgetRow['start_date'], $budgetRow['end_date'])
-                                . '). Confirm in the form if this is intentional.';
-                        }
-                    }
-                }
-            }
-
-            // Cleared/reconciled: budget-only, unless an Administrator is using the temporary override.
+            // Cleared/reconciled: line budgets only, unless an Administrator is using the temporary override.
             $handledBudgetOnly = false;
             $overrideSave = false;
             $overrideComment = '';
@@ -1804,86 +1838,18 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                         }
                     } else {
                     $handledBudgetOnly = true;
-                    $oldBudgetId = !empty($lockedTx['budget_id']) ? (int)$lockedTx['budget_id'] : 0;
-                    $newBudgetId = $budgetId !== null ? (int)$budgetId : 0;
-                    if ($oldBudgetId === $newBudgetId) {
-                        $error = 'This transaction is read-only (cleared or reconciled). Only the budget may be changed.';
+                    $lockedBudget = ledgerSaveLockedLineBudgets(
+                        $db,
+                        $lockedTx,
+                        is_array($lines) ? $lines : [],
+                        $actor ? (int)$actor['id'] : null,
+                        (string)($actor['username'] ?? 'system')
+                    );
+                    if (empty($lockedBudget['ok'])) {
+                        $error = $lockedBudget['error'] ?? 'Budget update failed.';
                     } else {
-                        // Period check uses the locked transaction date, not a tampered POST date
-                        $lockedDate = (string)($lockedTx['transaction_date'] ?? '');
-                        if ($budgetId !== null && $lockedDate !== '') {
-                            if (!budgetIsAssignableId($db, $budgetId)) {
-                                $error = 'Selected budget is not available for transactions.';
-                            } else {
-                                $bRow = budgetFetchById($db, $budgetId);
-                                if (
-                                    $bRow
-                                    && !budgetDateInPeriod($lockedDate, $bRow['start_date'], $bRow['end_date'])
-                                    && !$allowBudgetOutOfPeriod
-                                ) {
-                                    $error = 'Transaction date is outside the selected budget period ('
-                                        . budgetFormatPeriodLabel($bRow['start_date'], $bRow['end_date'])
-                                        . '). Confirm in the form if this is intentional.';
-                                }
-                            }
-                        }
-                        if (empty($error)) {
-                            try {
-                                ledgerUpdateHeader(
-                                    $db,
-                                    $tx_id,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    $budgetId,
-                                    true
-                                );
-                                $describe = ledgerDescribeTransactionUpdate(
-                                    $db,
-                                    $lockedTx,
-                                    [
-                                        'transaction_date' => (string)($lockedTx['transaction_date'] ?? ''),
-                                        'pay_to' => (string)($lockedTx['pay_to'] ?? ''),
-                                        'reference_number' => (string)($lockedTx['reference_number'] ?? ''),
-                                        'check_number' => (string)($lockedTx['check_number'] ?? ''),
-                                        'description' => (string)($lockedTx['description'] ?? ''),
-                                        'budget_id' => $newBudgetId,
-                                    ],
-                                    array_map(static function ($ol) {
-                                        return [
-                                            'aid' => (int)($ol['account_id'] ?? 0),
-                                            'fid' => $ol['fund_id'] ?? null,
-                                            'am' => (float)($ol['amount'] ?? 0),
-                                            't' => (string)($ol['type'] ?? 'debit'),
-                                            'nid' => $ol['natural_category_id'] ?? null,
-                                            'fid2' => $ol['functional_category_id'] ?? null,
-                                            'description' => ledgerLineNoteFromRow($ol),
-                                        ];
-                                    }, $lockedTx['lines'] ?? [])
-                                );
-                                ledgerLogEvent(
-                                    $db,
-                                    $tx_id,
-                                    'updated',
-                                    $actor ? (int)$actor['id'] : null,
-                                    $actor['username'] ?? 'system',
-                                    $describe['summary'] !== ''
-                                        ? $describe['summary']
-                                        : 'Budget updated on cleared/reconciled transaction.',
-                                    [
-                                        'budget_only' => true,
-                                        'status' => (string)($lockedTx['status'] ?? ''),
-                                        'changes' => $describe['changes'],
-                                    ]
-                                );
-                                $success = "Transaction #$tx_id budget updated.";
-                                $savedTxId = (int)$tx_id;
-                            } catch (Throwable $e) {
-                                $error = 'Budget update failed: ' . $e->getMessage();
-                            }
-                        }
+                        $success = "Transaction #$tx_id budget updated.";
+                        $savedTxId = (int)$tx_id;
                     }
                     }
                 }
@@ -1909,14 +1875,13 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     : '';
                 $error = 'Reference # ' . $ref . ' is already used' . $hint
                     . '. Confirm reuse in the form if this is intentional.';
-            } elseif ($budgetPeriodError) {
-                $error = $budgetPeriodError;
             } elseif (count($lines) < 2) {
                 $error = "Every transaction must have at least 2 lines.";
             } else {
                 $dt = $ct = 0.0;
                 $vlines = [];
                 $typeError = false;
+                $budgetLineError = null;
                 // Natural/Functional always come from the selected account (not client overrides).
                 $accountCatCache = [];
                 $resolveAccountCategories = static function (mysqli $db, int $aid, array &$cache): array {
@@ -1959,6 +1924,12 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                     }
                     if ($t === 'debit') $dt += $am; else $ct += $am;
                     $cats = $resolveAccountCategories($db, $aid, $accountCatCache);
+                    $postedBudgetLine = (int)($l['budget_line_id'] ?? 0);
+                    $resolvedBudgetLine = budgetResolveTransactionLineAssignment($db, $postedBudgetLine, $aid);
+                    if (empty($resolvedBudgetLine['ok'])) {
+                        $budgetLineError = $resolvedBudgetLine['error'] ?? 'One line has an invalid budget.';
+                        break;
+                    }
                     $vlines[] = [
                         'aid' => $aid,
                         'fid' => !empty($l['fund_id']) ? (int)$l['fund_id'] : null,
@@ -1967,9 +1938,12 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                         'am' => $am,
                         't' => $t,
                         'description' => ledgerLineNoteFromRow($l),
+                        'budget_line_id' => $resolvedBudgetLine['budget_line_id'],
                     ];
                 }
-                if ($typeError) {
+                if ($budgetLineError) {
+                    $error = $budgetLineError;
+                } elseif ($typeError) {
                     $error = "Each line must be either Debit or Credit.";
                 } elseif (count($vlines) < 2) {
                     $error = "At least two valid lines are required.";
@@ -1987,7 +1961,8 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                             $error = "This transaction is read-only (cleared or reconciled).";
                         } else {
                             $oldRef = ledgerNormalizeReferenceNumber($existing['reference_number'] ?? null);
-                            $budgetBind = $budgetId !== null ? (string)$budgetId : null;
+                            $keptBudgetId = !empty($existing['budget_id']) ? (int)$existing['budget_id'] : 0;
+                            $budgetBind = $keptBudgetId > 0 ? (string)$keptBudgetId : null;
                             $overrideStatus = '';
                             $keepStatusOnLock = false;
 
@@ -2042,8 +2017,8 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                                     $error = 'Update failed.';
                                 }
                             } else {
-                            $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, description=?, budget_id=? WHERE id=?");
-                            $upd->bind_param("ssssssi", $d, $c, $p, $ref, $description, $budgetBind, $tx_id);
+                            $upd = $db->prepare("UPDATE transaction_details SET transaction_date=?, check_number=?, pay_to=?, reference_number=?, description=? WHERE id=?");
+                            $upd->bind_param("sssssi", $d, $c, $p, $ref, $description, $tx_id);
                             $savedOk = $upd->execute();
                             if (!$savedOk) {
                                 $error = "Update failed: " . $db->error;
@@ -2058,7 +2033,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                                     'reference_number' => $ref,
                                     'check_number' => $c,
                                     'description' => $description,
-                                    'budget_id' => $budgetId ?? 0,
+                                    'budget_id' => $keptBudgetId,
                                 ];
                                 if ($overrideSave) {
                                     $describeHeader['status'] = $overrideStatus;
@@ -2077,10 +2052,11 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                                 $del->close();
 
                                 $ed = '';
-                                $lins = $db->prepare("INSERT INTO transaction_lines(transaction_detail_id,account_id,fund_id,amount,type,natural_category_id,functional_category_id,description) VALUES(?,?,?,?,?,?,?,?)");
+                                $lins = $db->prepare("INSERT INTO transaction_lines(transaction_detail_id,account_id,fund_id,amount,type,natural_category_id,functional_category_id,description,budget_line_id) VALUES(?,?,?,?,?,?,?,?,?)");
                                 foreach ($vlines as $v) {
                                     $ed = (string)($v['description'] ?? '');
-                                    $lins->bind_param("iiidsiis", $tx_id, $v['aid'], $v['fid'], $v['am'], $v['t'], $v['nid'], $v['fid2'], $ed);
+                                    $budgetLineParam = !empty($v['budget_line_id']) ? (string)(int)$v['budget_line_id'] : null;
+                                    $lins->bind_param("iiidsiiss", $tx_id, $v['aid'], $v['fid'], $v['am'], $v['t'], $v['nid'], $v['fid2'], $ed, $budgetLineParam);
                                     $lins->execute();
                                 }
                                 $lins->close();
@@ -2197,6 +2173,7 @@ require_once __DIR__ . '/../includes/temp_bulk_txn_manager.php';
                                 'natural_category_id' => $v['nid'],
                                 'functional_category_id' => $v['fid2'],
                                 'description' => (string)($v['description'] ?? ''),
+                                'budget_line_id' => $v['budget_line_id'] ?? null,
                             ];
                         }
                         ledgerReplaceLines($db, $tid, $lineRows);
@@ -2876,53 +2853,48 @@ foreach ($colDefs as $col):
                     <input type="hidden" name="tx_id" id="tx_id">
                     <input type="hidden" name="lines_json" id="lines_json">
 
-                    <div class="row g-2">
+                    <div class="row g-2" id="txHeaderFields">
                         <div class="col-12 col-sm-6 col-md-3 col-xl-2 tx-date-col">
                             <label class="form-label small mb-1">Date *</label>
-                            <input type="date" class="form-control form-control-sm" name="transaction_date" id="transaction_date" required>
+                            <input type="date" class="form-control form-control-sm tx-edit-control" name="transaction_date" id="transaction_date" required>
+                            <div class="tx-read-value d-none" data-for="transaction_date"></div>
                         </div>
-                        <div class="col-12 col-sm-6 col-md-2 col-xl-2 tx-ref-col">
+                        <div class="col-12 col-sm-6 col-md-3 col-xl-2 tx-ref-col">
                             <label class="form-label small mb-1" for="reference_number">
                                 Ref # *
-                                <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
+                                <button type="button" class="btn btn-link btn-sm p-0 align-baseline tx-edit-control"
                                         id="referenceHelpBtn" title="List used Reference # values"
                                         aria-label="Show used Reference numbers">(?)</button>
                             </label>
-                            <input type="text" class="form-control form-control-sm font-monospace ref-number-input" name="reference_number" id="reference_number"
+                            <input type="text" class="form-control form-control-sm font-monospace ref-number-input tx-edit-control" name="reference_number" id="reference_number"
                                    placeholder="" maxlength="6" pattern="\d{6}"
                                    data-suggested="" data-ref-kind="other"
                                    title="Double-click for next suggested number" required
                                    autocomplete="off">
+                            <div class="tx-read-value d-none font-monospace" data-for="reference_number"></div>
                             <div class="form-text small text-muted lh-1" id="referenceSuggestHint" style="font-size:0.65rem;">
                                 Double-click for next suggested number
                             </div>
                             <div class="form-text small text-warning d-none" id="referenceReuseWarn" style="font-size:0.7rem;"></div>
                             <input type="hidden" name="allow_reference_reuse" id="allow_reference_reuse" value="0">
                         </div>
-                        <div class="col-12 col-sm-6 col-md-4 col-xl-3">
-                            <label class="form-label small mb-1">Pay To</label>
-                            <input type="text" class="form-control form-control-sm" name="pay_to" id="pay_to" placeholder="Vendor or person">
+                        <div class="col-12 col-md-6 col-xl-5 tx-payto-col">
+                            <label class="form-label small mb-1" for="pay_to">Pay To</label>
+                            <textarea class="form-control form-control-sm tx-wrap-input tx-edit-control" name="pay_to" id="pay_to" rows="2" placeholder="Vendor or person"></textarea>
+                            <div class="tx-read-value d-none" data-for="pay_to"></div>
                         </div>
-                        <div class="col-12 col-sm-4 col-md-3 col-xl-2">
-                            <label class="form-label small mb-1">Check #</label>
-                            <input type="text" class="form-control form-control-sm" name="check_number" id="check_number">
-                        </div>
-                        <div class="col-12 col-sm-8 col-md-4 col-xl-3">
-                            <label class="form-label small mb-1" for="budget_id">Budget</label>
-                            <select class="form-select form-select-sm" name="budget_id" id="budget_id"
-                                    data-bs-toggle="tooltip" data-bs-placement="top"
-                                    data-bs-html="true" title="">
-                                <option value="">— None —</option>
-                            </select>
-                            <div class="form-text small text-warning d-none lh-sm" id="budgetPeriodWarn" style="font-size:0.7rem;"></div>
-                            <div class="form-text small text-warning d-none lh-sm" id="budgetStatusWarn" style="font-size:0.7rem;"></div>
-                            <input type="hidden" name="allow_budget_out_of_period" id="allow_budget_out_of_period" value="0">
+                        <div class="col-12 col-sm-6 col-md-3 col-xl-3">
+                            <label class="form-label small mb-1" for="check_number">Check #</label>
+                            <input type="text" class="form-control form-control-sm tx-edit-control" name="check_number" id="check_number">
+                            <div class="tx-read-value d-none" data-for="check_number"></div>
                         </div>
                         <div class="col-12">
-                            <label class="form-label small mb-1">Description</label>
-                            <input type="text" class="form-control form-control-sm" name="description" id="description" placeholder="Transaction description">
+                            <label class="form-label small mb-1" for="description">Description</label>
+                            <textarea class="form-control form-control-sm tx-wrap-input tx-edit-control" name="description" id="description" rows="2" placeholder="Transaction description"></textarea>
+                            <div class="tx-read-value d-none" data-for="description"></div>
                         </div>
                     </div>
+                    <div id="budgetStatusWarn" class="alert alert-warning py-1 px-2 small d-none mt-2 mb-0" role="status"></div>
 
                     <div id="txOverrideEditPanel" class="d-none border border-warning rounded p-2 mt-2 bg-warning-subtle">
                         <p class="small mb-2">
@@ -2960,32 +2932,53 @@ foreach ($colDefs as $col):
                             <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary" title="Add a split line (Ctrl+L)">+ Add Line</button>
                         </div>
 
-                        <div class="table-responsive">
+                        <div class="table-responsive tx-lines-wrap">
                             <table class="table table-sm table-bordered align-middle mb-1" id="txLinesTable">
+                                <colgroup>
+                                    <col class="tx-account-col">
+                                    <col class="tx-fund-col">
+                                    <col class="tx-budget-line-col">
+                                    <col class="tx-note-col">
+                                    <col class="tx-debit-col">
+                                    <col class="tx-credit-col">
+                                    <col class="tx-remove-col">
+                                </colgroup>
                                 <thead class="table-light">
                                     <tr>
-                                        <th>Account *</th>
-                                        <th title="Fund tags on asset accounts do not affect fund balances. Tag the income, expense, or net assets line.">Fund</th>
-                                        <th>Natural</th>
-                                        <th>Functional</th>
+                                        <th class="tx-account-col">Account *</th>
+                                        <th class="tx-fund-col" title="Fund tags on asset accounts do not affect fund balances. Tag the income, expense, or net assets line.">Fund</th>
+                                        <th class="tx-budget-line-col" title="Choose a budget for this line, or None to leave it out of every budget.">Budget line</th>
                                         <th class="tx-note-col">Note</th>
                                         <th class="text-end text-primary tx-amt-col">Debit</th>
                                         <th class="text-end text-success tx-amt-col">Credit</th>
-                                        <th style="width:30px"></th>
+                                        <th class="tx-remove-col"></th>
                                     </tr>
                                 </thead>
                                 <tbody id="linesBody"></tbody>
                             </table>
                         </div>
                         <style>
-                            #txLinesTable .line-cat-label {
-                                display: block;
+                            @media (min-width: 576px) {
+                                #txFormModal .modal-dialog {
+                                    max-width: min(96vw, 90rem);
+                                }
+                            }
+                            #txFormModal .tx-wrap-input,
+                            #txFormModal .tx-read-value,
+                            #txLinesTable .line-read {
+                                white-space: pre-wrap;
+                                overflow-wrap: anywhere;
+                                word-break: break-word;
+                            }
+                            #txFormModal .tx-read-value {
+                                min-height: 1.6rem;
+                                padding-top: 0.15rem;
+                            }
+                            #txFormModal textarea.tx-wrap-input {
+                                resize: vertical;
                                 overflow: hidden;
-                                text-overflow: ellipsis;
-                                white-space: nowrap;
-                                color: var(--bs-secondary-color);
-                                font-size: 0.875rem;
-                                max-width: 9rem;
+                                min-height: 2.5rem;
+                                field-sizing: content;
                             }
                             #txFormModal .tx-date-col {
                                 min-width: 11.5rem;
@@ -2999,25 +2992,141 @@ foreach ($colDefs as $col):
                             #txFormModal #reference_number {
                                 min-width: 6.75rem;
                             }
-                            #txLinesTable th.tx-amt-col,
-                            #txLinesTable td:has(.line-amount) {
-                                width: 8.25rem;
-                                min-width: 8.25rem;
+                            /* Initial column shares of #txLinesTable. The table stays the modal content width. */
+                            #txFormModal .tx-lines-wrap {
+                                width: 100%;
+                                max-width: 100%;
+                                min-width: 0;
+                                overflow-x: hidden;
                             }
-                            #txLinesTable .line-amount {
-                                min-width: 7.5rem;
+                            #txLinesTable {
+                                table-layout: fixed;
+                                width: 100%;
+                                max-width: 100%;
+                                min-width: 0;
                             }
-                            #txLinesTable th.tx-note-col,
-                            #txLinesTable td:has(.line-note) {
-                                width: 9rem;
-                                min-width: 7.5rem;
+                            #txLinesTable col.tx-account-col { width: 22%; }
+                            #txLinesTable col.tx-fund-col { width: 18%; }
+                            #txLinesTable col.tx-budget-line-col { width: 8%; }
+                            #txLinesTable col.tx-note-col { width: 30%; }
+                            #txLinesTable col.tx-debit-col { width: 10%; }
+                            #txLinesTable col.tx-credit-col { width: 10%; }
+                            #txLinesTable col.tx-remove-col { width: 2%; }
+                            #txLinesTable th,
+                            #txLinesTable td {
+                                min-width: 0;
+                                overflow-wrap: anywhere;
+                                word-break: break-word;
                             }
-                            #txLinesTable .line-note {
-                                min-width: 7rem;
-                                max-width: 12rem;
+                            #txLinesTable td.tx-account-cell,
+                            #txLinesTable td.tx-budget-cell,
+                            #txLinesTable td.tx-note-cell,
+                            #txLinesTable td.tx-amt-cell {
+                                overflow: hidden;
                             }
-                            #txLinesTable .line-fund.line-fund-ignored {
+                            #txLinesTable select.line-account,
+                            #txLinesTable select.line-budget-line,
+                            #txLinesTable input.line-note,
+                            #txLinesTable input.line-amount {
+                                width: 100%;
+                                min-width: 0;
+                                max-width: 100%;
+                                box-sizing: border-box;
+                            }
+                            #txLinesTable td.tx-fund-cell,
+                            #txLinesTable .line-fund-text,
+                            #txLinesTable .tx-fund-face {
+                                white-space: normal;
+                                overflow-wrap: anywhere;
+                                word-break: break-word;
+                                text-overflow: clip;
+                            }
+                            #txLinesTable .tx-fund-control {
+                                position: relative;
+                                width: 100%;
+                                max-width: 100%;
+                                min-width: 0;
+                            }
+                            #txLinesTable .tx-fund-face {
+                                display: block;
+                                height: auto;
+                                min-width: 0;
+                                max-width: 100%;
+                                min-height: calc(1.5em + 0.5rem + 2px);
+                            }
+                            #txLinesTable .tx-fund-control:focus-within .tx-fund-face {
+                                border-color: #86b7fe;
+                                outline: 0;
+                                box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+                            }
+                            #txLinesTable .tx-fund-face.line-fund-ignored {
                                 opacity: 0.65;
+                            }
+                            #txLinesTable .tx-fund-control > select.line-fund {
+                                position: absolute;
+                                left: 0;
+                                top: 0;
+                                width: 100%;
+                                height: 100%;
+                                min-width: 0;
+                                max-width: 100%;
+                                margin: 0;
+                                opacity: 0;
+                                cursor: pointer;
+                            }
+                            #txLinesTable select.line-budget-line {
+                                padding-left: 0.1rem;
+                                padding-right: 0.7rem;
+                                background-position: right 0.08rem center;
+                                background-size: 8px 8px;
+                            }
+                            #txLinesTable .remove-line {
+                                box-sizing: border-box;
+                                width: 100%;
+                                max-width: 100%;
+                                min-width: 0;
+                                padding-left: 0;
+                                padding-right: 0;
+                                line-height: 1.1;
+                            }
+                            #txLinesTable td.tx-remove-cell {
+                                overflow: hidden;
+                                text-align: center;
+                            }
+                            #txLinesTable thead th {
+                                position: relative;
+                                overflow: visible;
+                            }
+                            #txLinesTable .tx-col-resize {
+                                position: absolute;
+                                top: 0;
+                                right: 0;
+                                width: 8px;
+                                height: 100%;
+                                transform: translateX(50%);
+                                cursor: col-resize;
+                                z-index: 4;
+                                touch-action: none;
+                                user-select: none;
+                            }
+                            #txLinesTable .tx-col-resize::after {
+                                content: '';
+                                position: absolute;
+                                top: 0;
+                                bottom: 0;
+                                left: 50%;
+                                width: 2px;
+                                transform: translateX(-50%);
+                                background: transparent;
+                            }
+                            #txLinesTable .tx-col-resize:hover::after,
+                            body.tx-line-col-resize .tx-col-resize.is-active::after {
+                                background: var(--bs-primary);
+                            }
+                            body.tx-line-col-resize,
+                            body.tx-line-col-resize * {
+                                cursor: col-resize !important;
+                                user-select: none !important;
                             }
                         </style>
 
@@ -3667,6 +3776,7 @@ foreach ($colDefs as $col):
     const accountOpts = `<?= $aopt ?>`;
     const fundOpts = `<?= $fopt ?>`;
     const budgetOptions = <?= json_encode($budgetOptions, JSON_UNESCAPED_UNICODE) ?> || [];
+    const budgetLineOptions = <?= json_encode(budgetFetchAssignableLineOptions($db), JSON_UNESCAPED_UNICODE) ?> || [];
     const defaultBudgetIdToday = <?= $defaultBudgetIdToday !== null ? (int)$defaultBudgetIdToday : 'null' ?>;
     /** Name→id lookups for text paste import (read-only populate). */
     const ledgerImportLookups = {
@@ -3840,6 +3950,7 @@ foreach ($colDefs as $col):
             fillBudgetSelect('');
             clearBudgetOutOfPeriodFlag();
             updateBudgetPeriodWarning();
+            refreshInheritedBudgetLines();
             return;
         }
         const defId = defaultBudgetIdForDate(dateStr);
@@ -3850,6 +3961,151 @@ foreach ($colDefs as $col):
         }
         clearBudgetOutOfPeriodFlag();
         updateBudgetPeriodWarning();
+        refreshInheritedBudgetLines();
+    }
+    function budgetLinesForAccount(accountId) {
+        const aid = String(accountId || '');
+        if (!aid) return [];
+        return budgetLineOptions.filter(line => String(line.account_id) === aid);
+    }
+    /** Dropdown and view text are the stored budget name. No fiscal-year prefix. */
+    function budgetChoiceLabel(budget) {
+        const name = budget.name || budget.label || ('#' + budget.id);
+        return String(name);
+    }
+    /** Lowest budget line on one budget for this account, or '' when that budget has no such line. */
+    function budgetLineIdForBudgetAccount(budgetId, accountId) {
+        const bid = String(budgetId || '');
+        const aid = String(accountId || '');
+        if (!bid || !aid) return '';
+        const matches = budgetLinesForAccount(aid)
+            .filter(line => String(line.budget_id) === bid)
+            .sort((a, b) => Number(a.id) - Number(b.id));
+        return matches.length ? String(matches[0].id) : '';
+    }
+    /** Header budget's matching line for this account, or '' when the budget has no such line. */
+    function headerBudgetLineIdForAccount(accountId) {
+        const bid = budgetSelect && budgetSelect.value ? String(budgetSelect.value) : '';
+        if (!bid || !accountId) return '';
+        return budgetLineIdForBudgetAccount(bid, accountId);
+    }
+    /** Budget id to show for a stored budget_line_id. Unknown lines keep a line: token. */
+    function budgetIdFromStoredLine(lineId) {
+        const id = String(lineId || '');
+        if (!id) return '';
+        const line = budgetLineOptions.find(item => String(item.id) === id);
+        if (line) return String(line.budget_id);
+        return 'line:' + id;
+    }
+    function lineAccountId(row) {
+        const sel = row.querySelector('select.line-account');
+        if (sel) return sel.value || '';
+        return row && row.dataset ? (row.dataset.accountId || '') : '';
+    }
+    /**
+     * Line dropdown lists every selectable budget. It does not wait for an
+     * account. The selected value is a budget id. The saved field is still
+     * that budget's line for the account. None leaves the line out of every budget.
+     */
+    function fillLineBudgetSelect(row, selectedBudgetId) {
+        const sel = row.querySelector('select.line-budget-line');
+        if (!sel) return;
+        const aid = lineAccountId(row);
+        const keep = selectedBudgetId != null && selectedBudgetId !== '' ? String(selectedBudgetId) : '';
+        const labels = budgetOptions.map(budgetChoiceLabel);
+        sel.innerHTML = '';
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '— None —';
+        sel.appendChild(none);
+        let found = false;
+        budgetOptions.forEach((budget, index) => {
+            const opt = document.createElement('option');
+            opt.value = String(budget.id);
+            let label = labels[index];
+            if (labels.filter(item => item === label).length > 1) {
+                label += ' (#' + budget.id + ')';
+            }
+            opt.textContent = label;
+            opt.dataset.budgetId = String(budget.id);
+            if (keep && opt.value === keep) {
+                opt.selected = true;
+                found = true;
+            }
+            sel.appendChild(opt);
+        });
+        if (keep && !found) {
+            const opt = document.createElement('option');
+            opt.value = keep;
+            opt.dataset.budgetId = keep.indexOf('line:') === 0 ? '' : keep;
+            opt.textContent = keep.indexOf('line:') === 0
+                ? ('Budget line #' + keep.slice(5))
+                : ('Budget #' + keep);
+            opt.selected = true;
+            sel.appendChild(opt);
+        }
+        sel.value = keep || '';
+        const resolved = (!keep || keep.indexOf('line:') === 0) ? keep : budgetLineIdForBudgetAccount(keep, aid);
+        if (keep && aid && keep.indexOf('line:') !== 0 && !resolved) {
+            sel.title = 'This budget has no line for the selected account. Choose None or another budget.';
+        } else {
+            sel.title = 'Choose a budget for this line, or None to leave it out of every budget.';
+        }
+    }
+    /** Budget id chosen on the line, and the budget_line_id that choice saves. */
+    function resolvedLineBudget(row) {
+        const sel = row.querySelector('select.line-budget-line');
+        if (!sel) return { lineId: row && row.dataset ? (row.dataset.savedBudgetLineId || '') : '', error: '' };
+        const raw = sel.value || '';
+        if (!raw) return { lineId: '', error: '' };
+        if (raw.indexOf('line:') === 0) return { lineId: raw.slice(5), error: '' };
+        const aid = lineAccountId(row);
+        const lineId = budgetLineIdForBudgetAccount(raw, aid);
+        if (lineId) return { lineId: lineId, error: '' };
+        const label = sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : 'The selected budget';
+        return {
+            lineId: '',
+            error: label + ' has no line for this account. Choose None or another budget.'
+        };
+    }
+    /** New lines start at None. There is no header budget to copy onto the line. */
+    function applyInheritedBudgetLine(row) {
+        if (!row || row.dataset.budgetLineManual === '1') return;
+        fillLineBudgetSelect(row, '');
+    }
+    /** Cleared/reconciled budget edit shows the assignment the header change will save. */
+    function previewBudgetOnlyLine(row) {
+        const sel = row.querySelector('.line-budget-line');
+        const acc = row.querySelector('.line-account');
+        if (!sel || !acc) return;
+        const next = isBudgetSelectionChanged()
+            ? (headerBudgetLineIdForAccount(acc.value) ? String(budgetSelect.value || '') : '')
+            : budgetIdFromStoredLine(row.dataset.savedBudgetLineId || '');
+        fillLineBudgetSelect(row, next);
+        sel.disabled = true;
+        sel.classList.add('bg-body-secondary');
+    }
+    function refreshInheritedBudgetLines() {
+        if (!linesBody || budgetOnlyEditMode) return;
+        linesBody.querySelectorAll('tr').forEach(row => {
+            applyInheritedBudgetLine(row);
+        });
+    }
+    function onLineAccountChanged(row) {
+        const sel = row.querySelector('.line-budget-line');
+        const acc = row.querySelector('.line-account');
+        if (!sel || !acc) return;
+        if (row.dataset.budgetLineManual === '1') {
+            const prev = sel.value || '';
+            if (prev.indexOf('line:') === 0) {
+                const prevLine = budgetLineOptions.find(item => String(item.id) === prev.slice(5));
+                fillLineBudgetSelect(row, prevLine ? String(prevLine.budget_id) : prev);
+                return;
+            }
+            fillLineBudgetSelect(row, prev);
+            return;
+        }
+        applyInheritedBudgetLine(row);
     }
     function setBudgetSelection(budgetId, { auto = false } = {}) {
         budgetAutoMode = !!auto;
@@ -5172,8 +5428,14 @@ foreach ($colDefs as $col):
     }
 
     function getLineAmountAndType(row) {
-        const debIn = row.querySelector('.line-debit-amt');
-        const credIn = row.querySelector('.line-credit-amt');
+        const debIn = row.querySelector('input.line-debit-amt');
+        const credIn = row.querySelector('input.line-credit-amt');
+        if (!debIn && !credIn) {
+            const amount = parseLineAmount(row && row.dataset ? row.dataset.amount : '');
+            const type = String(row && row.dataset ? (row.dataset.lineType || '') : '');
+            if (amount > 0 && (type === 'debit' || type === 'credit')) return { amount, type };
+            return { amount: 0, type: '' };
+        }
         const deb = parseLineAmount(debIn?.value);
         const cred = parseLineAmount(credIn?.value);
         // Debit/Credit is chosen by which column has the amount (not locked to account type)
@@ -5200,9 +5462,17 @@ foreach ($colDefs as $col):
         return budgetSelect && budgetSelect.value ? String(budgetSelect.value) : '';
     }
 
-    /** True when budget differs from the loaded transaction (budget-only save candidate). */
+    /** True when a line budget differs from the loaded transaction (budget-only save candidate). */
     function isBudgetSelectionChanged() {
-        return originalBudgetId() !== currentBudgetId();
+        if (!linesBody) return false;
+        let changed = false;
+        linesBody.querySelectorAll('tr').forEach(row => {
+            const pick = resolvedLineBudget(row);
+            const next = pick && pick.lineId ? String(pick.lineId) : '';
+            const saved = row.dataset.savedBudgetLineId || '';
+            if (next !== String(saved)) changed = true;
+        });
+        return changed;
     }
 
     /**
@@ -5278,6 +5548,7 @@ foreach ($colDefs as $col):
                 fillBudgetSelect('');
                 clearBudgetOutOfPeriodFlag();
                 updateBudgetPeriodWarning();
+                refreshInheritedBudgetLines();
             }
             return;
         }
@@ -5288,8 +5559,9 @@ foreach ($colDefs as $col):
     }
 
     /**
-     * Pull Natural / Functional class labels from the selected account option
-     * (same pattern as budget page — read-only, not user-editable).
+     * Keep the account's category ids on the row for save.
+     * Natural and Functional are not shown on this form. The server stores
+     * the categories from the account.
      */
     function syncLineFundHint(row) {
         const sel = row.querySelector('.line-account');
@@ -5302,24 +5574,30 @@ foreach ($colDefs as $col):
         fund.title = ignored
             ? 'Fund tags on asset accounts do not affect fund balances. Tag the income, expense, or net assets line instead.'
             : 'Tag this line’s fund. Only income, expense, and net assets (equity) lines change fund balances.';
+        syncFundFace(fund);
+    }
+
+    /** Wrapping face shows the full fund name inside the 18% column. */
+    function syncFundFace(fund) {
+        if (!fund) return;
+        const face = fund.parentElement ? fund.parentElement.querySelector('.tx-fund-face') : null;
+        if (!face) return;
+        const opt = fund.selectedOptions && fund.selectedOptions[0];
+        const text = opt ? String(opt.textContent || '').replace(/\s+/g, ' ').trim() : '';
+        face.textContent = text !== '' ? text : '—';
+        face.classList.toggle('line-fund-ignored', fund.classList.contains('line-fund-ignored'));
+        face.title = fund.title || text;
     }
 
     function syncLineCategoryLabels(row) {
         syncLineFundHint(row);
-        const sel = row.querySelector('.line-account');
-        const natEl = row.querySelector('.line-natural-label');
-        const funEl = row.querySelector('.line-functional-label');
-        if (!natEl || !funEl) return;
-        const opt = sel && sel.selectedOptions ? sel.selectedOptions[0] : null;
+        const sel = row.querySelector('select.line-account');
+        if (!sel) return;
+        const opt = sel.selectedOptions ? sel.selectedOptions[0] : null;
         const hasAcct = !!(opt && opt.value);
-        const nat = hasAcct ? (opt.dataset.naturalName || '—') : '—';
-        const fun = hasAcct ? (opt.dataset.functionalName || '—') : '—';
-        natEl.textContent = nat;
-        natEl.title = nat;
-        funEl.textContent = fun;
-        funEl.title = fun;
         row.dataset.naturalId = hasAcct ? (opt.dataset.naturalId || '') : '';
         row.dataset.functionalId = hasAcct ? (opt.dataset.functionalId || '') : '';
+        sel.title = hasAcct ? String(opt.textContent || '') : '';
     }
 
     function attachLineListeners(row) {
@@ -5334,7 +5612,23 @@ foreach ($colDefs as $col):
         if (accSel) {
             accSel.addEventListener('change', () => {
                 syncLineCategoryLabels(row);
+                onLineAccountChanged(row);
                 recalcTotals();
+            });
+        }
+        const fundSel = row.querySelector('select.line-fund');
+        if (fundSel) {
+            fundSel.addEventListener('change', () => syncFundFace(fundSel));
+        }
+        const budgetLineSel = row.querySelector('.line-budget-line');
+        if (budgetLineSel) {
+            budgetLineSel.addEventListener('change', () => {
+                row.dataset.budgetLineManual = '1';
+                const picked = row.querySelector('select.line-budget-line');
+                if (picked && picked.selectedOptions && picked.selectedOptions[0]) {
+                    picked.title = String(picked.selectedOptions[0].textContent || '');
+                }
+                if (budgetOnlyEditMode) updateSaveButtonState();
             });
         }
         function bindAmountInput(input, other, typeName) {
@@ -5370,64 +5664,164 @@ foreach ($colDefs as $col):
         recalcTotals();
     }
 
-    function createLineRow(prefill = null, readonly = false) {
-        const ro = readonly ? ' disabled' : '';
-        const remStyle = readonly ? ' style="display:none"' : '';
+    let ledgerAccountLookupSelect = null;
+    let ledgerFundLookupSelect = null;
+    function optionLabelByValue(kind, value) {
+        const id = String(value || '');
+        if (!id) return '';
+        let sel = kind === 'fund' ? ledgerFundLookupSelect : ledgerAccountLookupSelect;
+        if (!sel) {
+            sel = document.createElement('select');
+            sel.innerHTML = kind === 'fund' ? fundOpts : accountOpts;
+            if (kind === 'fund') ledgerFundLookupSelect = sel;
+            else ledgerAccountLookupSelect = sel;
+        }
+        const opt = Array.from(sel.options).find(item => item.value === id);
+        return opt ? String(opt.textContent || '') : '';
+    }
+    function accountReadLabel(prefill) {
+        const id = prefill && prefill.account_id ? String(prefill.account_id) : '';
+        const fromList = id ? optionLabelByValue('account', id) : '';
+        if (fromList) return fromList;
+        const name = prefill && prefill.account_name ? String(prefill.account_name) : '';
+        if (name) {
+            const nb = prefill.normal_balance ? String(prefill.normal_balance) : '';
+            return nb ? (name + ' (' + nb + ')') : name;
+        }
+        return id ? ('Account #' + id) : '—';
+    }
+    function fundReadLabel(prefill) {
+        const id = prefill && prefill.fund_id ? String(prefill.fund_id) : '';
+        if (!id) return '—';
+        const fromList = optionLabelByValue('fund', id);
+        if (fromList) return fromList;
+        if (prefill && prefill.fund_name) return String(prefill.fund_name);
+        return 'Fund #' + id;
+    }
+    function budgetReadLabel(storedLineId) {
+        const id = String(storedLineId || '');
+        if (!id) return '— None —';
+        const token = budgetIdFromStoredLine(id);
+        if (token.indexOf('line:') === 0) return 'Budget line #' + token.slice(5);
+        const budget = budgetById(token);
+        if (!budget) return 'Budget #' + token;
+        let label = budgetChoiceLabel(budget);
+        if (budgetOptions.filter(item => budgetChoiceLabel(item) === label).length > 1) {
+            label += ' (#' + budget.id + ')';
+        }
+        return label;
+    }
+    function lineNoteFromPrefill(prefill) {
+        if (!prefill) return '';
+        const raw = (prefill.note != null && String(prefill.note) !== '')
+            ? prefill.note
+            : (prefill.description || '');
+        return String(raw).trim().slice(0, 255);
+    }
+
+    /**
+     * @param {object|null} prefill
+     * @param {boolean} readonly View when true and opts.mode is omitted.
+     * @param {{mode?: 'edit'|'view'|'budget'}} [opts] budget keeps only the line budget control.
+     */
+    function createLineRow(prefill = null, readonly = false, opts = {}) {
+        const mode = (opts && opts.mode) ? opts.mode : (readonly ? 'view' : 'edit');
+        const showControls = mode === 'edit';
+        const budgetControl = mode === 'edit' || mode === 'budget';
         const row = document.createElement('tr');
-        // Debit / Credit columns: user enters amount in either column for any account.
-        // Natural / Functional are read-only labels pulled from the account (budget-page pattern).
-        row.innerHTML = `
-            <td data-label="Account"><select class="form-select form-select-sm line-account" required${ro}>${accountOpts}</select></td>
-            <td data-label="Fund"><select class="form-select form-select-sm line-fund"${ro}>${fundOpts}</select></td>
-            <td data-label="Natural"><span class="line-cat-label line-natural-label" title="">—</span></td>
-            <td data-label="Functional"><span class="line-cat-label line-functional-label" title="">—</span></td>
-            <td data-label="Note">
-                <input type="text" class="form-control form-control-sm line-note" maxlength="255" placeholder="" autocomplete="off"${ro}>
-            </td>
-            <td data-label="Debit">
-                <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
-            </td>
-            <td data-label="Credit">
-                <input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-credit-amt text-end font-monospace" placeholder="" autocomplete="off"${ro}>
-            </td>
-            <td data-label=""><button type="button" class="btn btn-sm btn-outline-danger remove-line"${remStyle}>×</button></td>
+        const budgetCell = budgetControl
+            ? '<td class="tx-budget-cell" data-label="Budget line"><select class="form-select form-select-sm line-budget-line"><option value="">— None —</option></select></td>'
+            : '<td class="tx-budget-cell" data-label="Budget line"><div class="line-read line-budget-text"></div></td>';
+        const removeCell = showControls
+            ? '<td class="tx-remove-cell" data-label=""><button type="button" class="btn btn-sm btn-outline-danger remove-line">×</button></td>'
+            : '<td class="tx-remove-cell" data-label=""></td>';
+        if (showControls) {
+            row.innerHTML = `
+            <td class="tx-account-cell" data-label="Account"><select class="form-select form-select-sm line-account" required>${accountOpts}</select></td>
+            <td class="tx-fund-cell" data-label="Fund"><div class="tx-fund-control"><span class="tx-fund-face form-select form-select-sm"></span><select class="form-select form-select-sm line-fund">${fundOpts}</select></div></td>
+            ${budgetCell}
+            <td class="tx-note-cell" data-label="Note"><input type="text" class="form-control form-control-sm line-note" maxlength="255" autocomplete="off"></td>
+            <td class="tx-amt-cell" data-label="Debit"><input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-debit-amt text-end font-monospace" autocomplete="off"></td>
+            <td class="tx-amt-cell" data-label="Credit"><input type="text" inputmode="decimal" class="form-control form-control-sm line-amount line-credit-amt text-end font-monospace" autocomplete="off"></td>
+            ${removeCell}
         `;
+        } else {
+            row.innerHTML = `
+            <td class="tx-account-cell" data-label="Account"><div class="line-read line-account-text"></div></td>
+            <td class="tx-fund-cell" data-label="Fund"><div class="line-read line-fund-text"></div></td>
+            ${budgetCell}
+            <td class="tx-note-cell" data-label="Note"><div class="line-read line-note-text"></div></td>
+            <td class="tx-amt-cell" data-label="Debit"><div class="line-read line-debit-text text-end font-monospace"></div></td>
+            <td class="tx-amt-cell" data-label="Credit"><div class="line-read line-credit-text text-end font-monospace"></div></td>
+            ${removeCell}
+        `;
+        }
+        row.dataset.lineId = prefill && prefill.id ? String(prefill.id) : '';
+        row.dataset.accountId = prefill && prefill.account_id ? String(prefill.account_id) : '';
+        row.dataset.fundId = prefill && prefill.fund_id ? String(prefill.fund_id) : '';
         row.dataset.lineType = '';
-        row.dataset.naturalId = '';
-        row.dataset.functionalId = '';
-        if (prefill) {
-            const acc = row.querySelector('.line-account');
-            if (prefill.account_id) acc.value = prefill.account_id;
-            const fund = row.querySelector('.line-fund');
-            if (prefill.fund_id !== undefined && prefill.fund_id !== '') fund.value = prefill.fund_id;
-            // Place amount in debit or credit column from saved line type (not account normal_balance)
-            const debIn = row.querySelector('.line-debit-amt');
-            const credIn = row.querySelector('.line-credit-amt');
-            if (prefill.amount !== undefined && prefill.amount !== '') {
-                const formatted = formatLineAmountDisplay(prefill.amount);
-                const t = String(prefill.type || '').toLowerCase();
-                if (t === 'credit') {
-                    credIn.value = formatted;
-                    row.dataset.lineType = 'credit';
-                } else {
-                    debIn.value = formatted;
-                    row.dataset.lineType = 'debit';
-                }
+        row.dataset.amount = '';
+        row.dataset.note = '';
+        row.dataset.naturalId = prefill && prefill.natural_category_id ? String(prefill.natural_category_id) : '';
+        row.dataset.functionalId = prefill && prefill.functional_category_id ? String(prefill.functional_category_id) : '';
+        row.dataset.budgetLineManual = '0';
+        row.dataset.savedBudgetLineId = '';
+        const note = lineNoteFromPrefill(prefill);
+        row.dataset.note = note;
+        const hasSavedBudgetLine = !!(prefill && Object.prototype.hasOwnProperty.call(prefill, 'budget_line_id'));
+        let formatted = '';
+        let lineType = '';
+        if (prefill && prefill.amount !== undefined && prefill.amount !== '') {
+            formatted = formatLineAmountDisplay(prefill.amount);
+            lineType = String(prefill.type || '').toLowerCase() === 'credit' ? 'credit' : 'debit';
+            row.dataset.lineType = lineType;
+            row.dataset.amount = String(prefill.amount);
+        }
+        if (showControls && prefill) {
+            const acc = row.querySelector('select.line-account');
+            if (acc && prefill.account_id) acc.value = prefill.account_id;
+            const fund = row.querySelector('select.line-fund');
+            if (fund && prefill.fund_id !== undefined && prefill.fund_id !== '') fund.value = prefill.fund_id;
+            const debIn = row.querySelector('input.line-debit-amt');
+            const credIn = row.querySelector('input.line-credit-amt');
+            if (formatted) {
+                if (lineType === 'credit' && credIn) credIn.value = formatted;
+                else if (debIn) debIn.value = formatted;
             }
-            const noteIn = row.querySelector('.line-note');
+            const noteIn = row.querySelector('input.line-note');
             if (noteIn) {
-                const raw = (prefill.note != null && String(prefill.note) !== '')
-                    ? prefill.note
-                    : (prefill.description || '');
-                const note = String(raw).trim().slice(0, 255);
                 noteIn.value = note;
                 if (note) noteIn.title = note;
             }
+        } else if (!showControls) {
+            const acctEl = row.querySelector('.line-account-text');
+            if (acctEl) acctEl.textContent = accountReadLabel(prefill);
+            const fundEl = row.querySelector('.line-fund-text');
+            if (fundEl) fundEl.textContent = fundReadLabel(prefill);
+            const noteEl = row.querySelector('.line-note-text');
+            if (noteEl) noteEl.textContent = note || '—';
+            const debText = row.querySelector('.line-debit-text');
+            const credText = row.querySelector('.line-credit-text');
+            if (debText) debText.textContent = lineType === 'debit' ? formatted : '';
+            if (credText) credText.textContent = lineType === 'credit' ? formatted : '';
+        }
+        if (hasSavedBudgetLine) {
+            const savedBudgetLine = prefill.budget_line_id ? String(prefill.budget_line_id) : '';
+            row.dataset.budgetLineManual = '1';
+            row.dataset.savedBudgetLineId = savedBudgetLine;
+            if (budgetControl) {
+                fillLineBudgetSelect(row, budgetIdFromStoredLine(savedBudgetLine));
+            } else {
+                const budgetText = row.querySelector('.line-budget-text');
+                if (budgetText) budgetText.textContent = budgetReadLabel(savedBudgetLine);
+            }
+        } else if (budgetControl) {
+            applyInheritedBudgetLine(row);
+        } else {
+            const budgetText = row.querySelector('.line-budget-text');
+            if (budgetText) budgetText.textContent = '— None —';
         }
         syncLineCategoryLabels(row);
-        if (readonly) {
-            row.querySelectorAll('select, input').forEach(el => el.classList.add('bg-body-secondary'));
-        }
         return row;
     }
 
@@ -5456,31 +5850,46 @@ foreach ($colDefs as $col):
         }
     }
 
+    function syncHeaderReadValues() {
+        document.querySelectorAll('#txHeaderFields .tx-read-value').forEach(el => {
+            const src = document.getElementById(el.dataset.for || '');
+            const raw = src ? String(src.value || '') : '';
+            el.textContent = raw.trim() !== '' ? raw : '—';
+        });
+    }
+
+    function fitWrapField(el) {
+        if (!el || el.tagName !== 'TEXTAREA') return;
+        el.style.height = 'auto';
+        el.style.height = Math.max(el.scrollHeight, 40) + 'px';
+    }
+
+    function fitHeaderWrapFields() {
+        ['pay_to', 'description'].forEach(id => fitWrapField(document.getElementById(id)));
+    }
+
     /**
-     * Lock/unlock main header fields.
+     * View shows wrapping text. Edit shows the controls.
      * @param {boolean} readonly
-     * @param {{budgetEnabled?: boolean}} [opts] When readonly and budgetEnabled, keep budget selectable (cleared/reconciled budget-only edit).
      */
-    function setMainFieldsReadOnly(readonly, opts = {}) {
-        const budgetEnabled = !!opts.budgetEnabled;
+    function setMainFieldsReadOnly(readonly) {
         ['transaction_date', 'reference_number', 'pay_to', 'check_number', 'description'].forEach(fid => {
             const el = document.getElementById(fid);
             if (!el) return;
-            el.readOnly = readonly;
-            if (readonly) el.classList.add('bg-body-secondary');
-            else el.classList.remove('bg-body-secondary');
+            el.readOnly = !!readonly;
         });
-        if (budgetSelect) {
-            const lockBudget = readonly && !budgetEnabled;
-            budgetSelect.disabled = lockBudget;
-            if (lockBudget) budgetSelect.classList.add('bg-body-secondary');
-            else budgetSelect.classList.remove('bg-body-secondary');
-            // Refresh tooltip so disabled state doesn't leave a stuck popover
-            syncBudgetSelectTooltip();
+        const header = document.getElementById('txHeaderFields');
+        if (header) {
+            header.querySelectorAll('.tx-edit-control').forEach(el => {
+                el.classList.toggle('d-none', !!readonly);
+            });
+            if (readonly) syncHeaderReadValues();
+            header.querySelectorAll('.tx-read-value').forEach(el => {
+                el.classList.toggle('d-none', !readonly);
+            });
         }
-        if (!readonly || !budgetEnabled) {
-            setBudgetStatusWarning(false);
-        }
+        if (!readonly) fitHeaderWrapFields();
+        if (readonly) setBudgetStatusWarning(false);
         updateReferenceHintVisibility();
     }
 
@@ -5553,35 +5962,31 @@ foreach ($colDefs as $col):
         openTxFormModal();
     }
 
-    /** Enter budget-only edit UI for a cleared/reconciled transaction (lines stay locked). */
+    /** Cleared/reconciled edit: header and lines are text, except each line's budget. */
     function applyBudgetOnlyEditMode(data) {
         budgetOnlyEditMode = true;
         setOverrideEditPanel(false);
         budgetAutoMode = false;
-        setMainFieldsReadOnly(true, { budgetEnabled: true });
+        const source = data || currentViewData || {};
+        linesBody.innerHTML = '';
+        const lines = source.lines || [];
+        lines.forEach(function(l) {
+            const row = createLineRow(l, true, { mode: 'budget' });
+            linesBody.appendChild(row);
+            attachLineListeners(row);
+        });
+        setMainFieldsReadOnly(true);
         setBudgetStatusWarning(true);
-        formTitle.textContent = data && data.reference_number
-            ? ('Edit budget — ' + data.reference_number + ' (#' + data.id + ')')
-            : ('Edit budget — Transaction #' + (data && data.id ? data.id : (txIdField.value || '')));
+        formTitle.textContent = source.reference_number
+            ? ('Edit budget — ' + source.reference_number + ' (#' + (source.id || txIdField.value || '') + ')')
+            : ('Edit budget — Transaction #' + (source.id ? source.id : (txIdField.value || '')));
         updateModeBadge('edit');
         if (addLineBtn) addLineBtn.style.display = 'none';
         if (resetLinesBtn) resetLinesBtn.style.display = 'none';
         if (saveBtn) saveBtn.style.display = '';
         if (cancelBtn2) cancelBtn2.style.display = '';
-        // Lines remain disabled (view-style)
-        linesBody.querySelectorAll('tr').forEach(row => {
-            row.querySelectorAll('select, input').forEach(el => {
-                el.disabled = true;
-                el.classList.add('bg-body-secondary');
-            });
-            const rem = row.querySelector('.remove-line');
-            if (rem) rem.style.display = 'none';
-        });
-        setDocUploadVisible(!!canWriteLedger && isTxClearedOrReconciled(data || currentViewData));
-        renderDocumentsList((data && data.documents) || (currentViewData && currentViewData.documents) || [], false);
-        updateBudgetPeriodWarning();
-        syncBudgetSelectTooltip();
-        // Save stays off until the user actually changes budget
+        setDocUploadVisible(!!canWriteLedger && isTxClearedOrReconciled(source));
+        renderDocumentsList((source.documents) || (currentViewData && currentViewData.documents) || [], false);
         updateSaveButtonState();
         recalcTotals();
     }
@@ -6928,6 +7333,7 @@ foreach ($colDefs as $col):
         setOverrideEditPanel(false);
         setMainFieldsReadOnly(true);
         setBudgetStatusWarning(false);
+        recalcTotals();
         formTitle.textContent = data.reference_number
             ? ('Transaction ' + data.reference_number + ' (#' + data.id + ')')
             : ('Transaction #' + data.id);
@@ -7116,15 +7522,18 @@ foreach ($colDefs as $col):
         if (resetLinesBtn) resetLinesBtn.style.display = '';
         if (saveBtn) saveBtn.style.display = '';
         if (cancelBtn2) cancelBtn2.style.display = '';
-        linesBody.querySelectorAll('tr').forEach(row => {
-            row.querySelectorAll('select, input').forEach(el => {
-                el.disabled = false;
-                el.classList.remove('bg-body-secondary');
+        linesBody.innerHTML = '';
+        const editLines = (currentViewData && currentViewData.lines) || [];
+        if (editLines.length > 0) {
+            editLines.forEach(function(l) {
+                const row = createLineRow(l);
+                linesBody.appendChild(row);
+                attachLineListeners(row);
             });
-            const rem = row.querySelector('.remove-line');
-            if (rem) rem.style.display = '';
-            attachLineListeners(row);
-        });
+        } else {
+            addLine();
+            addLine();
+        }
         const canEdit = !!(currentViewData && currentViewData.is_editable);
         setDocUploadVisible(canEdit);
         renderDocumentsList((currentViewData && currentViewData.documents) || [], canEdit);
@@ -8334,11 +8743,17 @@ foreach ($colDefs as $col):
     if (dateElForSeq) {
         dateElForSeq.addEventListener('change', function() {
             refreshReferenceSuggestion();
-            // Auto-select covering active budget when still in auto mode
             applyBudgetForDate(dateElForSeq.value || '');
             updateBudgetPeriodWarning();
         });
     }
+    ['pay_to', 'description'].forEach(function(fieldId) {
+        const wrapEl = document.getElementById(fieldId);
+        if (!wrapEl) return;
+        wrapEl.addEventListener('input', function() {
+            fitWrapField(wrapEl);
+        });
+    });
     if (budgetSelect) {
         fillBudgetSelect(defaultBudgetIdToday || '');
         budgetSelect.addEventListener('change', function() {
@@ -8353,6 +8768,7 @@ foreach ($colDefs as $col):
                 // Unlock Save only when budget actually differs from the loaded value
                 updateSaveButtonState();
             }
+            refreshInheritedBudgetLines();
         });
         // Default empty form on first load (if add mode is shown)
         if (!txIdField.value) {
@@ -8468,13 +8884,13 @@ foreach ($colDefs as $col):
             }
 
             const lines = [];
+            let lineBudgetError = '';
             linesBody.querySelectorAll('tr').forEach(row => {
-                const accSel = row.querySelector('.line-account');
-                const acc = accSel?.value;
+                const accSel = row.querySelector('select.line-account');
+                const acc = lineAccountId(row);
                 const { amount: amt, type: lineType } = getLineAmountAndType(row);
                 if (!acc || !amt || (lineType !== 'debit' && lineType !== 'credit')) return;
 
-                // Prefer dataset filled by syncLineCategoryLabels; fall back to selected option.
                 const opt = accSel && accSel.selectedOptions ? accSel.selectedOptions[0] : null;
                 const natId = row.dataset.naturalId
                     || (opt && opt.dataset.naturalId)
@@ -8482,17 +8898,31 @@ foreach ($colDefs as $col):
                 const funId = row.dataset.functionalId
                     || (opt && opt.dataset.functionalId)
                     || '';
-
-                lines.push({
+                const budgetPick = resolvedLineBudget(row);
+                if (budgetPick.error && !lineBudgetError) {
+                    lineBudgetError = budgetPick.error;
+                }
+                const noteEl = row.querySelector('input.line-note');
+                const note = noteEl
+                    ? String(noteEl.value || '').trim().slice(0, 255)
+                    : String(row.dataset.note || '').trim().slice(0, 255);
+                const line = {
                     account_id: acc,
-                    fund_id: row.querySelector('.line-fund')?.value || '',
+                    fund_id: row.querySelector('select.line-fund')?.value || row.dataset.fundId || '',
                     natural_category_id: natId,
                     functional_category_id: funId,
+                    budget_line_id: budgetPick.lineId,
                     amount: amt,
                     type: lineType,
-                    description: String(row.querySelector('.line-note')?.value || '').trim().slice(0, 255)
-                });
+                    description: note
+                };
+                if (row.dataset.lineId) line.id = row.dataset.lineId;
+                lines.push(line);
             });
+            if (lineBudgetError) {
+                showToast(lineBudgetError, 'warning');
+                return;
+            }
 
             if (!budgetOnlyEditMode && lines.length < 2) {
                 showToast('Every transaction must have at least 2 lines.', 'warning');
@@ -9882,9 +10312,8 @@ foreach ($colDefs as $col):
             addLine();
             addLine();
         }
-        // Budget follows date unless the imported lines look like a deposit
-        budgetAutoMode = true;
-        applyBudgetForDate(data.transaction_date || '', { force: true });
+        budgetAutoMode = false;
+        fitHeaderWrapFields();
         recalcTotals();
         if (form) form.setAttribute('data-dirty', '1');
 
@@ -10599,8 +11028,97 @@ foreach ($colDefs as $col):
         disposeActive: disposeLedgerPage
     };
 
+    /**
+     * Interior column borders on the lines grid. A drag gives width to one
+     * column by taking it from the next. The table stays the modal width.
+     * Widths stay in memory for this page only. Nothing is stored.
+     */
+    const TX_LINE_COL_MIN_PX = 20;
+    function wireTxLineColumnResize() {
+        const table = document.getElementById('txLinesTable');
+        if (!table || table.dataset.colResize === '1') return;
+        const headerRow = table.querySelector('thead tr');
+        if (!headerRow) return;
+        table.dataset.colResize = '1';
+        const ths = Array.from(headerRow.children);
+        ths.forEach((th, index) => {
+            if (index >= ths.length - 1) return;
+            const handle = document.createElement('span');
+            handle.className = 'tx-col-resize';
+            handle.dataset.colIndex = String(index);
+            handle.setAttribute('role', 'separator');
+            handle.setAttribute('aria-orientation', 'vertical');
+            handle.title = 'Drag to resize this column';
+            handle.addEventListener('pointerdown', onTxLineColResizeDown);
+            th.appendChild(handle);
+        });
+    }
+    function txLineHeaderCells() {
+        const table = document.getElementById('txLinesTable');
+        if (!table) return [];
+        const row = table.querySelector('thead tr');
+        return row ? Array.from(row.children) : [];
+    }
+    function applyTxLineColShares(widths) {
+        const table = document.getElementById('txLinesTable');
+        const cols = table ? Array.from(table.querySelectorAll('colgroup col')) : [];
+        if (!table || cols.length !== widths.length) return;
+        const sum = widths.reduce((total, w) => total + w, 0);
+        if (!(sum > 0)) return;
+        cols.forEach((col, i) => {
+            col.style.width = ((widths[i] / sum) * 100) + '%';
+        });
+        table.style.width = '100%';
+        table.style.maxWidth = '100%';
+        table.style.minWidth = '0';
+    }
+    function onTxLineColResizeDown(ev) {
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        const handle = ev.currentTarget;
+        const index = Number(handle.dataset.colIndex);
+        const ths = txLineHeaderCells();
+        if (!Number.isInteger(index) || index < 0 || index >= ths.length - 1) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const widths = ths.map(th => th.getBoundingClientRect().width);
+        const startX = ev.clientX;
+        const startLeft = widths[index];
+        const startRight = widths[index + 1];
+        const pair = startLeft + startRight;
+        handle.classList.add('is-active');
+        document.body.classList.add('tx-line-col-resize');
+        try { handle.setPointerCapture(ev.pointerId); } catch (err) { /* pointer already released */ }
+        const move = (e) => {
+            if (e.cancelable) e.preventDefault();
+            let left = startLeft + (e.clientX - startX);
+            let right = pair - left;
+            if (left < TX_LINE_COL_MIN_PX) {
+                left = TX_LINE_COL_MIN_PX;
+                right = pair - left;
+            }
+            if (right < TX_LINE_COL_MIN_PX) {
+                right = TX_LINE_COL_MIN_PX;
+                left = pair - right;
+            }
+            widths[index] = left;
+            widths[index + 1] = right;
+            applyTxLineColShares(widths);
+        };
+        const end = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            handle.classList.remove('is-active');
+            document.body.classList.remove('tx-line-col-resize');
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
+    }
+
     // Initial state
     wireLedgerActionsFlyout();
+    wireTxLineColumnResize();
     updateButtonStates();
     showBlankForm();
     wireLedgerFiltersAndSort();

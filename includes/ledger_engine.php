@@ -1027,7 +1027,7 @@ function ledgerDescribeTransactionUpdate(
             if ($id <= 0) {
                 return '—';
             }
-            $st = $db->prepare('SELECT fiscal_year, name FROM budgets WHERE id = ? LIMIT 1');
+            $st = $db->prepare('SELECT name FROM budgets WHERE id = ? LIMIT 1');
             $st->bind_param('i', $id);
             $st->execute();
             $b = $st->get_result()->fetch_assoc();
@@ -1035,7 +1035,8 @@ function ledgerDescribeTransactionUpdate(
             if (!$b) {
                 return 'Budget #' . $id;
             }
-            return ((int)$b['fiscal_year']) . ' - ' . $b['name'];
+            $name = trim((string)$b['name']);
+            return $name !== '' ? $name : ('Budget #' . $id);
         };
         $changes[] = 'Budget changed from "' . $budgetLabel($db, $oldBudgetId)
             . '" to "' . $budgetLabel($db, $newBudgetId) . '".';
@@ -1068,15 +1069,22 @@ function ledgerDescribeTransactionUpdate(
         $key = $lineKey($aid, $fid, $type);
         $amt = (float)($ol['amount'] ?? 0);
         if (!isset($oldMap[$key])) {
-            $oldMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0, 'notes' => []];
+            $oldMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0, 'notes' => [], 'budget_line_ids' => []];
         }
         $oldMap[$key]['amount'] += $amt;
         $oldMap[$key]['notes'][] = ledgerLineNoteFromRow($ol);
+        $oldMap[$key]['budget_line_ids'][] = (int)($ol['budget_line_id'] ?? 0);
     }
 
     $newMap = [];
     $debits = 0.0;
     $credits = 0.0;
+    $compareBudgetLines = false;
+    foreach ($newLines as $nl) {
+        if (is_array($nl) && (array_key_exists('budget_line_id', $nl) || array_key_exists('blid', $nl))) {
+            $compareBudgetLines = true;
+        }
+    }
     foreach ($newLines as $nl) {
         $aid = (int)($nl['aid'] ?? $nl['account_id'] ?? 0);
         $fid = $nl['fid'] ?? $nl['fund_id'] ?? null;
@@ -1087,10 +1095,14 @@ function ledgerDescribeTransactionUpdate(
         }
         $key = $lineKey($aid, $fid, $type);
         if (!isset($newMap[$key])) {
-            $newMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0, 'notes' => []];
+            $newMap[$key] = ['aid' => $aid, 'fid' => $fid, 'type' => $type, 'amount' => 0.0, 'notes' => [], 'budget_line_ids' => []];
         }
         $newMap[$key]['amount'] += $amt;
         $newMap[$key]['notes'][] = ledgerLineNoteFromRow($nl);
+        if ($compareBudgetLines) {
+            $postedBl = $nl['budget_line_id'] ?? $nl['blid'] ?? 0;
+            $newMap[$key]['budget_line_ids'][] = (int)$postedBl;
+        }
         if ($type === 'credit') {
             $credits += $amt;
         } else {
@@ -1098,6 +1110,9 @@ function ledgerDescribeTransactionUpdate(
         }
     }
 
+    if ($compareBudgetLines) {
+        require_once __DIR__ . '/budget_utils.php';
+    }
     foreach ($newMap as $key => $nl) {
         $label = ledgerLineAuditLabel($nl['aid'], $nl['fid'], $names);
         $newAmt = $nl['amount'];
@@ -1136,6 +1151,26 @@ function ledgerDescribeTransactionUpdate(
             );
             if ($msg !== null) {
                 $changes[] = $msg;
+            }
+        }
+        if ($compareBudgetLines) {
+            $oldIds = $oldMap[$key]['budget_line_ids'] ?? [];
+            $newIds = $nl['budget_line_ids'] ?? [];
+            sort($oldIds);
+            sort($newIds);
+            if ($oldIds !== $newIds) {
+                $fmtIds = static function (array $ids) use ($db): string {
+                    if ($ids === []) {
+                        return 'none';
+                    }
+                    $labels = [];
+                    foreach ($ids as $id) {
+                        $labels[] = budgetLineAssignmentLabel($db, (int)$id);
+                    }
+                    return implode(', ', $labels);
+                };
+                $changes[] = 'Budget on ' . $label . ' changed from "'
+                    . $fmtIds($oldIds) . '" to "' . $fmtIds($newIds) . '".';
             }
         }
         unset($oldMap[$key]);
@@ -1372,8 +1407,8 @@ function ledgerReplaceLines(mysqli $db, int $transactionId, array $lines): void 
     $ins = $db->prepare(
         'INSERT INTO transaction_lines (
             transaction_detail_id, account_id, fund_id, amount, type,
-            natural_category_id, functional_category_id, description
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            natural_category_id, functional_category_id, description, budget_line_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     foreach ($lines as $line) {
@@ -1381,8 +1416,10 @@ function ledgerReplaceLines(mysqli $db, int $transactionId, array $lines): void 
         $naturalId = $line['natural_category_id'] ?? null;
         $functionalId = $line['functional_category_id'] ?? null;
         $description = ledgerLineNoteFromRow($line);
+        $budgetLineId = isset($line['budget_line_id']) ? (int)$line['budget_line_id'] : 0;
+        $budgetLineParam = $budgetLineId > 0 ? (string)$budgetLineId : null;
         $ins->bind_param(
-            'iiidsiis',
+            'iiidsiiss',
             $transactionId,
             $line['account_id'],
             $fundId,
@@ -1390,7 +1427,8 @@ function ledgerReplaceLines(mysqli $db, int $transactionId, array $lines): void 
             $line['type'],
             $naturalId,
             $functionalId,
-            $description
+            $description,
+            $budgetLineParam
         );
         $ins->execute();
     }
@@ -1491,6 +1529,143 @@ function ledgerApplyOverrideHeaderUpdate(
     $ok = $stmt->execute();
     $stmt->close();
     return $ok;
+}
+
+/**
+ * Cleared/reconciled budget edit. Updates budget_line_id on the existing lines
+ * and leaves the header, amounts, accounts, funds, notes, status, and attachments.
+ *
+ * @param list<array<string,mixed>> $postedLines Each item needs id and budget_line_id.
+ * @return array{ok:bool,error:?string,summary:string}
+ */
+function ledgerSaveLockedLineBudgets(
+    mysqli $db,
+    array $lockedTx,
+    array $postedLines,
+    ?int $actorUserId,
+    string $actorUsername
+): array {
+    require_once __DIR__ . '/budget_utils.php';
+    $fail = static function (string $msg): array {
+        return ['ok' => false, 'error' => $msg, 'summary' => ''];
+    };
+    $txId = (int)($lockedTx['id'] ?? 0);
+    $existingById = [];
+    foreach ($lockedTx['lines'] ?? [] as $ol) {
+        $lid = (int)($ol['id'] ?? 0);
+        if ($lid > 0) {
+            $existingById[$lid] = $ol;
+        }
+    }
+    if ($txId <= 0 || $existingById === [] || count($postedLines) !== count($existingById)) {
+        return $fail('This transaction is read-only (cleared or reconciled). Only the budget may be changed.');
+    }
+
+    $updates = [];
+    $seen = [];
+    $anyChange = false;
+    foreach ($postedLines as $pl) {
+        if (!is_array($pl)) {
+            return $fail('This transaction is read-only (cleared or reconciled). Only the budget may be changed.');
+        }
+        $lid = (int)($pl['id'] ?? 0);
+        if ($lid <= 0 || !isset($existingById[$lid]) || isset($seen[$lid])) {
+            return $fail('This transaction is read-only (cleared or reconciled). Only the budget may be changed.');
+        }
+        $seen[$lid] = true;
+        $ol = $existingById[$lid];
+        $resolved = budgetResolveTransactionLineAssignment(
+            $db,
+            (int)($pl['budget_line_id'] ?? 0),
+            (int)($ol['account_id'] ?? 0)
+        );
+        if (empty($resolved['ok'])) {
+            return $fail($resolved['error'] ?? 'One line has an invalid budget.');
+        }
+        $newBl = $resolved['budget_line_id'];
+        $newInt = $newBl !== null ? (int)$newBl : 0;
+        $oldInt = !empty($ol['budget_line_id']) ? (int)$ol['budget_line_id'] : 0;
+        if ($newInt !== $oldInt) {
+            $anyChange = true;
+        }
+        $updates[$lid] = $newBl;
+    }
+    if (count($seen) !== count($existingById)) {
+        return $fail('This transaction is read-only (cleared or reconciled). Only the budget may be changed.');
+    }
+    if (!$anyChange) {
+        return $fail('This transaction is read-only (cleared or reconciled). Only the budget may be changed.');
+    }
+
+    $db->begin_transaction();
+    try {
+        $upd = $db->prepare(
+            'UPDATE transaction_lines SET budget_line_id = ? WHERE id = ? AND transaction_detail_id = ?'
+        );
+        if (!$upd) {
+            throw new RuntimeException('Unable to update line budgets.');
+        }
+        foreach ($updates as $lid => $newBl) {
+            $param = ($newBl !== null && (int)$newBl > 0) ? (string)(int)$newBl : null;
+            $lineId = (int)$lid;
+            $upd->bind_param('sii', $param, $lineId, $txId);
+            if (!$upd->execute()) {
+                throw new RuntimeException($upd->error !== '' ? $upd->error : 'Unable to update line budgets.');
+            }
+        }
+        $upd->close();
+        $db->commit();
+    } catch (Throwable $e) {
+        try {
+            $db->rollback();
+        } catch (Throwable $ignored) {
+        }
+        return $fail('Budget update failed: ' . $e->getMessage());
+    }
+
+    $describeLines = [];
+    foreach ($lockedTx['lines'] ?? [] as $ol) {
+        $lid = (int)($ol['id'] ?? 0);
+        $describeLines[] = [
+            'aid' => (int)($ol['account_id'] ?? 0),
+            'fid' => $ol['fund_id'] ?? null,
+            'am' => (float)($ol['amount'] ?? 0),
+            't' => (string)($ol['type'] ?? 'debit'),
+            'nid' => $ol['natural_category_id'] ?? null,
+            'fid2' => $ol['functional_category_id'] ?? null,
+            'description' => ledgerLineNoteFromRow($ol),
+            'budget_line_id' => $updates[$lid] ?? null,
+        ];
+    }
+    $describe = ledgerDescribeTransactionUpdate(
+        $db,
+        $lockedTx,
+        [
+            'transaction_date' => (string)($lockedTx['transaction_date'] ?? ''),
+            'pay_to' => (string)($lockedTx['pay_to'] ?? ''),
+            'reference_number' => (string)($lockedTx['reference_number'] ?? ''),
+            'check_number' => (string)($lockedTx['check_number'] ?? ''),
+            'description' => (string)($lockedTx['description'] ?? ''),
+            'budget_id' => !empty($lockedTx['budget_id']) ? (int)$lockedTx['budget_id'] : 0,
+        ],
+        $describeLines
+    );
+    ledgerLogEvent(
+        $db,
+        $txId,
+        'updated',
+        $actorUserId,
+        $actorUsername !== '' ? $actorUsername : 'system',
+        $describe['summary'] !== ''
+            ? $describe['summary']
+            : 'Budget updated on cleared/reconciled transaction.',
+        [
+            'budget_only' => true,
+            'status' => (string)($lockedTx['status'] ?? ''),
+            'changes' => $describe['changes'],
+        ]
+    );
+    return ['ok' => true, 'error' => null, 'summary' => (string)($describe['summary'] ?? '')];
 }
 
 /**
@@ -1997,7 +2172,8 @@ function ledgerTransactionDebitTotal(array $lines): float {
 function ledgerFetchLines(mysqli $db, int $transactionId): array {
     $lines = [];
     $stmt = $db->prepare(
-        'SELECT id, account_id, fund_id, amount, type, natural_category_id, functional_category_id, description
+        'SELECT id, account_id, fund_id, amount, type, natural_category_id, functional_category_id,
+                description, budget_line_id
          FROM transaction_lines WHERE transaction_detail_id = ? ORDER BY id ASC'
     );
     $stmt->bind_param('i', $transactionId);
