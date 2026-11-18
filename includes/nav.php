@@ -471,6 +471,29 @@ function temper_render_nav_links(
                         </ul>
                     </div>
                     <?php endif; ?>
+                    <div class="sidebar-theme-switch w-100 mb-2" role="group" aria-label="Color theme">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1 sidebar-theme-btn"
+                                data-theme-choice="light"
+                                aria-pressed="false"
+                                title="Light theme">
+                            <i class="bi bi-sun" aria-hidden="true"></i>
+                            <span class="sidebar-btn-label">Light</span>
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1 sidebar-theme-btn"
+                                data-theme-choice="dark"
+                                aria-pressed="false"
+                                title="Dark theme">
+                            <i class="bi bi-moon" aria-hidden="true"></i>
+                            <span class="sidebar-btn-label">Dark</span>
+                        </button>
+                    </div>
+                    <script>
+                    if (window.__temperTheme && typeof window.__temperTheme.syncToggle === 'function') {
+                        window.__temperTheme.syncToggle();
+                    }
+                    </script>
                     <a href="javascript:void(0)" onclick="loadPage('profile')" class="btn btn-sm w-100 btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mb-2 sidebar-action-btn" data-nav-page="profile" title="My Profile">
                         <i class="bi bi-person-circle" aria-hidden="true"></i>
                         <span class="sidebar-btn-label">My Profile</span>

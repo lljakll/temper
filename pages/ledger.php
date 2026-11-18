@@ -2927,7 +2927,7 @@ foreach ($colDefs as $col):
                     </div>
 
                     <div class="mt-2">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
+                        <div class="d-flex justify-content-between align-items-center mb-1 tx-lines-head">
                             <h6 class="mb-0 small">Lines <small class="text-muted">(min 2 required)</small></h6>
                             <button type="button" id="addLineBtn" class="btn btn-sm btn-outline-primary" title="Add a split line (Ctrl+L)">+ Add Line</button>
                         </div>
@@ -3128,12 +3128,198 @@ foreach ($colDefs as $col):
                                 cursor: col-resize !important;
                                 user-select: none !important;
                             }
+
+                            /*
+                             * Phone: one column. Header fields and each line stack.
+                             * Desktop (768px and up) keeps the percentage grid above.
+                             */
+                            @media (max-width: 767.98px) {
+                                #txFormModal .modal-dialog {
+                                    margin: 0;
+                                    width: 100%;
+                                    max-width: 100%;
+                                    height: 100%;
+                                    max-height: 100%;
+                                }
+                                #txFormModal .modal-content {
+                                    height: 100%;
+                                    max-height: 100dvh;
+                                    border: 0;
+                                    border-radius: 0;
+                                }
+                                #txFormModal .modal-body {
+                                    overflow-x: hidden;
+                                }
+                                #txHeaderFields > [class*="col-"] {
+                                    flex: 0 0 100%;
+                                    width: 100%;
+                                    max-width: 100%;
+                                }
+                                #txFormModal .tx-date-col,
+                                #txFormModal #transaction_date,
+                                #txFormModal .tx-ref-col,
+                                #txFormModal #reference_number,
+                                #txFormModal .tx-payto-col,
+                                #txFormModal #pay_to,
+                                #txFormModal #check_number,
+                                #txFormModal #description {
+                                    min-width: 0 !important;
+                                    width: 100%;
+                                    max-width: 100%;
+                                }
+                                #txFormModal #txHeaderFields .form-control,
+                                #txFormModal #txHeaderFields .form-select,
+                                #txFormModal #txOverrideEditPanel .form-control,
+                                #txFormModal #txOverrideEditPanel .form-select {
+                                    min-height: 2.75rem;
+                                    font-size: 1rem;
+                                }
+                                #txFormModal .tx-read-value {
+                                    font-size: 1rem;
+                                    min-height: 2.25rem;
+                                    padding: 0.35rem 0;
+                                }
+                                #txFormModal #referenceHelpBtn {
+                                    min-width: 2.25rem;
+                                    min-height: 2.25rem;
+                                }
+                                #txFormModal .tx-lines-head {
+                                    flex-direction: column;
+                                    align-items: stretch;
+                                    gap: 0.5rem;
+                                }
+                                #txFormModal #addLineBtn {
+                                    width: 100%;
+                                    min-height: 2.75rem;
+                                }
+                                #txFormModal .tx-lines-wrap {
+                                    overflow: visible;
+                                }
+                                #txLinesTable,
+                                #txLinesTable tbody {
+                                    display: block;
+                                    width: 100% !important;
+                                    max-width: 100% !important;
+                                    min-width: 0 !important;
+                                    table-layout: auto;
+                                }
+                                #txLinesTable colgroup,
+                                #txLinesTable thead {
+                                    display: none;
+                                }
+                                #txLinesTable tbody tr {
+                                    display: block;
+                                    width: 100%;
+                                    margin: 0 0 0.85rem;
+                                    padding: 0.85rem 0.9rem;
+                                    border: 1px solid var(--bs-border-color);
+                                    border-radius: 0.5rem;
+                                    background: var(--bs-tertiary-bg);
+                                }
+                                #txLinesTable tbody td {
+                                    display: block;
+                                    width: 100% !important;
+                                    max-width: 100% !important;
+                                    min-width: 0 !important;
+                                    padding: 0 0 0.7rem !important;
+                                    border: 0 !important;
+                                    background: transparent !important;
+                                    box-shadow: none !important;
+                                    overflow: visible !important;
+                                    white-space: normal;
+                                }
+                                #txLinesTable tbody td:last-child {
+                                    padding-bottom: 0 !important;
+                                }
+                                #txLinesTable tbody td::before {
+                                    content: attr(data-label);
+                                    display: block;
+                                    margin-bottom: 0.25rem;
+                                    font-size: 0.75rem;
+                                    font-weight: 600;
+                                    color: var(--bs-secondary-color);
+                                }
+                                #txLinesTable tbody td.tx-remove-cell::before,
+                                #txLinesTable tbody td:not([data-label])::before {
+                                    content: none;
+                                    display: none;
+                                }
+                                #txLinesTable tbody td.tx-remove-cell:not(:has(button)) {
+                                    display: none;
+                                }
+                                #txLinesTable td:has(.line-debit-amt)::before,
+                                #txLinesTable td:has(.line-debit-text)::before {
+                                    color: var(--bs-primary);
+                                }
+                                #txLinesTable td:has(.line-credit-amt)::before,
+                                #txLinesTable td:has(.line-credit-text)::before {
+                                    color: var(--bs-success);
+                                }
+                                #txLinesTable .form-control,
+                                #txLinesTable .form-select,
+                                #txLinesTable .tx-fund-face {
+                                    width: 100%;
+                                    max-width: 100%;
+                                    min-height: 2.75rem;
+                                    font-size: 1rem;
+                                }
+                                #txLinesTable input.line-amount {
+                                    min-height: 3rem;
+                                    font-size: 1.25rem;
+                                    padding-top: 0.5rem;
+                                    padding-bottom: 0.5rem;
+                                }
+                                #txLinesTable select.line-budget-line {
+                                    padding-left: 0.75rem;
+                                    padding-right: 2.25rem;
+                                    background-position: right 0.75rem center;
+                                    background-size: 16px 12px;
+                                }
+                                #txLinesTable .line-read {
+                                    min-height: 2.25rem;
+                                    padding: 0.35rem 0;
+                                    font-size: 1rem;
+                                }
+                                #txLinesTable .line-debit-text,
+                                #txLinesTable .line-credit-text {
+                                    font-size: 1.2rem;
+                                    font-weight: 600;
+                                }
+                                #txLinesTable .remove-line {
+                                    width: 100%;
+                                    min-height: 2.75rem;
+                                    margin-top: 0.15rem;
+                                    padding: 0.4rem 0.75rem;
+                                    font-size: 0;
+                                    line-height: 1.2;
+                                }
+                                #txLinesTable .remove-line::after {
+                                    content: 'Remove line';
+                                    font-size: 1rem;
+                                }
+                                #txFormModal .modal-footer {
+                                    flex-wrap: wrap;
+                                    gap: 0.5rem;
+                                    background: var(--bs-modal-bg, var(--bs-body-bg));
+                                    border-top: 1px solid var(--bs-border-color);
+                                    padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
+                                }
+                                #txFormModal .modal-footer .btn {
+                                    min-height: 2.75rem;
+                                    flex: 1 1 calc(50% - 0.5rem);
+                                }
+                                #txFormModal .tx-balance-mobile {
+                                    flex: 1 0 100%;
+                                    margin: 0;
+                                    padding-bottom: 0.15rem;
+                                }
+                            }
                         </style>
 
                         <p class="form-text small text-muted mb-1" style="font-size:0.7rem;">
                             Fund tags on asset accounts (Checking, cash/bank) do not affect fund balances — tag the income, expense, or net assets (WODR/WDR) line.
                         </p>
-                        <div class="d-flex flex-wrap gap-2 gap-md-3 align-items-center small">
+                        <div class="d-none d-md-flex flex-wrap gap-2 gap-md-3 align-items-center small" id="txBalanceBar">
                             <div><strong>Debits:</strong> <span id="totalDebits" class="text-primary fw-bold">$0.00</span></div>
                             <div><strong>Credits:</strong> <span id="totalCredits" class="text-success fw-bold">$0.00</span></div>
                             <div><strong>Diff:</strong> <span id="diff" class="fw-bold">$0.00</span></div>
@@ -3186,6 +3372,12 @@ foreach ($colDefs as $col):
                     </div>
                 </div>
                 <div class="modal-footer py-2 flex-wrap gap-2 sticky-bottom">
+                    <div class="tx-balance-mobile d-flex d-md-none flex-wrap gap-2 align-items-center small w-100">
+                        <div><strong>Debits:</strong> <span class="text-primary fw-bold" data-tx-mirror="totalDebits">$0.00</span></div>
+                        <div><strong>Credits:</strong> <span class="text-success fw-bold" data-tx-mirror="totalCredits">$0.00</span></div>
+                        <div><strong>Diff:</strong> <span class="fw-bold" data-tx-mirror="diff">$0.00</span></div>
+                        <div class="text-muted" data-tx-mirror="balanceStatus"></div>
+                    </div>
                     <?php if ($canDeleteLedger): ?>
                     <button type="button" id="deleteFromEditBtn" class="btn btn-sm btn-outline-danger d-none me-auto"
                             title="Delete this pending transaction">
@@ -5491,6 +5683,18 @@ foreach ($colDefs as $col):
         }
     }
 
+    function paintTxTotal(id, text, className) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = text;
+            if (className != null) el.className = className;
+        }
+        document.querySelectorAll('[data-tx-mirror="' + id + '"]').forEach(node => {
+            node.textContent = text;
+            if (className != null) node.className = className;
+        });
+    }
+
     function recalcTotals() {
         let deb = 0, cred = 0;
         linesBody.querySelectorAll('tr').forEach(row => {
@@ -5501,20 +5705,24 @@ foreach ($colDefs as $col):
         });
         const diff = deb - cred;
 
-        document.getElementById('totalDebits').textContent = formatLineAmountDisplay(deb) || '$0.00';
-        document.getElementById('totalCredits').textContent = formatLineAmountDisplay(cred) || '$0.00';
-        const dEl = document.getElementById('diff');
+        paintTxTotal('totalDebits', formatLineAmountDisplay(deb) || '$0.00');
+        paintTxTotal('totalCredits', formatLineAmountDisplay(cred) || '$0.00');
         const diffAbs = Math.abs(diff);
-        dEl.textContent = (diff < -0.005 ? '-' : '') + (formatLineAmountDisplay(diffAbs) || '$0.00');
-        dEl.className = (Math.abs(diff) < 0.005) ? 'fw-bold text-success' : 'fw-bold text-danger';
+        paintTxTotal(
+            'diff',
+            (diff < -0.005 ? '-' : '') + (formatLineAmountDisplay(diffAbs) || '$0.00'),
+            (Math.abs(diff) < 0.005) ? 'fw-bold text-success' : 'fw-bold text-danger'
+        );
 
         const lineCount = linesBody.querySelectorAll('tr').length;
         const balanced = Math.abs(diff) < 0.005 && lineCount >= 2;
         updateSaveButtonState(balanced);
 
-        const status = document.getElementById('balanceStatus');
-        status.textContent = balanced ? '✓ Balanced' : (lineCount ? '⚠ Not balanced' : 'Add at least 2 lines');
-        status.className = balanced ? 'text-success' : 'text-danger';
+        paintTxTotal(
+            'balanceStatus',
+            balanced ? '✓ Balanced' : (lineCount ? '⚠ Not balanced' : 'Add at least 2 lines'),
+            balanced ? 'text-success' : 'text-danger'
+        );
         syncAutoBudgetForDeposit();
     }
 
@@ -5733,7 +5941,7 @@ foreach ($colDefs as $col):
             ? '<td class="tx-budget-cell" data-label="Budget line"><select class="form-select form-select-sm line-budget-line"><option value="">— None —</option></select></td>'
             : '<td class="tx-budget-cell" data-label="Budget line"><div class="line-read line-budget-text"></div></td>';
         const removeCell = showControls
-            ? '<td class="tx-remove-cell" data-label=""><button type="button" class="btn btn-sm btn-outline-danger remove-line">×</button></td>'
+            ? '<td class="tx-remove-cell" data-label=""><button type="button" class="btn btn-sm btn-outline-danger remove-line" aria-label="Remove line">×</button></td>'
             : '<td class="tx-remove-cell" data-label=""></td>';
         if (showControls) {
             row.innerHTML = `

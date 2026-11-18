@@ -19,6 +19,9 @@ There is **no** automatic schema detection or apply UI in the application.
 ## Table of Contents
 
 - [Conventions](#conventions)
+- [v0.985](#v0985)
+- [v0.984](#v0984)
+- [v0.983](#v0983)
 - [v0.982](#v0982)
 - [v0.981](#v0981)
 - [v0.980](#v0980)
@@ -189,6 +192,79 @@ After every **5–10** schema patches (or at a natural milestone such as beta), 
 `php setup_db.php` builds the **0.944 baseline** schema from `setup-database/*.php` (including `accounts.account_type` and `users.preferences`) and seeds `app_version` history **through 0.944** (complete alpha + beta chain included).  
 No demo accounts, budgets, or transactions are inserted — only lookup/reference data (roles, natural/functional categories, structural funds) and default users.  
 Do **not** replay pre-0.944 patches (including `updates/archive/`) after a current setup; they are already embodied in the setup scripts. Releases after 0.944 require `updates/*.sql` patches listed under those versions. SCHEMA is current when `setup_db.php` matches this 0.944 milestone.
+
+---
+
+## v0.985
+
+**Sidebar light and dark switch** — 2026-11-18
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261118_0985_theme_toggle.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.985
+
+- The sidebar, next to My Profile, has a Light / Dark control on every page.
+- Light sets `data-bs-theme="light"` and uses the existing `temper-theme.css` palette. Dark sets `data-bs-theme="dark"`.
+- The choice is stored in `localStorage` (`temper-theme`) and kept across a reload. A visitor who has never chosen stays on dark.
+- Theme colors, page layout, and ledger behavior are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.985**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.984 | `updates/20261118_0985_theme_toggle.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.984, then this patch after `php setup_db.php` |
+
+---
+
+## v0.984
+
+**Transaction form stacks on a phone** — 2026-11-18
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261118_0984_mobile_transaction_form.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.984
+
+- Below 768px the transaction form is one column. Date, Ref #, Pay To, Check #, and Description are full width, in that order, with a taller tap target.
+- Each line is a card. Account, Fund, Budget line, Note, Debit, and Credit stack. Debit and Credit are full width. Add Line and Remove line are full-width buttons. View mode uses the same cards, read-only.
+- Save, Cancel, and the debit, credit, and difference totals stay in the footer.
+- At 768px and wider the lines table keeps its percentage columns. Validation, budget rules, fund rules, and attachments are unchanged.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.984**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.983 | `updates/20261118_0984_mobile_transaction_form.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.983, then this patch after `php setup_db.php` |
+
+---
+
+## v0.983
+
+**Light mode theme for the whole application** — 2026-11-18
+
+> No schema update required for this release.
+> **Patch file (history row):** `updates/20261118_0983_light_mode_theme.sql`
+> **Schema version:** `20261029_0976_line_budget_assignment` *(carried forward)*
+> **Min app version:** 0.983
+
+- One stylesheet, `assets/css/temper-theme.css`, loads from the shared header after Bootstrap. Login and the access-denied page load the same file.
+- Light mode uses a warm off-white page, off-black text, and a distinct muted color for secondary text. Primary and danger colors are shared by buttons, links, and form focus.
+- Tables use a quiet header, a light gridline, and a subtle row hover. Cards and modals share one surface color, border, and radius.
+- Dark mode is unchanged. It still uses Bootstrap’s dark palette when `data-bs-theme` is `dark`.
+- No layout, ledger, budget, or attachment changes.
+- Codebase `APP_VERSION` / `TEMPER_DEFAULT_APP_VERSION` = **0.983**. Setup baseline remains **0.944**.
+
+**Upgrade path**
+
+| From | Apply |
+|------|--------|
+| v0.982 | `updates/20261118_0983_light_mode_theme.sql` |
+| Fresh setup (0.944) | Apply 0.945–0.982, then this patch after `php setup_db.php` |
 
 ---
 

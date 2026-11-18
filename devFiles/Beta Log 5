@@ -364,3 +364,552 @@ Versioning & Schema Mandate (required):
 - If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
 - Record the new app version + required schema version in the app_version table of the current working database.
 - Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#50 - 2026-10-09 - Attachments - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Make Ghostscript PDF optimize work on a headless server with no X display.
+
+Requirements:
+1. Every gs invocation must set -sDEVICE=pdfwrite and must not rely on the default device. Also pass -dSAFER -dBATCH -dNOPAUSE -dNOPROMPT.
+2. Do not use a display device. Unset or ignore GS_DEVICE and DISPLAY for the gs process if the environment points at x11.
+3. Ebook and screen profiles stay as already implemented. Store the smaller result when it beats the original. If gs fails, store the original, do not fail the upload, and say compression failed.
+4. Do not require an X server or a package that only exists to open a window.
+5. Do not change image optimize or the scan flow except that scan PDFs use this same gs call.
+
+First find the current gs command, then make it headless-safe.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#51 - 2026-10-09 - Attachments / Scan - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Replace the current scan flow with a Google Drive-style capture flow.
+
+Requirements:
+1. Scan opens the camera first. Show a corner overlay when a page is detected. A shutter button always takes the picture. Auto-capture when the page is steady is optional.
+2. After capture, one review screen for that page. User can drag corners, free-rotate, and pick a filter chip: Original, Grayscale, or Black & white. No separate Adjust and Enhance screens.
+3. Accepted pages appear as thumbnails on that same screen. Add page returns to the camera. Tap a thumbnail to review that page again. User can delete a page and reorder pages.
+4. Retake replaces the page being reviewed. Cancel discards pages not yet saved.
+5. Save asks for a document name, builds one PDF, and sends it through the existing upload and optimize path, including original-vs-saved size. No separate storage path.
+6. A normal file-picker upload is not run through this scanner and is not converted to PDF.
+7. Drive-quality shadow removal is not required.
+8. Cleared/reconciled: new scan may be added only if append-only add already exists. Do not replace or delete locked attachments.
+9. Keep the step reusable later for workflow receipts.
+
+First explore the current scan UI, then replace it with this flow.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#52 - 2026-10-12 - Attachments - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Stop discarding a successful Ghostscript optimize when PHP reports exit -1.
+
+Requirements:
+1. The app log shows pdf ebook/screen "failed" with exit=-1 while bytes_out is smaller than bytes_in (example: 2402451 in, 593304 screen out). That output must be kept.
+2. Treat a profile as success when the output file exists, is a valid PDF, and is smaller than the input, even if the process exit code is -1.
+3. Fix the process call so exit status is read correctly: close all pipes before proc_close, or use an equivalent that returns the real gs status. Log gs stderr on a real failure.
+4. Keep the existing rule: store the smaller of ebook and screen when it beats the original; otherwise store the original. Show original vs saved size.
+5. If gs is not on the web user's PATH, log that clearly (gs_missing) and store the original. Do not label a produced smaller file as failed.
+6. Do not fail the upload because optimize failed. Do not change scan or image optimize except that scan PDFs use this same PDF path.
+
+First find the gs invoke and the exit=-1 check, then keep a valid smaller output.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#53 - 2026-10-17 - Attachments / Scan - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Fix Scan saying "This browser has no camera" on mobile when a camera exists and permission is allowed.
+
+Requirements:
+1. Do not decide there is no camera from enumerateDevices() before permission is granted. On mobile that list is empty until the user allows the camera.
+2. Request the camera with getUserMedia, preferring the rear camera (facingMode: environment). Let the browser show its permission prompt.
+3. Distinguish the failures:
+   - Permission denied: say camera permission was denied, and offer Choose a photo.
+   - No video device after a real request: say no camera found, and offer Choose a photo.
+   - Insecure context (not HTTPS and not localhost): say the camera needs a secure page (HTTPS), and offer Choose a photo.
+4. Desktop with no webcam may still show Choose a photo. Do not show "no camera" on a phone that has one.
+5. Do not change the review, filters, page thumbs, or the PDF upload/optimize path.
+6. Photo pick remains available on every failure path.
+
+First find where Scan decides the browser has no camera, then request the camera properly and only fall back after a real failure.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#53 - 2026-10-17 - Attachments / Scan - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Fix Scan saying "This browser has no camera" on mobile, including over HTTP where the previous scanner worked.
+
+Requirements:
+1. Do not decide there is no camera from enumerateDevices() before permission is granted.
+2. If the page is a secure context (HTTPS or localhost), request a live camera with getUserMedia, rear camera preferred, and show the corner overlay.
+3. If the page is not a secure context (plain HTTP), do not call getUserMedia and do not say there is no camera. Use a file input with capture="environment" so the phone camera app opens, the same way the previous scanner worked over HTTP. After the photo is taken, continue into the existing review screen.
+4. Permission denied on a secure page: say permission was denied, and offer Choose a photo.
+5. Choose a photo remains available on every path.
+6. Do not change review, filters, page thumbs, or the PDF upload/optimize path.
+
+First find where Scan decides there is no camera, then use live getUserMedia only in a secure context and the capture file input otherwise.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#54 - 2026-10-17 - Ledger / Attachments - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Stop dropping a scan or upload when the transaction has no reference number yet.
+
+Requirements:
+1. Upload and Scan must succeed on a transaction that has no ref #. Missing ref must not delete the file and must not block the upload.
+2. Store the file against the transaction id until a ref exists. Use a pending folder if the current layout requires a folder name.
+3. When the user saves a ref #, move those files into the normal ref folder, the same way a ref change already relocates attachments. Update the stored path.
+4. Do not delete a file added in this session just because ref was blank at upload time.
+5. Cleared/reconciled rules stay as they are. A new append-only add still does not need a ref change.
+6. Do not change optimize or the scan camera flow except that a successful scan is kept.
+
+First find where a missing ref causes the attachment to be discarded, then keep the file and relocate it when the ref is saved.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#55 - 2026-10-24 - Ledger / Status - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Admin-only temporary unlock of cleared and reconciled transactions. Default on re-lock is to restore status. A per-transaction flag can keep a new status.
+
+Requirements:
+1. System Configuration: admin-only setting, off by default, labeled as a temporary override (example: "Allow edits to cleared and reconciled"). Only Administrator can change it. Record the timestamp when it is turned on.
+2. Toggle off: current locks stand. Cleared and reconciled stay immutable, including status.
+3. Toggle on: an Administrator may open and edit a cleared or reconciled transaction, including status. Other roles stay locked.
+4. When such a transaction is placed in edit mode, write an audit entry with the original status (cleared or reconciled). Do not pre-scan or pre-log transactions that are not opened.
+5. Every save of a transaction opened under this override requires one comment. Not one comment per field. Blank comment blocks that save. Write the comment, user, active role, transaction id/ref, a summary of changes, the status being saved, and the keep-status flag value.
+6. On the edit form, only while the override is on, show a checkbox: "Keep this status when locking." Default off. If checked on any save during this unlock, re-lock must not restore that transaction's status.
+7. When an Administrator turns the toggle off: look at audit entries since the override-on timestamp. For each transaction edited under the override, if no save has the keep-status flag, set status back to the original status from the edit-mode audit entry. If any save has the flag, leave the saved status. Do not revert field changes. Do not touch transactions that were already pending. Log the re-lock action (which transactions were restored, which were kept).
+8. Do not delete or alter attachments as part of these saves or the re-lock.
+9. Do not change fund rules, posting, or optimize.
+
+First explore how clear/reconcile is locked and how status changes are audited, then add the toggle, the edit-mode status note, the per-save comment and flag, and the restore-on-lock.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#56 - 2026-10-27 - Attachments - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Read-only investigation. Confirm how a ref change can move an attachment file out from under a different transaction that still uses the old ref.
+
+Known facts:
+- File was not deleted. Oct 9 backup has storage/attachments/260026/doc_20260927_191322_8cc5ff5e.pdf. Oct 24 backup has that same stored name under storage/attachments/260126/. Transaction 961 is still ref 260026. Its document row still points at the old path. No document_deleted.
+- Same pattern: 260024 → 260124, 260025 → 260136, matching the Oct 9 ref changes on other transactions.
+- A later re-upload on 961 created a second row under 260026. The original link still fails.
+- Dropping a file named 260026.pdf into the folder does not satisfy the row. The row stores the doc_… filename.
+
+Requirements:
+1. Exploratory only. Do not change code, config, files, or database rows. Do not delete, move, or restore anything.
+2. Do not increment the application version. Do not write a schema patch. Do not update VERSION.md or the app_version table.
+3. Find the ref-change relocate path. Say whether it moves a whole ref folder, or only files whose document row belongs to the transaction being edited.
+4. Flag the bug if a relocate can move or remove a file that another transaction's document row still references.
+5. Report the exact function and how the document row's stored path is chosen. No fix in this pass.
+
+Begin now.
+
+
+#57 - 2026-10-27 - Attachments - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: On reference-number change, move only the attachments that belong to the transaction being edited.
+
+Requirements:
+1. Relocate by document row and transaction id, not by ref folder.
+2. When a transaction's ref changes, move only files whose document row is for that transaction. Update those rows' stored paths.
+3. Do not move, rename, or delete files in the old ref folder that belong to any other transaction.
+4. If the old folder is empty after the move, it may be removed. If it still has files, leave it.
+5. Duplicate ref remains a warning the user can override. Overriding must not be able to move another transaction's attachments.
+6. Write document_relocated only for the files actually moved, with from path, to path, and transaction id.
+7. Do not change upload, delete, optimize, or the clear/reconcile lock.
+
+First find the current ref-change relocate, then scope it to the edited transaction's document rows.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#58 - 2026-10-29 - Ledger / Budget - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Make budget assignment line-level. Header budget is only a default.
+
+Requirements:
+1. transaction_lines.budget_line_id is the source of truth for budget reports, remaining balance, and budget-vs-actual. A null budget_line_id means the line is not in any budget (insurance reimbursement, non-budget).
+2. transaction_details.budget_id remains a form default only. It must not drive report totals.
+3. On the add/edit transaction form, a new line inherits the header budget's matching budget line when one exists for that account. The user can change it or clear it per line.
+4. A single transaction may have lines in different budgets (cross-year reimbursement) and lines with no budget.
+5. Existing transactions: if a line has no budget_line_id and the header has a budget_id, and that budget has a line for the line's account, backfill budget_line_id from the header. Do not invent a budget line. Leave null if there is no match.
+6. Do not change fund tagging rules, clear/reconcile locks, or attachments.
+7. Reports that currently total by header budget_id must total by line budget_line_id.
+
+First explore how budget_id and budget_line_id are used in the form, save path, and reports, then move the calculations to the line and keep the header as a default.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#59 - 2026-10-29 - Ledger / Budget - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Line budget dropdowns are empty even though active budgets exist.
+
+Requirements:
+1. On the add/edit transaction form, each line's budget dropdown must list selectable budgets (or that budget's lines) when active budgets exist.
+2. Do not require the header budget to be set before a line dropdown has options.
+3. A line may pick a budget line from any active budget, not only the header default. The header budget still pre-selects a match when one exists.
+4. Clearing the line budget must remain possible (null = not in any budget).
+5. Do not change report math, fund rules, or the backfill from #58 except as needed to make the dropdown populate.
+
+First find why the line budget dropdown has no options, then populate it from active budgets.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#60 - 2026-10-29 - Ledger / Budget - Bug - Med
+
+You are working in the **Beta Thread**.
+
+Task: Stop prefixing budget names with FY## in dropdowns.
+
+Requirements:
+1. Budget dropdowns and labels must show the budget name as stored (the name the user entered). Do not prepend FY##, CY##, or any year derived from the date range.
+2. A budget named "Blue" must appear as "Blue", not "FY28 - Blue".
+3. This church uses calendar year, not fiscal year. Do not introduce FY anywhere in budget display.
+4. Do not change budget assignment, line dropdown population, or report math.
+
+First find where the FY prefix is built, then remove it.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#61 - 2026-10-29 - Ledger / Transaction form - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Make the transaction form usable. Remove the header budget. View mode is read-only text.
+
+Requirements:
+1. Remove the Budget field from the transaction header. Budget is line-level only. Do not leave a header default control.
+2. View mode must not show dropdowns or inputs. Account, Fund, Budget line, and the other line fields are plain text in View. Edit mode keeps the controls.
+3. Remove Natural and Functional from the transaction form, both View and Edit. They are not used on input. Reports and other metrics may still use the category stored on the account or line.
+4. Column priority in the lines grid: Account, Fund, Budget line, Note, Debit, and Credit. Account names must be readable. Do not truncate Account to a few characters.
+5. Pay To and Description must show the full value, wrapping if needed. Do not clip them.
+6. Widen the line controls in Edit so an account name and a budget name fit. Do not force every column to the same width.
+7. Do not change the Debits / Credits / Diff totals. $0.00 on a balanced transaction is correct.
+8. Do not change budget report math, fund rules, or the FY-prefix removal.
+
+First look at the transaction modal layout in View and Edit, then apply the width, column, and header-budget changes.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#62 - 2026-10-29 - Ledger / Budget - Bug - Med
+
+You are working in the **Beta Thread**.
+
+Task: Remove the remaining FY prefix on budget labels, and shrink the Budget line column.
+
+Requirements:
+1. Budget dropdowns must show the budget name as stored. "Blue" stays "Blue". "CY26" stays "CY26".
+2. Remove every built prefix of the form "FY 2026 —", "FY## —", or any year derived from the budget date range. Search the whole app, not only the transaction form. The screenshot still shows "FY 2026 — CY26", "FY 2028 — Blue", "FY 2027 — CY27".
+3. Shrink the Budget line column to about half its current width. Size it for a short name, about 5–10 characters. Budget names average 4–5 characters.
+4. Do not change line-level budget assignment, report math, or the removal of the header Budget field.
+
+First find every place the FY prefix is concatenated, then remove it and narrow the column.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#63 - 2026-10-29 - Ledger / Transaction form - Bug - Med
+
+You are working in the **Beta Thread**.
+
+Task: Set explicit percentage column widths on the transaction lines grid.
+
+Requirements:
+1. Widths are percentages of the lines table, not the browser window. They must hold when the modal or window is resized.
+2. Use these widths and no others:
+   - Account: 22%
+   - Fund: 18%
+   - Budget line: 8%
+   - Note: 30%
+   - Debit: 10%
+   - Credit: 10%
+   - Remove (x): 2%
+3. Fund must show the full fund name at that width. Do not ellipsize "General Operating Fund".
+4. Budget line is a short control. Tighten dropdown padding so "CY27" or "None" fits in 8%. Do not let the control expand past 8%.
+5. Note is the widest column. Do not shrink it.
+6. Apply the same percentages in View and Edit. View remains plain text, not dropdowns.
+7. Do not bring Natural or Functional back. Do not add a header Budget field. Do not change the FY-prefix removal.
+
+Set the colgroup or equivalent to these percentages. Do not invent different widths.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#64 - 2026-10-29 - Ledger / Transaction form - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Let the user resize columns on the transaction lines grid.
+
+Requirements:
+1. Excel-style resize handles on the interior vertical borders between columns. Dragging a handle changes that column's width.
+2. No resize on the outer border of the table. No row resize. No resizing the modal by the grid.
+3. Works in both View and Edit.
+4. Keep the current percentage widths as the initial layout. After a drag, that column keeps the user's width for the rest of the modal session.
+5. Do not persist the widths yet. Session only.
+6. Do not change budget labels, header fields, or which columns are shown.
+
+First add the interior column handles, then confirm the outer edge and rows do not resize.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#65 - 2026-10-30 - Ledger / Transaction form - Bug - High
+
+You are working in the **Beta Thread**.
+
+Task: Keep the lines grid inside the modal. Interior column resize must not widen the table.
+
+Requirements:
+1. The lines table fits the modal width. No horizontal scrollbar on the grid. Credit must be fully visible without scrolling.
+2. Interior column borders are the only resize handles. Dragging one changes that column and the next column. The table width does not change.
+3. No resize handle on the outer left or right edge of the table. No row resize.
+4. Initial widths remain the percentages from #63 (Account 22, Fund 18, Budget line 8, Note 30, Debit 10, Credit 10, Remove 2). They are percentages of the table, and the table is 100% of the modal content width.
+5. Works in View and Edit.
+6. Do not change which columns are shown, budget labels, or header fields.
+
+First find why the grid overflows the modal, then lock the table to the modal width and make interior drags redistribute column width only.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#66 - 2026-11-18 - UI / Theme - Enhancement - Med
+
+You are working in the **Beta Thread**.
+
+Task: Apply a single light-mode theme across Temper without rewriting individual pages.
+
+Requirements:
+1. Add one theme stylesheet, loaded from the shared header so every page gets it.
+2. Define the theme with CSS custom properties and override Bootstrap 5 variables. Do not restyle pages one by one.
+3. Light mode must be comfortable to use for long sessions:
+   - Soft off-white page background, not pure white.
+   - Body text off-black, with a distinct muted color for secondary text.
+   - Consistent primary and danger colors for buttons and links.
+   - Tables with a quiet header, subtle row hover, and light gridlines.
+   - Form controls with adequate padding and a visible focus ring.
+   - Modals and cards using the same surface color, border, and radius as the rest of the app.
+4. Do not change layout, column structure, or behavior. This is visual only.
+5. Leave dark mode functional. If it shares the same variable names, keep it working. Do not invent a new dark palette in this pass.
+6. Do not change ledger logic, budget assignment, attachments, or any data path.
+
+First find where global CSS and Bootstrap are loaded, then add the theme layer and confirm it applies to the ledger, forms, and modals.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+#67 - 2026-11-18 - Ledger / Mobile - Enhancement - High
+
+You are working in the **Beta Thread**.
+
+Task: Make creating and editing a transaction usable on a phone.
+
+Requirements:
+1. On small screens, the transaction form must not be a wide table. Stack the fields. One column.
+2. Header fields (Date, Ref, Pay To, Check #, Description) full width, in a sensible order, with enough tap height.
+3. Each line is a card, not a table row. Account, Fund, Budget line, Note, Debit, Credit stacked. Add Line and remove stay easy to hit.
+4. Debit and Credit are large enough to type in. Do not require horizontal scrolling to reach them.
+5. Save, Cancel, and the balance totals stay visible. A sticky footer is fine.
+6. Desktop layout stays as it is. This is a mobile breakpoint only.
+7. View mode on mobile is the same stacked layout, read-only.
+8. Do not change validation, budget rules, fund rules, or attachments.
+
+First look at the current transaction modal on a narrow viewport, then replace the grid with a stacked form below the mobile breakpoint.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+#68 - 2026-11-18 - UI / Theme - Bug - Med
+
+You are working in the **Beta Thread**.
+
+Task: Add a visible light/dark switch. The light theme exists but there is no control to turn it on.
+
+Requirements:
+1. Put a Light / Dark toggle in the sidebar, near the profile or role control, so it is on every page.
+2. Light sets data-bs-theme="light" on the document and loads the temper-theme.css palette. Dark sets data-bs-theme="dark".
+3. Remember the choice (user preference or local storage) so it survives a reload.
+4. Default stays dark if the user has never chosen.
+5. Do not change the theme colors from #66. Do not change layout or ledger behavior.
+
+First find how the theme attribute is set today, then add the toggle and persist the choice.
+
+Begin now.
+
+---
+Versioning & Schema Mandate (required):
+- Increment the application version.
+- If any schema change is required, generate a proper schema patch using the current filename format (YYYYMMDD_<appversion_without_decimal>_description.sql) with full metadata header.
+- Record the new app version + required schema version in the app_version table of the current working database.
+- Update VERSION.md with the new version entry and the “SCHEMA UPDATE REQUIRED” note if a patch is generated. If no schema change is needed, still update VERSION.md with the new version and a clear note of the change.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

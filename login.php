@@ -1,5 +1,6 @@
 <?php
 require_once 'auth.php';
+require_once 'config.php';
 
 // If user is already logged in (and session still within idle limit), go to app
 if (isLoggedIn() && isSessionWithinIdleLimit()) {
@@ -56,15 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     (function () {
         try {
             var stored = localStorage.getItem('temper-theme');
-            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            var theme = (stored === 'light' || stored === 'dark') ? stored : (prefersDark ? 'dark' : 'light');
+            var theme = (stored === 'light' || stored === 'dark') ? stored : 'dark';
             document.documentElement.setAttribute('data-bs-theme', theme);
         } catch (e) {
-            document.documentElement.setAttribute('data-bs-theme', 'light');
+            document.documentElement.setAttribute('data-bs-theme', 'dark');
         }
     })();
     </script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/css/temper-theme.css?v=<?= htmlspecialchars(APP_VERSION, ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
     <style>
         body {
             color: var(--bs-body-color);

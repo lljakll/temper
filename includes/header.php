@@ -41,38 +41,51 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
     <?php if (is_string($temperBrandIconUrl) && $temperBrandIconUrl !== ''): ?>
     <link rel="icon" id="temperFavicon" href="<?= htmlspecialchars($temperBrandIconUrl, ENT_QUOTES, 'UTF-8') ?>">
     <?php endif; ?>
-    <!-- Apply Bootstrap color mode before CSS paints to avoid flash / wrong text color -->
+    <!-- Apply Bootstrap color mode before CSS paints to avoid flash / wrong text color.
+         Stored choice is localStorage temper-theme: light | dark. Never chosen stays dark. -->
     <script>
     (function () {
-        try {
-            var key = 'temper-theme';
-            var stored = localStorage.getItem(key); // 'light' | 'dark' | 'auto' | null
-            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            var theme = (stored === 'light' || stored === 'dark')
-                ? stored
-                : (prefersDark ? 'dark' : 'light');
-            document.documentElement.setAttribute('data-bs-theme', theme);
-            window.__temperTheme = {
-                key: key,
-                get: function () { return localStorage.getItem(key) || 'auto'; },
-                resolve: function () {
-                    var s = localStorage.getItem(key);
-                    if (s === 'light' || s === 'dark') return s;
-                    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-                },
-                apply: function (mode) {
-                    if (mode === 'light' || mode === 'dark' || mode === 'auto') {
-                        localStorage.setItem(key, mode);
-                    }
-                    document.documentElement.setAttribute('data-bs-theme', this.resolve());
-                }
-            };
-        } catch (e) {
-            document.documentElement.setAttribute('data-bs-theme', 'light');
+        var key = 'temper-theme';
+        function readStored() {
+            try { return localStorage.getItem(key); } catch (e) { return null; }
         }
+        function resolve() {
+            var stored = readStored();
+            return (stored === 'light' || stored === 'dark') ? stored : 'dark';
+        }
+        function syncToggle() {
+            var theme = document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'light' : 'dark';
+            var buttons = document.querySelectorAll('[data-theme-choice]');
+            for (var i = 0; i < buttons.length; i++) {
+                var on = buttons[i].getAttribute('data-theme-choice') === theme;
+                buttons[i].classList.toggle('active', on);
+                buttons[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+            }
+        }
+        document.documentElement.setAttribute('data-bs-theme', resolve());
+        window.__temperTheme = {
+            key: key,
+            get: function () { return resolve(); },
+            resolve: resolve,
+            apply: function (mode) {
+                if (mode !== 'light' && mode !== 'dark') return;
+                try { localStorage.setItem(key, mode); } catch (e) { /* session-only */ }
+                document.documentElement.setAttribute('data-bs-theme', mode);
+                syncToggle();
+            },
+            syncToggle: syncToggle
+        };
+        document.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest('[data-theme-choice]') : null;
+            if (!btn) return;
+            var mode = btn.getAttribute('data-theme-choice');
+            if (mode !== 'light' && mode !== 'dark') return;
+            window.__temperTheme.apply(mode);
+        });
     })();
     </script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/css/temper-theme.css?v=<?= htmlspecialchars(APP_VERSION, ENT_QUOTES, 'UTF-8') ?>" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <style>
@@ -277,6 +290,22 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
             width: 1.25rem;
             text-align: center;
         }
+        .sidebar-panel .sidebar-theme-switch {
+            display: flex;
+            gap: 0.35rem;
+        }
+        .sidebar-panel .sidebar-theme-btn {
+            flex: 1 1 0;
+            justify-content: center;
+            overflow: hidden;
+            white-space: nowrap;
+            min-height: 2rem;
+        }
+        .sidebar-panel .sidebar-theme-btn > i {
+            flex: 0 0 auto;
+            width: 1.25rem;
+            text-align: center;
+        }
 
         /* Offcanvas-md: floating (fixed) panel on desktop; true offcanvas on mobile */
         #appSidebar.offcanvas {
@@ -418,6 +447,13 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
                 padding-left: 0.4rem;
                 padding-right: 0.4rem;
                 gap: 0 !important;
+            }
+            body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar .sidebar-theme-switch {
+                flex-direction: column;
+            }
+            body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar .sidebar-theme-btn {
+                padding-left: 0.25rem;
+                padding-right: 0.25rem;
             }
             body.sidebar-collapsed:not(.sidebar-hover-expand) #appSidebar .sidebar-role-switch .dropdown-toggle::after {
                 display: none;
@@ -2598,18 +2634,9 @@ $temperSidebarHoverCollapseSec = function_exists('getSidebarHoverCollapseDelaySe
 
     // Load default landing page based on role permissions (set by nav.php)
     document.addEventListener('DOMContentLoaded', function() {
-        // Follow OS light/dark changes when theme preference is auto
-        try {
-            if (window.matchMedia) {
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
-                    if (window.__temperTheme && window.__temperTheme.get() === 'auto') {
-                        window.__temperTheme.apply('auto');
-                    } else if (window.__temperTheme && !localStorage.getItem(window.__temperTheme.key)) {
-                        window.__temperTheme.apply('auto');
-                    }
-                });
-            }
-        } catch (e) { /* ignore */ }
+        if (window.__temperTheme && typeof window.__temperTheme.syncToggle === 'function') {
+            window.__temperTheme.syncToggle();
+        }
 
         var home = (window.__temperHomePage && typeof window.__temperHomePage === 'string')
             ? window.__temperHomePage

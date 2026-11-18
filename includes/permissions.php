@@ -731,8 +731,11 @@ function denyPermission(string $message = 'You do not have permission to perform
     }
 
     http_response_code(403);
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Access Denied</title>'
+    $temperThemeVer = defined('APP_VERSION') ? APP_VERSION : '0.983';
+    echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Access Denied</title>'
+        . '<script>(function(){try{var s=localStorage.getItem("temper-theme");var t=(s==="light"||s==="dark")?s:"dark";document.documentElement.setAttribute("data-bs-theme",t);}catch(e){document.documentElement.setAttribute("data-bs-theme","dark");}})();</script>'
         . '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">'
+        . '<link href="/assets/css/temper-theme.css?v=' . htmlspecialchars($temperThemeVer, ENT_QUOTES, 'UTF-8') . '" rel="stylesheet">'
         . '</head><body class="p-4"><div class="alert alert-warning">'
         . htmlspecialchars($message)
         . ' <a href="index.php">Return home</a></div></body></html>';
